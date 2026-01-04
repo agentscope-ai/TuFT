@@ -15,6 +15,7 @@ from tinker import types
 def ray_cluster(request):
     if request.config.getoption("--gpu"):
         import ray
+
         ray.init(ignore_reinit_error=True)
         yield
         ray.shutdown()

@@ -11,9 +11,11 @@ from tinker import types
 @pytest.fixture(scope="function", autouse=True)
 def ray_cluster():
     import ray
+
     ray.init(ignore_reinit_error=True)
     yield
     ray.shutdown()
+
 
 @pytest.mark.gpu
 @pytest.mark.asyncio

@@ -39,9 +39,11 @@ class BaseSamplingBackend(BaseBackend):
         """Factory method to create a sampling backend instance."""
         if os.getenv("LLM_RPC_CPU_TEST", "0") == "1":
             from ..backends.sampling_backend import DummySamplingBackend
+
             return DummySamplingBackend(config)
         else:
             from ..backends.sampling_backend import VLLMSamplingBackend
+
             return VLLMSamplingBackend(config)
 
 

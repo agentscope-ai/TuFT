@@ -4,11 +4,11 @@ import os
 import socket
 import threading
 import time
-import ray
 from pathlib import Path
 
 import httpx
 import pytest
+import ray
 import uvicorn
 
 from llm_rpc.config import AppConfig, ModelConfig

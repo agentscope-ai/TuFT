@@ -550,7 +550,7 @@ class SamplingController:
         )
         record.history.append(entry)
 
-    def _resolve_backend_from_record(self, record: SamplingSessionRecord) -> SamplingBackend:
+    def _resolve_backend_from_record(self, record: SamplingSessionRecord) -> BaseSamplingBackend:
         # TODO: support model_id mapping to a lora request structure
         if record.base_model:
             return self._base_backends[record.base_model]
@@ -558,7 +558,7 @@ class SamplingController:
             status_code=status.HTTP_400_BAD_REQUEST, detail="Broken sampling session"
         )
 
-    def resolve_backend(self, request: types.SampleRequest) -> SamplingBackend:
+    def resolve_backend(self, request: types.SampleRequest) -> BaseSamplingBackend:
         if request.sampling_session_id:
             record = self.sampling_sessions.get(request.sampling_session_id)
             if record is None:
