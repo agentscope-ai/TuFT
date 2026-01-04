@@ -1,16 +1,17 @@
 from __future__ import annotations
 
+import os
 import socket
 import threading
 import time
-from collections.abc import Generator
+import ray
 from pathlib import Path
 
 import httpx
 import pytest
 import uvicorn
 
-from llm_rpc.config import AppConfig
+from llm_rpc.config import AppConfig, ModelConfig
 from llm_rpc.server import create_root_app
 from tinker import types
 from tinker.lib.public_interfaces.service_client import ServiceClient
@@ -23,10 +24,25 @@ def _find_free_port() -> int:
 
 
 @pytest.fixture(scope="module")
-def server_endpoint(tmp_path_factory: pytest.TempPathFactory) -> Generator[str, None, None]:
+def server_endpoint(tmp_path_factory: pytest.TempPathFactory, request) -> str:
+    ray.init(ignore_reinit_error=True)
+    if request.config.getoption("--gpu"):
+        assert (
+            "LLM_RPC_TEST_MODEL" in os.environ
+        ), "Environment variable LLM_RPC_TEST_MODEL must be set for this test."
+        model_path = os.environ.get("LLM_RPC_TEST_MODEL")
+    else:
+        model_path = "/dummy/model"
     checkpoint_dir = tmp_path_factory.mktemp("checkpoints")
     config = AppConfig(checkpoint_dir=Path(checkpoint_dir))
-    config.supported_models = ["TinyLlama/TinyLlama-1.1B-Chat-v1.0"]
+    config.supported_models = [
+        ModelConfig(
+            model_name="Qwen/Qwen3-0.6B",
+            model_path=model_path,
+            max_model_len=4096,
+            tensor_parallel_size=1,
+        )
+    ]
     app = create_root_app(config)
     port = _find_free_port()
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
@@ -35,13 +51,13 @@ def server_endpoint(tmp_path_factory: pytest.TempPathFactory) -> Generator[str, 
 
     base_url = f"http://127.0.0.1:{port}"
     client = httpx.Client()
-    for _ in range(100):
+    for _ in range(120):
         try:
             response = client.get(f"{base_url}/api/v1/healthz", timeout=1)
             if response.status_code == 200:
                 break
         except httpx.HTTPError:
-            time.sleep(0.05)
+            time.sleep(2)
     else:
         server.should_exit = True
         thread.join(timeout=5)
@@ -53,6 +69,7 @@ def server_endpoint(tmp_path_factory: pytest.TempPathFactory) -> Generator[str, 
     server.should_exit = True
     thread.join(timeout=5)
     client.close()
+    ray.shutdown()
 
 
 @pytest.mark.integration
@@ -61,9 +78,7 @@ def test_training_and_sampling_round_trip(server_endpoint: str) -> None:
     try:
         capabilities = service_client.get_server_capabilities()
         assert capabilities.supported_models, "server did not report supported models"
-        base_model = (
-            capabilities.supported_models[0].model_name or "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-        )
+        base_model = capabilities.supported_models[0].model_name or "Qwen/Qwen3-0.6B"
 
         training_client = service_client.create_lora_training_client(base_model=base_model, rank=8)
         datum = types.Datum(
@@ -112,7 +127,9 @@ def test_training_and_sampling_round_trip(server_endpoint: str) -> None:
         )
         assert archive.url.startswith("file:")
 
-        sampling_client = service_client.create_sampling_client(model_path=sampler_response.path)
+        # NOT SUPPORTED YET
+        # sampling_client = service_client.create_sampling_client(model_path=sampler_response.path)
+        sampling_client = service_client.create_sampling_client(base_model=base_model)
         sample_res = sampling_client.sample(
             prompt=types.ModelInput.from_ints([99, 5, 12]),
             num_samples=1,

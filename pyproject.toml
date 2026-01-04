@@ -7,10 +7,12 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.125.0",
     "httpx>=0.28.1",
-    "numpy>=2.3.5",
+    "numpy<2.0.0",
     "tinker>=0.7.0",
     "typer>=0.20.1",
     "uvicorn[standard]>=0.38.0",
+    "omegaconf>=2.3.0",
+    "ray>=2.50.0",
 ]
 
 [project.scripts]

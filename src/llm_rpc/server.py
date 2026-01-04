@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from datetime import timezone
+from functools import partial
 from typing import Any, Callable
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
@@ -38,7 +40,12 @@ def _get_state(request: Request) -> ServerState:
 
 
 def create_root_app(config: AppConfig | None = None) -> FastAPI:
-    app = FastAPI(title="LLM-RPC", version="0.1.0")
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        await app.state.server_state.async_init()
+        yield
+
+    app = FastAPI(title="LLM-RPC", version="0.1.0", lifespan=lifespan)
     app.state.server_state = ServerState(config)
 
     @app.get("/api/v1/healthz", response_model=types.HealthResponse)
@@ -266,7 +273,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         request: types.SampleRequest,
         state: ServerState = Depends(_get_state),
     ) -> types.UntypedAPIFuture:
-        return _queue_future(lambda: state.run_sample(request), state)
+        return _queue_future(partial(state.run_sample, request=request), state)
 
     @app.post("/api/v1/retrieve_future")
     async def retrieve_future(

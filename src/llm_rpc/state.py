@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import hashlib
 import json
@@ -10,14 +11,15 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable, Dict, TypeVar
+from typing import Callable, Dict, List, TypeVar
 
 from fastapi import HTTPException, status
 
 from tinker import types
 
 from .backend import ModelBackend, build_backend
-from .config import AppConfig
+from .backends import BaseSamplingBackend
+from .config import AppConfig, ModelConfig
 from .futures import FutureStore
 
 T = TypeVar("T")
@@ -220,7 +222,10 @@ class TrainingController:
         return record
 
     def build_supported_models(self) -> list[types.SupportedModel]:
-        return [types.SupportedModel(model_name=name) for name in self.config.supported_models]
+        return [
+            types.SupportedModel(model_name=model.model_name)
+            for model in self.config.supported_models
+        ]
 
     def update_activity(self, model_id: str) -> None:
         record = self.get(model_id)
@@ -472,7 +477,20 @@ class SamplingController:
         self.config = config
         self._training = training_controller
         self.sampling_sessions: Dict[str, SamplingSessionRecord] = {}
-        self._base_backends: Dict[str, ModelBackend] = {}
+        self._base_backends: Dict[str, BaseSamplingBackend] = self._create_backends(
+            config.supported_models
+        )
+
+    async def async_init(self) -> None:
+        """Perform any async initialization here."""
+        init_tasks = [backend.async_init() for backend in self._base_backends.values()]
+        await asyncio.gather(*init_tasks)
+
+    def _create_backends(self, model_configs: List[ModelConfig]) -> Dict[str, BaseSamplingBackend]:
+        backends: Dict[str, BaseSamplingBackend] = {}
+        for config in model_configs:
+            backends[config.model_name] = BaseSamplingBackend.create_backend(config)
+        return backends
 
     def create_sampling_session(
         self,
@@ -484,17 +502,18 @@ class SamplingController:
     ) -> str:
         backend_ref: str | None = None
         base_model_ref: str | None = None
-        if model_path:
-            parsed = types.ParsedCheckpointTinkerPath.from_tinker_path(model_path)
-            backend_ref = parsed.training_run_id
-            self._training.get(parsed.training_run_id)
-        elif base_model:
+        if base_model:
             base_model_ref = base_model
-            self._base_backends.setdefault(
-                base_model,
-                build_backend(
-                    base_model=base_model, lora_rank=0, seed=self.config.toy_backend_seed
-                ),
+            backend_ref = base_model
+            if base_model not in self._base_backends:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail="Unknown base model %s".format(),
+                )
+        elif model_path:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Sampling from model_path is not supported yet",
             )
         else:
             raise HTTPException(
@@ -531,19 +550,15 @@ class SamplingController:
         )
         record.history.append(entry)
 
-    def _resolve_backend_from_record(self, record: SamplingSessionRecord) -> ModelBackend:
-        if record.model_id:
-            return self._training.get(record.model_id).backend
+    def _resolve_backend_from_record(self, record: SamplingSessionRecord) -> SamplingBackend:
+        # TODO: support model_id mapping to a lora request structure
         if record.base_model:
-            return self._base_backends.setdefault(
-                record.base_model,
-                build_backend(record.base_model, lora_rank=0, seed=self.config.toy_backend_seed),
-            )
+            return self._base_backends[record.base_model]
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Broken sampling session"
         )
 
-    def resolve_backend(self, request: types.SampleRequest) -> ModelBackend:
+    def resolve_backend(self, request: types.SampleRequest) -> SamplingBackend:
         if request.sampling_session_id:
             record = self.sampling_sessions.get(request.sampling_session_id)
             if record is None:
@@ -558,8 +573,10 @@ class SamplingController:
             self._record_sequence(record, request.seq_id, request.prompt)
             return self._resolve_backend_from_record(record)
         if request.model_path:
-            parsed = types.ParsedCheckpointTinkerPath.from_tinker_path(request.model_path)
-            return self._training.get(parsed.training_run_id).backend
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Sampling from trained models is not supported yet",
+            )
         if request.base_model:
             return self._base_backends.setdefault(
                 request.base_model,
@@ -569,14 +586,14 @@ class SamplingController:
             status_code=status.HTTP_400_BAD_REQUEST, detail="No model specified for sampling"
         )
 
-    def run_sample(self, request: types.SampleRequest) -> types.SampleResponse:
+    async def run_sample(self, request: types.SampleRequest) -> types.SampleResponse:
         backend = self.resolve_backend(request)
         prompt = request.prompt
         sampling_params = request.sampling_params
         num_samples = request.num_samples
         include_prompt_logprobs = bool(request.prompt_logprobs)
         topk_prompt_logprobs = request.topk_prompt_logprobs or 0
-        return backend.sample(
+        return await backend.sample(
             prompt=prompt,
             num_samples=num_samples,
             sampling_params=sampling_params,
@@ -606,19 +623,23 @@ class SamplingController:
 
 
 class ServerState:
-    """Application-wide container that wires controllers together.
-
-    Exposes a simple façade to FastAPI.
+    """Application-wide container that wires controllers together
+    and exposes a simple façade to FastAPI.
     """
 
     def __init__(self, config: AppConfig | None = None) -> None:
         self.config = config or AppConfig()
         self.config.ensure_directories()
+        self.config.check_validity()
         self.sessions = SessionManager()
         self.training = TrainingController(self.config)
         self.checkpoints = CheckpointStore(self.config)
         self.sampling = SamplingController(self.config, self.training)
         self.future_store = FutureStore()
+
+    async def async_init(self) -> None:
+        """Put any async initialization logic here"""
+        await self.sampling.async_init()
 
     def create_session(self, request: types.CreateSessionRequest) -> SessionRecord:
         return self.sessions.create_session(request)
@@ -677,8 +698,8 @@ class ServerState:
             session_seq_id=session_seq_id,
         )
 
-    def run_sample(self, request: types.SampleRequest) -> types.SampleResponse:
-        return self.sampling.run_sample(request)
+    async def run_sample(self, request: types.SampleRequest) -> types.SampleResponse:
+        return await self.sampling.run_sample(request)
 
     def save_checkpoint(
         self,

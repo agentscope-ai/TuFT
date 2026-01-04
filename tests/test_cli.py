@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from pathlib import Path
+
+import pytest
 from typer.testing import CliRunner
 
 from llm_rpc import cli
-from llm_rpc.config import AppConfig
+from llm_rpc.config import AppConfig, ModelConfig
 
 
 def test_start_passes_config(monkeypatch, tmp_path) -> None:
@@ -29,10 +32,10 @@ def test_start_passes_config(monkeypatch, tmp_path) -> None:
             "9999",
             "--log-level",
             "warning",
+            "--model-config",
+            str(Path(__file__).parent / "data" / "models.yaml"),
             "--checkpoint-dir",
             str(tmp_path),
-            "--model-owner",
-            "tester",
         ],
     )
     assert result.exit_code == 0
@@ -43,6 +46,23 @@ def test_start_passes_config(monkeypatch, tmp_path) -> None:
     server_state = recorded["app"].state.server_state
     assert server_state.config.checkpoint_dir == tmp_path
     defaults = AppConfig()
-    assert server_state.config.supported_models == defaults.supported_models
     assert server_state.config.model_owner == "tester"
     assert server_state.config.toy_backend_seed == defaults.toy_backend_seed
+    assert len(server_state.config.supported_models) == 2
+    assert server_state.config.supported_models[0].model_name == "Qwen/Qwen3-8B"
+    assert server_state.config.supported_models[1].model_name == "Qwen/Qwen3-32B"
+    server_state.config.check_validity()  # should not raise
+    server_state.config.supported_models.append(
+        ModelConfig(
+            model_name="Qwen/Qwen3-8B",
+            model_path=Path("/path/to/model"),
+            max_model_len=8192,
+        )
+    )
+    # should raise due to duplicate model names
+    with pytest.raises(ValueError, match="Model names in supported_models must be unique."):
+        server_state.config.check_validity()
+    server_state.config.supported_models.clear()
+    # should raise due to no supported models
+    with pytest.raises(ValueError, match="At least one supported model must be configured."):
+        server_state.config.check_validity()
