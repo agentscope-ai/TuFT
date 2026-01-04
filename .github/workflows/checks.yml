@@ -1,0 +1,48 @@
+name: Checks
+
+on:
+  push:
+    branches: [main, dev/**]
+  pull_request:
+    branches: [main]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12', '3.13']
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: '0.9.21'
+
+      - name: Install dependencies
+        run: |
+          uv sync --dev
+
+      - name: Run ruff linter
+        run: uv run ruff check --fix .
+
+      - name: Run ruff formatter
+        run: uv run ruff format .
+
+      - name: Run pyright type checker
+        run: uv run pyright
+
+      - name: Run pytest
+        run: uv run pytest
+
+      - name: Check uv lockfile is up to date
+        run: |
+          uv lock --check

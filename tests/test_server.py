@@ -1,0 +1,136 @@
+from __future__ import annotations
+
+import socket
+import threading
+import time
+from collections.abc import Generator
+from pathlib import Path
+
+import httpx
+import pytest
+import uvicorn
+
+from llm_rpc.config import AppConfig
+from llm_rpc.server import create_root_app
+from tinker import types
+from tinker.lib.public_interfaces.service_client import ServiceClient
+
+
+def _find_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+@pytest.fixture(scope="module")
+def server_endpoint(tmp_path_factory: pytest.TempPathFactory) -> Generator[str, None, None]:
+    checkpoint_dir = tmp_path_factory.mktemp("checkpoints")
+    config = AppConfig(checkpoint_dir=Path(checkpoint_dir))
+    config.supported_models = ["TinyLlama/TinyLlama-1.1B-Chat-v1.0"]
+    app = create_root_app(config)
+    port = _find_free_port()
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+
+    base_url = f"http://127.0.0.1:{port}"
+    client = httpx.Client()
+    for _ in range(100):
+        try:
+            response = client.get(f"{base_url}/api/v1/healthz", timeout=1)
+            if response.status_code == 200:
+                break
+        except httpx.HTTPError:
+            time.sleep(0.05)
+    else:
+        server.should_exit = True
+        thread.join(timeout=5)
+        client.close()
+        raise RuntimeError("Server failed to start")
+
+    yield base_url
+
+    server.should_exit = True
+    thread.join(timeout=5)
+    client.close()
+
+
+@pytest.mark.integration
+def test_training_and_sampling_round_trip(server_endpoint: str) -> None:
+    service_client = ServiceClient(api_key="tml-test-key", base_url=server_endpoint, timeout=15)
+    try:
+        capabilities = service_client.get_server_capabilities()
+        assert capabilities.supported_models, "server did not report supported models"
+        base_model = (
+            capabilities.supported_models[0].model_name or "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+        )
+
+        training_client = service_client.create_lora_training_client(base_model=base_model, rank=8)
+        datum = types.Datum(
+            model_input=types.ModelInput.from_ints([11, 12, 13, 14]),
+            loss_fn_inputs={
+                "target_tokens": types.TensorData(data=[21, 22, 23, 24], dtype="int64", shape=[4])
+            },
+        )
+
+        fwdbwd_result = training_client.forward_backward([datum], "cross_entropy").result(
+            timeout=10
+        )
+        assert fwdbwd_result.metrics["loss:mean"] >= 0
+
+        optim_result = training_client.optim_step(types.AdamParams(learning_rate=1e-3)).result(
+            timeout=10
+        )
+        assert optim_result.metrics and optim_result.metrics["step:max"] >= 1
+
+        save_response = training_client.save_state("checkpoint-test").result(timeout=10)
+        sampler_response = training_client.save_weights_for_sampler("sampler-test").result(
+            timeout=10
+        )
+        assert save_response.path.startswith("tinker://")
+        assert sampler_response.path.startswith("tinker://")
+
+        rest_client = service_client.create_rest_client()
+        model_id = training_client.model_id
+        checkpoints = rest_client.list_checkpoints(model_id).result(timeout=10)
+        assert len(checkpoints.checkpoints) >= 2
+
+        rest_client.publish_checkpoint_from_tinker_path(save_response.path).result(timeout=10)
+        refreshed = rest_client.list_checkpoints(model_id).result(timeout=10)
+        published = [
+            ckpt for ckpt in refreshed.checkpoints if ckpt.checkpoint_id == "checkpoint-test"
+        ]
+        assert published and published[0].public is True
+
+        weights_info = rest_client.get_weights_info_by_tinker_path(save_response.path).result(
+            timeout=10
+        )
+        assert weights_info.base_model == base_model
+
+        archive = rest_client.get_checkpoint_archive_url(model_id, "checkpoint-test").result(
+            timeout=10
+        )
+        assert archive.url.startswith("file:")
+
+        sampling_client = service_client.create_sampling_client(model_path=sampler_response.path)
+        sample_res = sampling_client.sample(
+            prompt=types.ModelInput.from_ints([99, 5, 12]),
+            num_samples=1,
+            sampling_params=types.SamplingParams(max_tokens=5, temperature=0.5),
+        ).result(timeout=10)
+        assert sample_res.sequences and sample_res.sequences[0].tokens
+
+        training_runs = rest_client.list_training_runs().result(timeout=10)
+        assert training_runs.training_runs and training_runs.cursor.total_count >= 1
+
+        session_id = service_client.holder.get_session_id()
+        session_info = rest_client.get_session(session_id).result(timeout=10)
+        assert model_id in session_info.training_run_ids
+
+        sessions = rest_client.list_sessions().result(timeout=10)
+        assert session_id in sessions.sessions
+
+        all_checkpoints = rest_client.list_user_checkpoints().result(timeout=10)
+        assert any(ckpt.public for ckpt in all_checkpoints.checkpoints)
+    finally:
+        service_client.holder.close()

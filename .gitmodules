@@ -1,0 +1,3 @@
+[submodule "tinker"]
+	path = tinker
+	url = https://github.com/thinking-machines-lab/tinker

@@ -1,0 +1,37 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+      - id: ruff-format
+
+  - repo: https://github.com/RobertCraigie/pyright-python
+    rev: v1.1.407
+    hooks:
+      - id: pyright
+        additional_dependencies:
+          - fastapi
+          - httpx
+          - numpy
+          - tinker
+          - typer
+          - uvicorn
+          - pytest
+          - pytest-asyncio
+
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        entry: uv run pytest
+        language: system
+        pass_filenames: false
+
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.9.21
+    hooks:
+      - id: uv-lock
+        name: Update uv lockfile
+        files: pyproject.toml
+        args: [--project, python]
