@@ -32,6 +32,8 @@ def _build_config(
     model_config_path: Path | None,
     checkpoint_dir: Path | None,
 ) -> AppConfig:
+    if model_config_path is None:
+        raise typer.BadParameter("Model configuration file must be provided via --model-config")
     config = load_yaml_config(model_config_path)
     if checkpoint_dir is not None:
         config.checkpoint_dir = checkpoint_dir.expanduser()

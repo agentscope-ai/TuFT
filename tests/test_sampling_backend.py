@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 from transformers import AutoTokenizer
@@ -27,7 +28,7 @@ async def test_sampling_backend():
         "LLM_RPC_TEST_MODEL" in os.environ
     ), "Environment variable LLM_RPC_TEST_MODEL must be set for this test."
 
-    model_path = os.environ.get("LLM_RPC_TEST_MODEL")
+    model_path = Path(os.environ.get("LLM_RPC_TEST_MODEL", "Qwen/Qwen3-0.6B"))
     model_config = ModelConfig(
         model_name="Qwen/Qwen3-0.6B",
         model_path=model_path,
@@ -56,6 +57,8 @@ async def test_sampling_backend():
     assert response.prompt_logprobs is None
     assert response.topk_prompt_logprobs is None
     for seq in response.sequences:
+        assert seq.tokens is not None
+        assert seq.logprobs is not None
         assert len(seq.tokens) > 0
         assert len(seq.logprobs) == len(seq.tokens)
         assert seq.stop_reason == "stop"
@@ -78,9 +81,12 @@ async def test_sampling_backend():
     assert response_with_logprobs.topk_prompt_logprobs[0] is None
     # each subsequent token should have top-k logprobs
     for topk in response_with_logprobs.topk_prompt_logprobs[1:]:
+        assert topk is not None
         assert len(topk) == 3
     # check sequences
     for seq in response_with_logprobs.sequences:
+        assert seq.tokens is not None
+        assert seq.logprobs is not None
         assert len(seq.tokens) > 0
         assert len(seq.logprobs) == len(seq.tokens)
         assert seq.stop_reason == "length"  # stop because of max_tokens=3
@@ -93,5 +99,6 @@ async def test_sampling_backend():
         include_prompt_logprobs=True,
     )
     assert len(logprobs_response.sequences) == 1
+    assert logprobs_response.prompt_logprobs is not None
     assert len(logprobs_response.prompt_logprobs) == len(input_ids)
     assert logprobs_response.topk_prompt_logprobs is None

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException, status
@@ -28,9 +29,9 @@ def _build_state(tmp_path, use_gpu: bool = False) -> ServerState:
         assert (
             "LLM_RPC_TEST_MODEL" in os.environ
         ), "Environment variable LLM_RPC_TEST_MODEL must be set for this test."
-        model_path = os.environ.get("LLM_RPC_TEST_MODEL")
+        model_path = Path(os.environ.get("LLM_RPC_TEST_MODEL", "Qwen/Qwen3-0.6B"))
     else:
-        model_path = "/path/to/model"
+        model_path = Path("/path/to/model")
 
     config = AppConfig(checkpoint_dir=tmp_path)
     config.supported_models = [

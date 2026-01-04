@@ -578,10 +578,13 @@ class SamplingController:
                 detail="Sampling from trained models is not supported yet",
             )
         if request.base_model:
-            return self._base_backends.setdefault(
-                request.base_model,
-                build_backend(request.base_model, lora_rank=0, seed=self.config.toy_backend_seed),
-            )
+            backend = self._base_backends.get(request.base_model)
+            if backend is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail="Unknown base model %s".format(),
+                )
+            return backend
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="No model specified for sampling"
         )
@@ -782,4 +785,6 @@ class ServerState:
         return types.ListSessionsResponse(sessions=subset)
 
     def get_sampler_info(self, sampler_id: str) -> types.GetSamplerResponse:
-        return self.sampling.get_sampler_info(sampler_id, self.config.supported_models[0])
+        return self.sampling.get_sampler_info(
+            sampler_id, self.config.supported_models[0].model_name
+        )

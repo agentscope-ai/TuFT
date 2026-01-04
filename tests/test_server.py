@@ -24,15 +24,15 @@ def _find_free_port() -> int:
 
 
 @pytest.fixture(scope="module")
-def server_endpoint(tmp_path_factory: pytest.TempPathFactory, request) -> str:
+def server_endpoint(tmp_path_factory: pytest.TempPathFactory, request):
     ray.init(ignore_reinit_error=True)
     if request.config.getoption("--gpu"):
         assert (
             "LLM_RPC_TEST_MODEL" in os.environ
         ), "Environment variable LLM_RPC_TEST_MODEL must be set for this test."
-        model_path = os.environ.get("LLM_RPC_TEST_MODEL")
+        model_path = Path(os.environ.get("LLM_RPC_TEST_MODEL", "Qwen/Qwen3-0.6B"))
     else:
-        model_path = "/dummy/model"
+        model_path = Path("/dummy/model")
     checkpoint_dir = tmp_path_factory.mktemp("checkpoints")
     config = AppConfig(checkpoint_dir=Path(checkpoint_dir))
     config.supported_models = [
