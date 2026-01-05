@@ -59,7 +59,9 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
     async def get_server_capabilities(
         state: ServerState = Depends(_get_state),
     ) -> types.GetServerCapabilitiesResponse:
-        return types.GetServerCapabilitiesResponse(supported_base_models=state.build_supported_base_models())
+        return types.GetServerCapabilitiesResponse(
+            supported_base_models=state.build_supported_base_models()
+        )
 
     @app.post(
         "/api/v1/create_session",
