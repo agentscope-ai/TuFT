@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -55,7 +56,11 @@ class FutureStore:
 
         def _runner() -> None:
             try:
-                payload = operation()
+                if asyncio.iscoroutinefunction(operation):
+                    # Run async operation in a new event loop
+                    payload = asyncio.run(operation())
+                else:
+                    payload = operation()
             except HTTPException as exc:
                 message = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
                 failure = types.RequestFailedResponse(
