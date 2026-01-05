@@ -1,18 +1,47 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException, status
 
-from llm_rpc.config import AppConfig
+from llm_rpc.config import AppConfig, ModelConfig
 from llm_rpc.state import ServerState
 from tinker import types
 
 
-def _build_state(tmp_path) -> ServerState:
+@pytest.fixture(scope="function", autouse=True)
+def ray_cluster(request):
+    if request.config.getoption("--gpu"):
+        import ray
+
+        ray.init(ignore_reinit_error=True)
+        yield
+        ray.shutdown()
+        return
+    yield
+
+
+def _build_state(tmp_path, use_gpu: bool = False) -> ServerState:
+    if use_gpu:
+        assert (
+            "LLM_RPC_TEST_MODEL" in os.environ
+        ), "Environment variable LLM_RPC_TEST_MODEL must be set for this test."
+        model_path = Path(os.environ.get("LLM_RPC_TEST_MODEL", "Qwen/Qwen3-0.6B"))
+    else:
+        model_path = Path("/path/to/model")
+
     config = AppConfig(checkpoint_dir=tmp_path)
-    config.supported_models = ["TinyLlama/TinyLlama-1.1B-Chat-v1.0"]
+    config.supported_models = [
+        ModelConfig(
+            model_name="Qwen/Qwen3-0.6B",
+            model_path=model_path,
+            max_model_len=2048,
+            tensor_parallel_size=1,
+        )
+    ]
     return ServerState(config)
 
 
@@ -23,12 +52,14 @@ def _create_session(state: ServerState) -> str:
     return session.session_id
 
 
-def test_sampling_session_requires_seq_id(tmp_path) -> None:
-    state = _build_state(tmp_path)
+@pytest.mark.asyncio
+async def test_sampling_session_requires_seq_id(request, tmp_path) -> None:
+    use_gpu = request.config.getoption("--gpu")
+    state = _build_state(tmp_path, use_gpu)
     session_id = _create_session(state)
     sampling_session_id = state.create_sampling_session(
         session_id=session_id,
-        base_model="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        base_model="Qwen/Qwen3-0.6B",
         model_path=None,
         session_seq_id=1,
     )
@@ -39,16 +70,18 @@ def test_sampling_session_requires_seq_id(tmp_path) -> None:
         sampling_session_id=sampling_session_id,
     )
     with pytest.raises(HTTPException) as excinfo:
-        state.run_sample(request)
+        await state.run_sample(request)
     assert excinfo.value.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
-def test_sampling_session_seq_id_must_increase(tmp_path) -> None:
-    state = _build_state(tmp_path)
+@pytest.mark.asyncio
+async def test_sampling_session_seq_id_must_increase(request, tmp_path) -> None:
+    use_gpu = request.config.getoption("--gpu")
+    state = _build_state(tmp_path, use_gpu)
     session_id = _create_session(state)
     sampling_session_id = state.create_sampling_session(
         session_id=session_id,
-        base_model="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        base_model="Qwen/Qwen3-0.6B",
         model_path=None,
         session_seq_id=10,
     )
@@ -59,7 +92,7 @@ def test_sampling_session_seq_id_must_increase(tmp_path) -> None:
         sampling_session_id=sampling_session_id,
         seq_id=1,
     )
-    response = state.run_sample(first_request)
+    response = await state.run_sample(first_request)
     assert response.sequences
     record = state.sampling.sampling_sessions[sampling_session_id]
     assert record.last_seq_id == 1
@@ -67,7 +100,7 @@ def test_sampling_session_seq_id_must_increase(tmp_path) -> None:
 
     repeat_request = first_request.model_copy(update={"seq_id": 1})
     with pytest.raises(HTTPException) as excinfo:
-        state.run_sample(repeat_request)
+        await state.run_sample(repeat_request)
     assert excinfo.value.status_code == status.HTTP_409_CONFLICT
     assert excinfo.value.detail == "sequence_conflict"
 
@@ -77,7 +110,7 @@ def test_training_seq_id_enforced(tmp_path) -> None:
     session_id = _create_session(state)
     training = state.create_model(
         session_id,
-        base_model="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        base_model="Qwen/Qwen3-0.6B",
         lora_rank=4,
         user_metadata=None,
     )
@@ -123,7 +156,7 @@ def test_checkpoint_metadata_persisted(tmp_path) -> None:
     state = _build_state(tmp_path)
     session_id = _create_session(state)
     training = state.create_model(
-        session_id, base_model="TinyLlama/TinyLlama-1.1B-Chat-v1.0", lora_rank=4, user_metadata=None
+        session_id, base_model="Qwen/Qwen3-0.6B", lora_rank=4, user_metadata=None
     )
 
     checkpoint = state.save_checkpoint(training.training_run_id, "ckpt-metadata", "training")
@@ -148,7 +181,7 @@ def test_checkpoint_views_reflect_metadata(tmp_path) -> None:
     state = _build_state(tmp_path)
     session_id = _create_session(state)
     training = state.create_model(
-        session_id, base_model="TinyLlama/TinyLlama-1.1B-Chat-v1.0", lora_rank=2, user_metadata=None
+        session_id, base_model="Qwen/Qwen3-0.6B", lora_rank=2, user_metadata=None
     )
 
     training_ckpt = state.save_checkpoint(training.training_run_id, None, "training")
@@ -164,14 +197,14 @@ def test_checkpoint_views_reflect_metadata(tmp_path) -> None:
     assert metadata["model_state"]
 
     info = state.get_weights_info(training_ckpt.to_api(training.training_run_id).tinker_path)
-    assert info.base_model == "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+    assert info.base_model == "Qwen/Qwen3-0.6B"
 
 
 def test_load_checkpoint_restores_state(tmp_path) -> None:
     state = _build_state(tmp_path)
     session_id = _create_session(state)
     training = state.create_model(
-        session_id, base_model="TinyLlama/TinyLlama-1.1B-Chat-v1.0", lora_rank=4, user_metadata=None
+        session_id, base_model="Qwen/Qwen3-0.6B", lora_rank=4, user_metadata=None
     )
 
     datum = types.Datum(
@@ -194,9 +227,7 @@ def test_load_checkpoint_restores_state(tmp_path) -> None:
     saved_state = training.backend.snapshot_state()
 
     mutated_state = dict(saved_state)
-    weights = saved_state["weights"]
-    assert isinstance(weights, list)
-    mutated_state["weights"] = [value + 0.5 for value in weights]
+    mutated_state["weights"] = [value + 0.5 for value in saved_state["weights"]]
     training.backend.load_state(mutated_state)
 
     ckpt_path = checkpoint.to_api(training.training_run_id).tinker_path
