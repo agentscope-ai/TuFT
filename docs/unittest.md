@@ -14,7 +14,7 @@ The `conftest.py` will automatically set the environment variable `LLM_RPC_CPU_T
 
 ## On GPU devices
 
-To write a tests that run on GPU devices, you can use the `@pytest.mark.gpu` decorator to mark the tests that require GPU support. For example:
+To write tests that run on GPU devices, you can use the `@pytest.mark.gpu` decorator to mark those tests. For example:
 
 ```python
 import pytest

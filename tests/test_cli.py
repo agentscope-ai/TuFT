@@ -47,11 +47,11 @@ def test_start_passes_config(monkeypatch, tmp_path) -> None:
     defaults = AppConfig()
     assert server_state.config.model_owner == "tester"
     assert server_state.config.toy_backend_seed == defaults.toy_backend_seed
-    assert len(server_state.config.supported_models) == 2
-    assert server_state.config.supported_models[0].model_name == "Qwen/Qwen3-8B"
-    assert server_state.config.supported_models[1].model_name == "Qwen/Qwen3-32B"
+    assert len(server_state.config.supported_base_models) == 2
+    assert server_state.config.supported_base_models[0].model_name == "Qwen/Qwen3-8B"
+    assert server_state.config.supported_base_models[1].model_name == "Qwen/Qwen3-32B"
     server_state.config.check_validity()  # should not raise
-    server_state.config.supported_models.append(
+    server_state.config.supported_base_models.append(
         ModelConfig(
             model_name="Qwen/Qwen3-8B",
             model_path=Path("/path/to/model"),
@@ -59,9 +59,9 @@ def test_start_passes_config(monkeypatch, tmp_path) -> None:
         )
     )
     # should raise due to duplicate model names
-    with pytest.raises(ValueError, match="Model names in supported_models must be unique."):
+    with pytest.raises(ValueError, match="Model names in supported_base_models must be unique."):
         server_state.config.check_validity()
-    server_state.config.supported_models.clear()
+    server_state.config.supported_base_models.clear()
     # should raise due to no supported models
     with pytest.raises(ValueError, match="At least one supported model must be configured."):
         server_state.config.check_validity()

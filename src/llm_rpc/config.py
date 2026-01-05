@@ -16,7 +16,7 @@ class AppConfig:
     """Runtime configuration for the FastAPI service."""
 
     checkpoint_dir: Path = field(default_factory=_default_checkpoint_dir)
-    supported_models: List[ModelConfig] = field(default_factory=list)
+    supported_base_models: List[ModelConfig] = field(default_factory=list)
     model_owner: str = "local-user"
     toy_backend_seed: int = 0
 
@@ -24,16 +24,16 @@ class AppConfig:
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     def check_validity(self) -> None:
-        if not self.supported_models:
+        if not self.supported_base_models:
             raise ValueError("At least one supported model must be configured.")
-        model_names = {model.model_name for model in self.supported_models}
-        if len(model_names) != len(self.supported_models):
-            raise ValueError("Model names in supported_models must be unique.")
+        model_names = {model.model_name for model in self.supported_base_models}
+        if len(model_names) != len(self.supported_base_models):
+            raise ValueError("Model names in supported_base_models must be unique.")
 
-    def with_supported_models(self, models: Iterable[ModelConfig]) -> "AppConfig":
+    def with_supported_base_models(self, models: Iterable[ModelConfig]) -> "AppConfig":
         updated = list(models)
         if updated:
-            self.supported_models = updated
+            self.supported_base_models = updated
         return self
 
 
