@@ -35,7 +35,7 @@ def server_endpoint(tmp_path_factory: pytest.TempPathFactory, request):
         model_path = Path("/dummy/model")
     checkpoint_dir = tmp_path_factory.mktemp("checkpoints")
     config = AppConfig(checkpoint_dir=Path(checkpoint_dir))
-    config.supported_base_models = [
+    config.supported_models = [
         ModelConfig(
             model_name="Qwen/Qwen3-0.6B",
             model_path=model_path,
@@ -77,8 +77,8 @@ def test_training_and_sampling_round_trip(server_endpoint: str) -> None:
     service_client = ServiceClient(api_key="tml-test-key", base_url=server_endpoint, timeout=15)
     try:
         capabilities = service_client.get_server_capabilities()
-        assert capabilities.supported_base_models, "server did not report supported models"
-        base_model = capabilities.supported_base_models[0].model_name or "Qwen/Qwen3-0.6B"
+        assert capabilities.supported_models, "server did not report supported models"
+        base_model = capabilities.supported_models[0].model_name or "Qwen/Qwen3-0.6B"
 
         training_client = service_client.create_lora_training_client(base_model=base_model, rank=8)
         datum = types.Datum(

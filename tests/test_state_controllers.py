@@ -34,7 +34,7 @@ def _build_state(tmp_path, use_gpu: bool = False) -> ServerState:
         model_path = Path("/path/to/model")
 
     config = AppConfig(checkpoint_dir=tmp_path)
-    config.supported_base_models = [
+    config.supported_models = [
         ModelConfig(
             model_name="Qwen/Qwen3-0.6B",
             model_path=model_path,

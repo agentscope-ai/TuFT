@@ -48,10 +48,10 @@ client = tinker.ServiceClient(base_url="http://localhost:8080", api_key="local-d
 
 # Discover available base models before launching a training run
 capabilities = client.get_server_capabilities()
-base_model = capabilities.supported_base_models[0].model_name
+base_model = capabilities.supported_models[0].model_name
 
 print("Supported models:")
-for model in capabilities.supported_base_models:
+for model in capabilities.supported_models:
     print("-", model.model_name or "(unknown)")
 
 # Start a LoRA training client targeting the first supported model

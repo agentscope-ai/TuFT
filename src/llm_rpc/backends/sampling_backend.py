@@ -53,8 +53,8 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                     temperature=config.temperature,
                     top_p=config.top_p,
                     top_k=config.top_k,
-                    logprobs=0,
-                    min_response_tokens=0,
+                    logprobs=config.logprobs,
+                    min_response_tokens=config.min_response_tokens,
                     repetition_penalty=1.0,
                 )
             )

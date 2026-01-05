@@ -221,10 +221,10 @@ class TrainingController:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown model")
         return record
 
-    def build_supported_base_models(self) -> list[types.SupportedModel]:
+    def build_supported_models(self) -> list[types.SupportedModel]:
         return [
             types.SupportedModel(model_name=model.model_name)
-            for model in self.config.supported_base_models
+            for model in self.config.supported_models
         ]
 
     def update_activity(self, model_id: str) -> None:
@@ -478,7 +478,7 @@ class SamplingController:
         self._training = training_controller
         self.sampling_sessions: Dict[str, SamplingSessionRecord] = {}
         self._base_backends: Dict[str, BaseSamplingBackend] = self._create_backends(
-            config.supported_base_models
+            config.supported_models
         )
 
     async def async_init(self) -> None:
@@ -663,8 +663,8 @@ class ServerState:
     def get_training_run(self, model_id: str) -> TrainingRunRecord:
         return self.training.get(model_id)
 
-    def build_supported_base_models(self) -> list[types.SupportedModel]:
-        return self.training.build_supported_base_models()
+    def build_supported_models(self) -> list[types.SupportedModel]:
+        return self.training.build_supported_models()
 
     def run_forward(
         self,
@@ -786,5 +786,5 @@ class ServerState:
 
     def get_sampler_info(self, sampler_id: str) -> types.GetSamplerResponse:
         return self.sampling.get_sampler_info(
-            sampler_id, self.config.supported_base_models[0].model_name
+            sampler_id, self.config.supported_models[0].model_name
         )
