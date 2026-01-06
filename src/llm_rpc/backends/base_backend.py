@@ -1,5 +1,6 @@
 import os
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Optional
 
 from tinker import types
@@ -70,11 +71,11 @@ class BaseTrainingBackend(BaseBackend):
         """Abstract method for optimization step."""
 
     @abstractmethod
-    async def save_state(self, lora_id: str, lora_path: str) -> None:
+    async def save_state(self, lora_id: str, lora_path: Path, optimizer: bool) -> None:
         """Abstract method for saving model state."""
 
     @abstractmethod
-    async def load_state(self, lora_id: str, lora_path: str, optimizer: bool) -> None:
+    async def load_state(self, lora_id: str, lora_path: Path, optimizer: bool) -> None:
         """Abstract method for loading model state."""
 
     @classmethod

@@ -229,8 +229,8 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         request: types.SaveWeightsRequest,
         state: ServerState = Depends(_get_state),
     ) -> types.UntypedAPIFuture:
-        def _operation() -> types.SaveWeightsResponse:
-            checkpoint = state.save_checkpoint(request.model_id, request.path, "training")
+        async def _operation() -> types.SaveWeightsResponse:
+            checkpoint = await state.save_checkpoint(request.model_id, request.path, "training")
             return types.SaveWeightsResponse(path=checkpoint.to_api(request.model_id).tinker_path)
 
         return _queue_future(_operation, state, model_id=request.model_id)
@@ -244,8 +244,8 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         request: types.SaveWeightsForSamplerRequest,
         state: ServerState = Depends(_get_state),
     ) -> types.UntypedAPIFuture:
-        def _operation() -> types.SaveWeightsForSamplerResponse:
-            checkpoint = state.save_checkpoint(request.model_id, request.path, "sampler")
+        async def _operation() -> types.SaveWeightsForSamplerResponse:
+            checkpoint = await state.save_checkpoint(request.model_id, request.path, "sampler")
             return types.SaveWeightsForSamplerResponse(
                 path=checkpoint.to_api(request.model_id).tinker_path
             )

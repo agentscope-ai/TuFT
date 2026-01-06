@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Dict
 
 import ray
@@ -65,12 +66,12 @@ class HFTrainingModel:
         self.model.add_adapter(adapter_name=lora_id, peft_config=peft_config)
         self.adapter_set.add(lora_id)
 
-    def save_adapter(self, lora_id: str, save_path: str):
+    def save_adapter(self, lora_id: str, save_path: Path, optimizer: bool):
         if lora_id not in self.adapter_set:
             raise ValueError(f"Adapter {lora_id} not found.")
         self.model.save_pretrained(save_path, selected_adapters=[lora_id])
 
-    def load_adapter(self, lora_id: str, load_path: str, optimizer: bool):
+    def load_adapter(self, lora_id: str, load_path: Path, optimizer: bool):
         self.model.load_adapter(load_path, adapter_name=lora_id)
         self.adapter_set.add(lora_id)
 

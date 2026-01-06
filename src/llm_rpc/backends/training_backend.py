@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Sequence
 
 import numpy as np
@@ -66,13 +67,13 @@ class HFTrainingBackend(BaseTrainingBackend):
         """
         return await self.model.optim_step.remote(adam_params, lora_id)
 
-    async def save_state(self, lora_id: str, lora_path: str) -> None:
+    async def save_state(self, lora_id: str, lora_path: Path, optimizer: bool) -> None:
         """Save the state of the specified LoRA adapter."""
-        await self.model.save_adapter.remote(lora_id, lora_path)
+        await self.model.save_adapter.remote(lora_id, lora_path, optimizer=optimizer)
 
-    async def load_state(self, lora_id: str, lora_path: str, optimizer: bool) -> None:
+    async def load_state(self, lora_id: str, lora_path: Path, optimizer: bool) -> None:
         """Load the state of the specified LoRA adapter from the given path."""
-        await self.model.load_adapter.remote(lora_id, lora_path, optimizer)
+        await self.model.load_adapter.remote(lora_id, lora_path, optimizer=optimizer)
 
 
 @dataclass
@@ -211,10 +212,10 @@ class DummyTrainingBackend(BaseTrainingBackend):
         }
         return types.OptimStepResponse(metrics=metrics)
 
-    async def save_state(self, lora_id: str, lora_path: str) -> None:
+    async def save_state(self, lora_id: str, lora_path: Path, optimizer: bool) -> None:
         pass
 
-    async def load_state(self, lora_id: str, lora_path: str, optimizer: bool) -> None:
+    async def load_state(self, lora_id: str, lora_path: Path, optimizer: bool) -> None:
         pass
 
     # ------------------------------------------------------------------

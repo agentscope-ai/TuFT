@@ -65,6 +65,9 @@ class CheckpointRecord:
             public=self.public,
         )
 
+    def get_metadata(self) -> Dict:
+        return json.loads((self.path / "metadata.json").read_text(encoding="utf-8"))
+
 
 @dataclass
 class TrainingRunRecord:
@@ -324,16 +327,7 @@ class CheckpointStore:
         self,
         training_run: TrainingRunRecord,
         checkpoint: CheckpointRecord,
-        model_state: object | None = None,
     ) -> None:
-        existing_state: object | None = None
-        if checkpoint.path.exists():
-            try:
-                existing = json.loads(checkpoint.path.read_text())
-                existing_state = existing.get("model_state")
-            except json.JSONDecodeError:
-                existing_state = None
-
         payload = {
             "model_id": training_run.training_run_id,
             "checkpoint_type": checkpoint.checkpoint_type,
@@ -345,14 +339,14 @@ class CheckpointStore:
             "size_bytes": checkpoint.size_bytes,
             "public": checkpoint.public,
             "tinker_path": checkpoint.to_api(training_run.training_run_id).tinker_path,
-            "model_state": model_state if model_state is not None else existing_state,
         }
-        checkpoint.path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        metadata_path = checkpoint.path / "metadata.json"
+        metadata_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         checkpoint.size_bytes = checkpoint.path.stat().st_size
         payload["size_bytes"] = checkpoint.size_bytes
-        checkpoint.path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        metadata_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
-    def save_checkpoint(
+    async def save_checkpoint(
         self,
         training_run: TrainingRunRecord,
         name: str | None,
@@ -366,14 +360,15 @@ class CheckpointStore:
         counter = getattr(training_run, counter_attr)
         checkpoint_name = name or f"checkpoint-{counter:04d}"
         setattr(training_run, counter_attr, counter + 1)
-        folder = "weights" if checkpoint_type == "training" else "sampler_weights"
-        path = self.config.checkpoint_dir / training_run.training_run_id / folder / checkpoint_name
-        path.parent.mkdir(parents=True, exist_ok=True)
+        checkpoint_dir = self.config.checkpoint_dir / training_run.training_run_id / checkpoint_name
+        # todo: check and handle existing checkpoint with same name
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
         created = _now()
+        # for sampler type, optmizer state is not saved
         checkpoint = CheckpointRecord(
             checkpoint_id=checkpoint_name,
             checkpoint_type=checkpoint_type,
-            path=path,
+            path=checkpoint_dir,
             created_at=created,
             size_bytes=0,
         )
@@ -383,6 +378,12 @@ class CheckpointStore:
             else training_run.sampler_checkpoints
         )
         target_map[checkpoint_name] = checkpoint
+        await training_run.backend.save_state(
+            lora_id=training_run.training_run_id,
+            lora_path=checkpoint_dir,
+            optimizer=(checkpoint_type == "training"),
+        )
+        self._write_metadata(training_run, checkpoint)
         return checkpoint
 
     async def load_checkpoint(
@@ -406,21 +407,8 @@ class CheckpointStore:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Checkpoint not found"
             )
-        try:
-            document = json.loads(checkpoint.path.read_text())
-        except json.JSONDecodeError as exc:  # pragma: no cover - corrupt file
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Corrupted checkpoint metadata",
-            ) from exc
-        model_state = document.get("model_state")
-        if model_state is None:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Checkpoint missing model state",
-            )
         await training_run.backend.load_state(
-            lora_id=training_run.training_run_id, lora_path=path, optimizer=optimizer
+            lora_id=training_run.training_run_id, lora_path=checkpoint.path, optimizer=optimizer
         )
 
     def delete_checkpoint(self, training_run: TrainingRunRecord, checkpoint_id: str) -> None:
@@ -725,14 +713,14 @@ class ServerState:
     async def run_sample(self, request: types.SampleRequest) -> types.SampleResponse:
         return await self.sampling.run_sample(request)
 
-    def save_checkpoint(
+    async def save_checkpoint(
         self,
         model_id: str,
         name: str | None,
         checkpoint_type: types.CheckpointType,
     ) -> CheckpointRecord:
         training_run = self.training.get_run_record(model_id)
-        return self.checkpoints.save_checkpoint(training_run, name, checkpoint_type)
+        return await self.checkpoints.save_checkpoint(training_run, name, checkpoint_type)
 
     async def load_checkpoint(self, model_id: str, path: str, optimizer: bool) -> None:
         training_run = self.training.get_run_record(model_id)

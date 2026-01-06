@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 
@@ -153,7 +152,8 @@ async def test_training_seq_id_enforced(tmp_path) -> None:
     )
 
 
-def test_checkpoint_metadata_persisted(tmp_path) -> None:
+@pytest.mark.asyncio
+async def test_checkpoint_metadata_persisted(tmp_path) -> None:
     state = _build_state(tmp_path)
     session_id = _create_session(state)
     training = state.create_model(
@@ -163,25 +163,24 @@ def test_checkpoint_metadata_persisted(tmp_path) -> None:
         user_metadata=None,
     )
 
-    checkpoint = state.save_checkpoint(training.training_run_id, "ckpt-metadata", "training")
-    metadata = json.loads(checkpoint.path.read_text())
+    checkpoint = await state.save_checkpoint(training.training_run_id, "ckpt-metadata", "training")
+    metadata = checkpoint.get_metadata()
     assert metadata["name"] == "ckpt-metadata"
     assert metadata["session_id"] == session_id
     assert metadata["checkpoint_type"] == "training"
     assert metadata["tinker_path"].startswith("tinker://")
     assert metadata["public"] is False
-    assert "model_state" in metadata and metadata["model_state"]
 
     state.set_checkpoint_visibility(training.training_run_id, "ckpt-metadata", public=True)
-    updated = json.loads(checkpoint.path.read_text())
+    updated = checkpoint.get_metadata()
     assert updated["public"] is True
-    assert updated["model_state"] == metadata["model_state"]
 
     listed = state.list_user_checkpoints()
     assert listed and listed[0].checkpoint_id == "ckpt-metadata"
 
 
-def test_checkpoint_views_reflect_metadata(tmp_path) -> None:
+@pytest.mark.asyncio
+async def test_checkpoint_views_reflect_metadata(tmp_path) -> None:
     state = _build_state(tmp_path)
     session_id = _create_session(state)
     training = state.create_model(
@@ -191,17 +190,16 @@ def test_checkpoint_views_reflect_metadata(tmp_path) -> None:
         user_metadata=None,
     )
 
-    training_ckpt = state.save_checkpoint(training.training_run_id, None, "training")
-    sampler_ckpt = state.save_checkpoint(training.training_run_id, None, "sampler")
+    training_ckpt = await state.save_checkpoint(training.training_run_id, None, "training")
+    sampler_ckpt = await state.save_checkpoint(training.training_run_id, None, "sampler")
 
     listed = state.list_checkpoints(training.training_run_id)
     assert {ckpt.checkpoint_type for ckpt in listed} == {"training", "sampler"}
     assert all(ckpt.size_bytes is not None and ckpt.size_bytes > 0 for ckpt in listed)
 
-    metadata = json.loads(sampler_ckpt.path.read_text())
+    metadata = sampler_ckpt.get_metadata()
     assert metadata["checkpoint_type"] == "sampler"
     assert metadata["tinker_path"].endswith(sampler_ckpt.checkpoint_id)
-    assert metadata["model_state"]
 
     info = state.get_weights_info(training_ckpt.to_api(training.training_run_id).tinker_path)
     assert info.base_model == "Qwen/Qwen3-0.6B"
@@ -234,7 +232,7 @@ async def test_load_checkpoint_restores_state(tmp_path) -> None:
     )
     await state.run_optim_step(training.training_run_id, types.AdamParams(), seq_id=None)
 
-    checkpoint = state.save_checkpoint(training.training_run_id, "restore-test", "training")
+    checkpoint = await state.save_checkpoint(training.training_run_id, "restore-test", "training")
 
     ckpt_path = checkpoint.to_api(training.training_run_id).tinker_path
     await state.load_checkpoint(training.training_run_id, ckpt_path, optimizer=True)
