@@ -69,9 +69,9 @@ class HFTrainingBackend(BaseTrainingBackend):
         """Save the state of the specified LoRA adapter."""
         await self.model.save_adapter.remote(lora_id, lora_path)
 
-    async def load_state(self, lora_id: str, lora_path: str) -> None:
+    async def load_state(self, lora_id: str, lora_path: str, optimizer: bool) -> None:
         """Load the state of the specified LoRA adapter from the given path."""
-        await self.model.load_adapter.remote(lora_id, lora_path)
+        await self.model.load_adapter.remote(lora_id, lora_path, optimizer)
 
 
 class DummyTrainingBackend(BaseTrainingBackend):
@@ -195,7 +195,7 @@ class DummyTrainingBackend(BaseTrainingBackend):
     async def save_state(self, lora_id: str, lora_path: str) -> None:
         pass
 
-    async def load_state(self, lora_id: str, lora_path: str) -> None:
+    async def load_state(self, lora_id: str, lora_path: str, optimizer: bool) -> None:
         pass
 
     # ------------------------------------------------------------------

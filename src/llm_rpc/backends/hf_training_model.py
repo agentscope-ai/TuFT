@@ -70,7 +70,7 @@ class HFTrainingModel:
             raise ValueError(f"Adapter {lora_id} not found.")
         self.model.save_pretrained(save_path, selected_adapters=[lora_id])
 
-    def load_adapter(self, lora_id: str, load_path: str):
+    def load_adapter(self, lora_id: str, load_path: str, optimizer: bool):
         self.model.load_adapter(load_path, adapter_name=lora_id)
         self.adapter_set.add(lora_id)
 

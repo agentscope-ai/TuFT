@@ -74,7 +74,7 @@ class BaseTrainingBackend(BaseBackend):
         """Abstract method for saving model state."""
 
     @abstractmethod
-    async def load_state(self, lora_id: str, lora_path: str) -> None:
+    async def load_state(self, lora_id: str, lora_path: str, optimizer: bool) -> None:
         """Abstract method for loading model state."""
 
     @classmethod
