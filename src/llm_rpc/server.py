@@ -211,8 +211,14 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         request: types.OptimStepRequest,
         state: ServerState = Depends(_get_state),
     ) -> types.UntypedAPIFuture:
+
+        async def _operation() -> types.OptimStepResponse:
+            return await state.run_optim_step(
+                request.model_id, request.adam_params, request.seq_id
+            )
+
         return _queue_future(
-            lambda: state.run_optim_step(request.model_id, request.adam_params, request.seq_id),
+            _operation,
             state,
             model_id=request.model_id,
         )

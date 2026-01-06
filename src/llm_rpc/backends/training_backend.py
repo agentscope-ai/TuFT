@@ -1,5 +1,6 @@
-from threading import Lock
+import asyncio
 from typing import Dict, Sequence
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -73,16 +74,31 @@ class HFTrainingBackend(BaseTrainingBackend):
         """Load the state of the specified LoRA adapter from the given path."""
         await self.model.load_adapter.remote(lora_id, lora_path, optimizer)
 
-
+@dataclass
 class DummyTrainingBackend(BaseTrainingBackend):
     """A dummy training backend for testing purposes."""
+
+    _lock: asyncio.Lock = field(init=False, repr=False)
+    _weights: np.ndarray = field(init=False, repr=False)
+    _adam_m: np.ndarray = field(init=False, repr=False)
+    _adam_v: np.ndarray = field(init=False, repr=False)
+    _beta1_power: float = field(init=False, default=1.0, repr=False)
+    _beta2_power: float = field(init=False, default=1.0, repr=False)
+    _pending_grad: np.ndarray | None = field(init=False, default=None, repr=False)
+    _pending_examples: int = field(init=False, default=0, repr=False)
+    _embedding_cache: dict[int, np.ndarray] = field(init=False, default_factory=dict, repr=False)
+    step: int = field(init=False, default=0)
 
     def __init__(self, config: ModelConfig) -> None:
         self.config = config
         self.seed = config.seed
         self.hidden_dim = 16
-        self._lock = Lock()
-        self._embedding_cache: Dict[int, np.ndarray] = {}
+        rng = np.random.default_rng(self.seed or 0)
+        self._lock = asyncio.Lock()
+        self._weights = rng.standard_normal(self.hidden_dim, dtype=np.float32)
+        self._adam_m = np.zeros_like(self._weights)
+        self._adam_v = np.zeros_like(self._weights)
+        self._embedding_cache = {}
 
     async def async_init(self) -> None:
         pass
@@ -98,9 +114,9 @@ class DummyTrainingBackend(BaseTrainingBackend):
         loss_fn_config: dict[str, float] | None,
         backward: bool = False,
     ) -> types.ForwardBackwardOutput:
-        return self._run_step(data, backward=backward)
+        return await self._run_step(data, backward=backward)
 
-    def _run_step(self, data: list[types.Datum], *, backward: bool) -> types.ForwardBackwardOutput:
+    async def _run_step(self, data: list[types.Datum], *, backward: bool) -> types.ForwardBackwardOutput:
         outputs: list[types.LossFnOutput] = []
         total_loss = 0.0
         grad_accum = np.zeros_like(self._weights)
@@ -129,7 +145,7 @@ class DummyTrainingBackend(BaseTrainingBackend):
         if backward:
             grad_norm = float(np.linalg.norm(grad_accum) / max(len(data), 1))
             metrics["grad_norm:mean"] = grad_norm
-            with self._lock:
+            async with self._lock:
                 if self._pending_grad is None:
                     self._pending_grad = grad_accum
                 else:
@@ -148,7 +164,7 @@ class DummyTrainingBackend(BaseTrainingBackend):
     async def optim_step(
         self, adam_params: types.AdamParams, lora_id: str
     ) -> types.OptimStepResponse:
-        with self._lock:
+        async with self._lock:
             grad = self._pending_grad
             examples = self._pending_examples
             self._pending_grad = None

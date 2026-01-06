@@ -70,7 +70,7 @@ class CheckpointRecord:
 class TrainingRunRecord:
     training_run_id: str
     base_model: str
-    lora_config: types.LoraConfig
+    lora_rank: int
     session_id: str
     backend: BaseTrainingBackend
     user_metadata: dict[str, str] | None
@@ -96,7 +96,7 @@ class TrainingRunRecord:
             model_owner=owner,
             is_lora=True,
             corrupted=self.corrupted,
-            lora_config=self.lora_config,
+            lora_rank=self.lora_rank,
             last_request_time=self.last_request_time,
             last_checkpoint=training_checkpoint,
             last_sampler_checkpoint=sampler_checkpoint,
@@ -215,7 +215,7 @@ class TrainingController:
         record = TrainingRunRecord(
             training_run_id=model_id,
             base_model=base_model,
-            lora_config=lora_config,
+            lora_rank=lora_config.rank,
             session_id=session_id,
             backend=backend,
             user_metadata=user_metadata,
@@ -309,7 +309,7 @@ class TrainingController:
             model_data=model_data,
             model_id=model_id,
             is_lora=True,
-            lora_rank=record.lora_config.rank,
+            lora_rank=record.lora_rank,
             model_name=record.base_model,
         )
 
@@ -341,7 +341,7 @@ class CheckpointStore:
             "created_at": checkpoint.created_at.isoformat(),
             "session_id": training_run.session_id,
             "base_model": training_run.base_model,
-            "lora_rank": training_run.lora_config.rank,
+            "lora_rank": training_run.lora_rank.rank,
             "size_bytes": checkpoint.size_bytes,
             "public": checkpoint.public,
             "tinker_path": checkpoint.to_api(training_run.training_run_id).tinker_path,
@@ -419,7 +419,9 @@ class CheckpointStore:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Checkpoint missing model state",
             )
-        await training_run.backend.load_state(model_state)
+        await training_run.backend.load_state(
+            lora_id=training_run.training_run_id, lora_path=path, optimizer=optimizer
+        )
 
     def delete_checkpoint(self, training_run: TrainingRunRecord, checkpoint_id: str) -> None:
         removed = training_run.checkpoints.pop(checkpoint_id, None)
@@ -482,7 +484,7 @@ class CheckpointStore:
         return types.WeightsInfoResponse(
             base_model=training_run.base_model,
             is_lora=True,
-            lora_rank=training_run.lora_config.rank,
+            lora_rank=training_run.lora_rank.rank,
         )
 
 
