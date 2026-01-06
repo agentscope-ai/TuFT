@@ -1,6 +1,6 @@
 import asyncio
-from typing import Dict, Sequence
 from dataclasses import dataclass, field
+from typing import Sequence
 
 import numpy as np
 
@@ -74,6 +74,7 @@ class HFTrainingBackend(BaseTrainingBackend):
         """Load the state of the specified LoRA adapter from the given path."""
         await self.model.load_adapter.remote(lora_id, lora_path, optimizer)
 
+
 @dataclass
 class DummyTrainingBackend(BaseTrainingBackend):
     """A dummy training backend for testing purposes."""
@@ -116,7 +117,9 @@ class DummyTrainingBackend(BaseTrainingBackend):
     ) -> types.ForwardBackwardOutput:
         return await self._run_step(data, backward=backward)
 
-    async def _run_step(self, data: list[types.Datum], *, backward: bool) -> types.ForwardBackwardOutput:
+    async def _run_step(
+        self, data: list[types.Datum], *, backward: bool
+    ) -> types.ForwardBackwardOutput:
         outputs: list[types.LossFnOutput] = []
         total_loss = 0.0
         grad_accum = np.zeros_like(self._weights)

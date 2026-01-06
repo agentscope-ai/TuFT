@@ -341,7 +341,7 @@ class CheckpointStore:
             "created_at": checkpoint.created_at.isoformat(),
             "session_id": training_run.session_id,
             "base_model": training_run.base_model,
-            "lora_rank": training_run.lora_rank.rank,
+            "lora_rank": training_run.lora_rank,
             "size_bytes": checkpoint.size_bytes,
             "public": checkpoint.public,
             "tinker_path": checkpoint.to_api(training_run.training_run_id).tinker_path,
@@ -484,7 +484,7 @@ class CheckpointStore:
         return types.WeightsInfoResponse(
             base_model=training_run.base_model,
             is_lora=True,
-            lora_rank=training_run.lora_rank.rank,
+            lora_rank=training_run.lora_rank,
         )
 
 
