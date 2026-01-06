@@ -117,7 +117,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         training_record = state.create_model(
             session_id=request.session_id,
             base_model=request.base_model,
-            lora_rank=request.lora_config.rank,
+            lora_config=request.lora_config,
             user_metadata=request.user_metadata,
         )
         response = types.CreateModelResponse(model_id=training_record.training_run_id)
@@ -167,8 +167,8 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
     ) -> types.UntypedAPIFuture:
         inp = request.forward_input
 
-        def _operation() -> types.ForwardBackwardOutput:
-            return state.run_forward(
+        async def _operation() -> types.ForwardBackwardOutput:
+            return await state.run_forward(
                 request.model_id,
                 inp.data,
                 inp.loss_fn,
@@ -190,8 +190,8 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
     ) -> types.UntypedAPIFuture:
         inp = request.forward_backward_input
 
-        def _operation() -> types.ForwardBackwardOutput:
-            return state.run_forward(
+        async def _operation() -> types.ForwardBackwardOutput:
+            return await state.run_forward(
                 request.model_id,
                 inp.data,
                 inp.loss_fn,
@@ -258,8 +258,8 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         request: types.LoadWeightsRequest,
         state: ServerState = Depends(_get_state),
     ) -> types.UntypedAPIFuture:
-        def _operation() -> types.LoadWeightsResponse:
-            state.load_checkpoint(request.model_id, request.path, request.optimizer)
+        async def _operation() -> types.LoadWeightsResponse:
+            await state.load_checkpoint(request.model_id, request.path, request.optimizer)
             return types.LoadWeightsResponse(path=request.path)
 
         return _queue_future(_operation, state, model_id=request.model_id)

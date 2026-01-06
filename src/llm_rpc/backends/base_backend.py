@@ -51,31 +51,40 @@ class BaseTrainingBackend(BaseBackend):
     """Abstract training backend."""
 
     @abstractmethod
-    def forward(
+    async def forward(
         self,
         data: list[types.Datum],
+        lora_id: str,
         loss_fn: types.LossFnType,
         loss_fn_config: dict[str, float] | None,
+        backward: bool = False,
     ) -> types.ForwardBackwardOutput:
         """Abstract method for forward pass."""
 
     @abstractmethod
-    def forward_backward(
+    async def optim_step(
         self,
-        data: list[types.Datum],
-        loss_fn: types.LossFnType,
-        loss_fn_config: dict[str, float] | None,
-    ) -> types.ForwardBackwardOutput:
-        """Abstract method for forward and backward pass."""
-
-    @abstractmethod
-    def optim_step(self, adam_params: types.AdamParams) -> types.OptimStepResponse:
+        adam_params: types.AdamParams,
+        lora_id: str,
+    ) -> types.OptimStepResponse:
         """Abstract method for optimization step."""
 
     @abstractmethod
-    def save_state(self, name: str) -> None:
+    async def save_state(self, lora_id: str, lora_path: str) -> None:
         """Abstract method for saving model state."""
 
     @abstractmethod
-    def load_state(self, name: str) -> None:
+    async def load_state(self, lora_id: str, lora_path: str) -> None:
         """Abstract method for loading model state."""
+
+    @classmethod
+    def create_backend(cls, config: ModelConfig) -> "BaseTrainingBackend":
+        """Factory method to create a training backend instance."""
+        if os.getenv("LLM_RPC_CPU_TEST", "0") == "1":
+            from ..backends.training_backend import DummyTrainingBackend
+
+            return DummyTrainingBackend(config)
+        else:
+            from ..backends.training_backend import HFTrainingBackend
+
+            return HFTrainingBackend(config)

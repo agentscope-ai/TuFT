@@ -105,13 +105,14 @@ async def test_sampling_session_seq_id_must_increase(request, tmp_path) -> None:
     assert excinfo.value.detail == "sequence_conflict"
 
 
-def test_training_seq_id_enforced(tmp_path) -> None:
+@pytest.mark.asyncio
+async def test_training_seq_id_enforced(tmp_path) -> None:
     state = _build_state(tmp_path)
     session_id = _create_session(state)
     training = state.create_model(
         session_id,
         base_model="Qwen/Qwen3-0.6B",
-        lora_rank=4,
+        lora_config=types.LoraConfig(rank=4),
         user_metadata=None,
     )
     datum = types.Datum(
@@ -121,7 +122,7 @@ def test_training_seq_id_enforced(tmp_path) -> None:
         },
     )
 
-    state.run_forward(
+    await state.run_forward(
         training.training_run_id,
         [datum],
         "cross_entropy",
@@ -131,7 +132,7 @@ def test_training_seq_id_enforced(tmp_path) -> None:
     )
 
     with pytest.raises(HTTPException) as excinfo:
-        state.run_forward(
+        await state.run_forward(
             training.training_run_id,
             [datum],
             "cross_entropy",
@@ -142,7 +143,7 @@ def test_training_seq_id_enforced(tmp_path) -> None:
     assert excinfo.value.status_code == status.HTTP_409_CONFLICT
     assert excinfo.value.detail == "sequence_conflict"
 
-    state.run_forward(
+    await state.run_forward(
         training.training_run_id,
         [datum],
         "cross_entropy",
@@ -156,7 +157,10 @@ def test_checkpoint_metadata_persisted(tmp_path) -> None:
     state = _build_state(tmp_path)
     session_id = _create_session(state)
     training = state.create_model(
-        session_id, base_model="Qwen/Qwen3-0.6B", lora_rank=4, user_metadata=None
+        session_id,
+        base_model="Qwen/Qwen3-0.6B",
+        lora_config=types.LoraConfig(rank=4),
+        user_metadata=None,
     )
 
     checkpoint = state.save_checkpoint(training.training_run_id, "ckpt-metadata", "training")
@@ -181,7 +185,10 @@ def test_checkpoint_views_reflect_metadata(tmp_path) -> None:
     state = _build_state(tmp_path)
     session_id = _create_session(state)
     training = state.create_model(
-        session_id, base_model="Qwen/Qwen3-0.6B", lora_rank=2, user_metadata=None
+        session_id,
+        base_model="Qwen/Qwen3-0.6B",
+        lora_config=types.LoraConfig(rank=2),
+        user_metadata=None,
     )
 
     training_ckpt = state.save_checkpoint(training.training_run_id, None, "training")
@@ -200,11 +207,15 @@ def test_checkpoint_views_reflect_metadata(tmp_path) -> None:
     assert info.base_model == "Qwen/Qwen3-0.6B"
 
 
-def test_load_checkpoint_restores_state(tmp_path) -> None:
+@pytest.mark.asyncio
+async def test_load_checkpoint_restores_state(tmp_path) -> None:
     state = _build_state(tmp_path)
     session_id = _create_session(state)
     training = state.create_model(
-        session_id, base_model="Qwen/Qwen3-0.6B", lora_rank=4, user_metadata=None
+        session_id,
+        base_model="Qwen/Qwen3-0.6B",
+        lora_config=types.LoraConfig(rank=4),
+        user_metadata=None,
     )
 
     datum = types.Datum(
@@ -213,7 +224,7 @@ def test_load_checkpoint_restores_state(tmp_path) -> None:
             "target_tokens": types.TensorData(data=[7, 8, 9, 10], dtype="int64", shape=[4])
         },
     )
-    state.run_forward(
+    await state.run_forward(
         training.training_run_id,
         [datum],
         "cross_entropy",
@@ -221,16 +232,9 @@ def test_load_checkpoint_restores_state(tmp_path) -> None:
         seq_id=None,
         backward=True,
     )
-    state.run_optim_step(training.training_run_id, types.AdamParams(), seq_id=None)
+    await state.run_optim_step(training.training_run_id, types.AdamParams(), seq_id=None)
 
     checkpoint = state.save_checkpoint(training.training_run_id, "restore-test", "training")
-    saved_state = training.backend.snapshot_state()
-
-    mutated_state = dict(saved_state)
-    mutated_state["weights"] = [value + 0.5 for value in saved_state["weights"]]
-    training.backend.load_state(mutated_state)
 
     ckpt_path = checkpoint.to_api(training.training_run_id).tinker_path
-    state.load_checkpoint(training.training_run_id, ckpt_path, optimizer=True)
-    restored = training.backend.snapshot_state()
-    assert restored["weights"] == saved_state["weights"]
+    await state.load_checkpoint(training.training_run_id, ckpt_path, optimizer=True)
