@@ -86,10 +86,10 @@ class TrainingRunRecord:
     next_sampler_checkpoint: int = 1
     corrupted: bool = False
     next_seq_id: int = 1
-    _execution_lock: threading.Lock = field(init=False, repr=False)
+    _execution_lock: asyncio.Lock = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self._execution_lock = threading.Lock()
+        self._execution_lock = asyncio.Lock()
 
     def to_training_run(self, owner: str) -> types.TrainingRun:
         training_checkpoint = self._latest_checkpoint(self.checkpoints)
@@ -188,7 +188,7 @@ class TrainingController:
         seq_id: int | None,
         operation: Callable[[], Awaitable[T]],
     ) -> T:
-        with record._execution_lock:
+        async with record._execution_lock:
             if seq_id is not None:
                 self._reserve_seq_id(record, seq_id)
             return await operation()

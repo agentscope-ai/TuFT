@@ -227,8 +227,6 @@ class DummyTrainingBackend(BaseTrainingBackend):
 
     async def load_state(self, lora_id: str, lora_path: Path, optimizer: bool) -> None:
         # create a dummy adapter on load
-        if lora_id in self._adapters:
-            raise ValueError(f"Adapter {lora_id} already exists.")
         self._adapters[lora_id] = types.LoraConfig(rank=4)
 
     async def create_adapter(self, lora_id: str, lora_config: types.LoraConfig) -> None:
