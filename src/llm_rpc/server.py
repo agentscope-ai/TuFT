@@ -114,7 +114,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail="Missing LoRA config"
             )
-        training_record = state.create_model(
+        training_record = await state.create_model(
             session_id=request.session_id,
             base_model=request.base_model,
             lora_config=request.lora_config,

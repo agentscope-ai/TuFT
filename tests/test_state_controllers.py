@@ -108,7 +108,7 @@ async def test_sampling_session_seq_id_must_increase(request, tmp_path) -> None:
 async def test_training_seq_id_enforced(tmp_path) -> None:
     state = _build_state(tmp_path)
     session_id = _create_session(state)
-    training = state.create_model(
+    training = await state.create_model(
         session_id,
         base_model="Qwen/Qwen3-0.6B",
         lora_config=types.LoraConfig(rank=4),
@@ -156,7 +156,7 @@ async def test_training_seq_id_enforced(tmp_path) -> None:
 async def test_checkpoint_metadata_persisted(tmp_path) -> None:
     state = _build_state(tmp_path)
     session_id = _create_session(state)
-    training = state.create_model(
+    training = await state.create_model(
         session_id,
         base_model="Qwen/Qwen3-0.6B",
         lora_config=types.LoraConfig(rank=4),
@@ -183,7 +183,7 @@ async def test_checkpoint_metadata_persisted(tmp_path) -> None:
 async def test_checkpoint_views_reflect_metadata(tmp_path) -> None:
     state = _build_state(tmp_path)
     session_id = _create_session(state)
-    training = state.create_model(
+    training = await state.create_model(
         session_id,
         base_model="Qwen/Qwen3-0.6B",
         lora_config=types.LoraConfig(rank=2),
@@ -209,7 +209,7 @@ async def test_checkpoint_views_reflect_metadata(tmp_path) -> None:
 async def test_load_checkpoint_restores_state(tmp_path) -> None:
     state = _build_state(tmp_path)
     session_id = _create_session(state)
-    training = state.create_model(
+    training = await state.create_model(
         session_id,
         base_model="Qwen/Qwen3-0.6B",
         lora_config=types.LoraConfig(rank=4),

@@ -226,7 +226,6 @@ class HFTrainingModel:
         unpaded_logprobs = self._unpad_tensor(
             target_logprobs, [len(datum.model_input.to_ints()) for datum in data]
         )
-
         return types.ForwardBackwardOutput(
             loss_fn_output_type=loss_fn,
             loss_fn_outputs=[

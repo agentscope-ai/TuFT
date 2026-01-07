@@ -27,6 +27,7 @@ class FutureRecord:
     request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
 
+# TODO: refactor to use asyncio futures directly
 class FutureStore:
     """Runs controller work on a thread pool and tracks each request's lifecycle.
 
@@ -107,16 +108,28 @@ class FutureStore:
             record.status = "failed"
             record.error = failure
 
-    def retrieve(self, request_id: str) -> Any:
-        with self._lock:
-            record = self._records.get(request_id)
-        if record is None:
-            raise KeyError(request_id)
-        if record.status == "pending":
-            return TryAgainResponse(request_id=request_id, queue_state=record.queue_state)
-        if record.status == "failed" and record.error is not None:
-            return record.error
-        return record.payload
+    def retrieve(self, request_id: str, retry_interval: float = 1, max_retries: int = 10) -> Any:
+        """
+        Retrieve the result for a given request_id. If the status is 'pending',
+        automatically retry polling up to max_retries with a delay of retry_interval seconds.
+        """
+        import time
+
+        retries = 0
+        while True:
+            with self._lock:
+                record = self._records.get(request_id)
+            if record is None:
+                raise KeyError(request_id)
+            if record.status == "pending":
+                if retries >= max_retries:
+                    return TryAgainResponse(request_id=request_id, queue_state="active")
+                retries += 1
+                time.sleep(retry_interval)
+                continue
+            if record.status == "failed" and record.error is not None:
+                return record.error
+            return record.payload
 
     def shutdown(self) -> None:
         self._executor.shutdown(wait=False)

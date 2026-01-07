@@ -30,7 +30,7 @@ source .venv/bin/activate
 The CLI starts a FastAPI server:
 
 ```bash
-llm-rpc --port 8080 --checkpoint-dir ~/.cache/llm-rpc/checkpoints
+llm-rpc --port 8080 --checkpoint-dir ~/.cache/llm-rpc/checkpoints --model-config models.yaml
 ```
 
 ## End-to-end example

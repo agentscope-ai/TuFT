@@ -63,6 +63,14 @@ class BaseTrainingBackend(BaseBackend):
         """Abstract method for forward pass."""
 
     @abstractmethod
+    async def create_adapter(self, lora_id: str, lora_config: types.LoraConfig) -> None:
+        """Abstract method for creating LoRA adapter."""
+
+    @abstractmethod
+    async def remove_adapter(self, lora_id: str) -> None:
+        """Abstract method for removing LoRA adapter."""
+
+    @abstractmethod
     async def optim_step(
         self,
         adam_params: types.AdamParams,

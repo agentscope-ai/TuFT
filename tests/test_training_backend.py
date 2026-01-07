@@ -76,8 +76,8 @@ async def test_training_backend():
     await backend.async_init()
     assert backend.model is not None
 
-    await backend.create_lora_adapter("test_lora_1", types.LoraConfig(rank=8, seed=42))
-    await backend.create_lora_adapter("test_lora_2", types.LoraConfig(rank=8, seed=42))
+    await backend.create_adapter("test_lora_1", types.LoraConfig(rank=8, seed=42))
+    await backend.create_adapter("test_lora_2", types.LoraConfig(rank=8, seed=42))
 
     data = _construct_data()
     weights = np.concatenate([example.loss_fn_inputs["weights"].tolist() for example in data])

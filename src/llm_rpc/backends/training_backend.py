@@ -22,9 +22,12 @@ class HFTrainingBackend(BaseTrainingBackend):
     async def async_init(self) -> None:
         await self.model.async_init.remote()
 
-    async def create_lora_adapter(self, lora_id: str, lora_config: types.LoraConfig) -> None:
+    async def create_adapter(self, lora_id: str, lora_config: types.LoraConfig) -> None:
         """Create a LoRA adapter with the given ID and configuration."""
         await self.model.create_adapter.remote(lora_id, lora_config)
+
+    async def remove_adapter(self, lora_id: str) -> None:
+        await self.model.remove_adapter.remote(lora_id)
 
     async def forward(
         self,
@@ -105,6 +108,7 @@ class DummyTrainingBackend(BaseTrainingBackend):
         self._adam_m = np.zeros_like(self._weights)
         self._adam_v = np.zeros_like(self._weights)
         self._embedding_cache = {}
+        self._adapters = dict()
 
     async def async_init(self) -> None:
         pass
@@ -217,10 +221,21 @@ class DummyTrainingBackend(BaseTrainingBackend):
         return types.OptimStepResponse(metrics=metrics)
 
     async def save_state(self, lora_id: str, lora_path: Path, optimizer: bool) -> None:
-        pass
+        if lora_id not in self._adapters:
+            raise ValueError(f"Adapter {lora_id} does not exist.")
+        # dummy save
 
     async def load_state(self, lora_id: str, lora_path: Path, optimizer: bool) -> None:
-        pass
+        # create a dummy adapter on load
+        if lora_id in self._adapters:
+            raise ValueError(f"Adapter {lora_id} already exists.")
+        self._adapters[lora_id] = types.LoraConfig(rank=4)
+
+    async def create_adapter(self, lora_id: str, lora_config: types.LoraConfig) -> None:
+        self._adapters[lora_id] = lora_config
+
+    async def remove_adapter(self, lora_id: str) -> None:
+        self._adapters.pop(lora_id, None)
 
     # ------------------------------------------------------------------
     # Internal helpers

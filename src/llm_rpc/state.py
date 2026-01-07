@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import hashlib
 import json
+import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -85,10 +86,10 @@ class TrainingRunRecord:
     next_sampler_checkpoint: int = 1
     corrupted: bool = False
     next_seq_id: int = 1
-    _execution_lock: asyncio.Lock = field(init=False, repr=False)
+    _execution_lock: threading.Lock = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self._execution_lock = asyncio.Lock()
+        self._execution_lock = threading.Lock()
 
     def to_training_run(self, owner: str) -> types.TrainingRun:
         training_checkpoint = self._latest_checkpoint(self.checkpoints)
@@ -187,7 +188,7 @@ class TrainingController:
         seq_id: int | None,
         operation: Callable[[], Awaitable[T]],
     ) -> T:
-        async with record._execution_lock:
+        with record._execution_lock:
             if seq_id is not None:
                 self._reserve_seq_id(record, seq_id)
             return await operation()
@@ -201,7 +202,7 @@ class TrainingController:
             )
         record.next_seq_id += 1
 
-    def create_model(
+    async def create_model(
         self,
         session_id: str,
         base_model: str,
@@ -223,6 +224,7 @@ class TrainingController:
             backend=backend,
             user_metadata=user_metadata,
         )
+        await backend.create_adapter(model_id, lora_config)
         self.training_runs[model_id] = record
         return record
 
@@ -659,7 +661,7 @@ class ServerState:
     def heartbeat(self, session_id: str) -> None:
         self.sessions.heartbeat(session_id)
 
-    def create_model(
+    async def create_model(
         self,
         session_id: str,
         base_model: str,
@@ -667,7 +669,7 @@ class ServerState:
         user_metadata: dict[str, str] | None,
     ) -> TrainingRunRecord:
         self.sessions.require(session_id)
-        return self.training.create_model(session_id, base_model, lora_config, user_metadata)
+        return await self.training.create_model(session_id, base_model, lora_config, user_metadata)
 
     def get_training_run(self, model_id: str) -> TrainingRunRecord:
         return self.training.get_run_record(model_id)
