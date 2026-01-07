@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict
+from typing import TYPE_CHECKING, Dict
 
 import ray
 import torch
@@ -11,6 +11,9 @@ from llm_rpc.config import ModelConfig
 from llm_rpc.loss_fn import get_loss_fn
 from tinker import types
 from tinker.types import LoraConfig as TinkerLoraConfig
+
+if TYPE_CHECKING:
+    from ray.actor import ActorHandle
 
 MODULE_MAP = {
     "llama": {
@@ -268,7 +271,7 @@ class HFTrainingModel:
         self.model.set_adapter(lora_id)
 
     @classmethod
-    def get_actor(cls, config: ModelConfig) -> "ray.actor.ActorHandle":
+    def get_actor(cls, config: ModelConfig) -> "ActorHandle":
         return (
             ray.remote(cls)
             .options(
