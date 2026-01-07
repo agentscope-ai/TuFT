@@ -268,7 +268,7 @@ class HFTrainingModel:
         self.model.set_adapter(lora_id)
 
     @classmethod
-    def get_actor(cls, config: ModelConfig):
+    def get_actor(cls, config: ModelConfig) -> "ray.actor.ActorHandle":
         return (
             ray.remote(cls)
             .options(
