@@ -48,7 +48,10 @@ def _construct_data() -> List[types.Datum]:
         data.append(
             types.Datum(
                 model_input=types.ModelInput.from_ints(tokens=input_tokens),
-                loss_fn_inputs=dict(weights=weights, target_tokens=target_tokens),
+                loss_fn_inputs=dict(
+                    weights=types.TensorData(data=weights, dtype="float32"),
+                    target_tokens=types.TensorData(data=target_tokens, dtype="int64"),
+                ),
             )
         )
     return data

@@ -13,7 +13,7 @@ from tinker import types
 from tinker.types import LoraConfig as TinkerLoraConfig
 
 if TYPE_CHECKING:
-    from ray.actor import ActorHandle
+    from ray.actor import ActorProxy
 
 MODULE_MAP = {
     "llama": {
@@ -271,7 +271,7 @@ class HFTrainingModel:
         self.model.set_adapter(lora_id)
 
     @classmethod
-    def get_actor(cls, config: ModelConfig) -> "ActorHandle":
+    def get_actor(cls, config: ModelConfig) -> "ActorProxy":
         return (
             ray.remote(cls)
             .options(
