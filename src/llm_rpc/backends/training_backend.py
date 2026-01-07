@@ -69,11 +69,15 @@ class HFTrainingBackend(BaseTrainingBackend):
 
     async def save_state(self, lora_id: str, lora_path: Path, optimizer: bool) -> None:
         """Save the state of the specified LoRA adapter."""
-        await self.model.save_adapter.remote(lora_id, lora_path, optimizer=optimizer)
+        await self.model.save_state.remote(
+            lora_id=lora_id, save_path=lora_path, optimizer=optimizer
+        )
 
     async def load_state(self, lora_id: str, lora_path: Path, optimizer: bool) -> None:
         """Load the state of the specified LoRA adapter from the given path."""
-        await self.model.load_adapter.remote(lora_id, lora_path, optimizer=optimizer)
+        await self.model.load_state.remote(
+            lora_id=lora_id, load_path=lora_path, optimizer=optimizer
+        )
 
 
 @dataclass

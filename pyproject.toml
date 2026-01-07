@@ -13,12 +13,14 @@ dependencies = [
     "uvicorn[standard]>=0.38.0",
     "omegaconf>=2.3.0",
     "ray>=2.50.0",
+    "transformers>=4.57.3",
+    "peft>=0.18.0",
 ]
 
 [project.scripts]
 "llm-rpc" = "llm_rpc.cli:main"
 
-[dependency-groups]
+[project.optional-dependencies]
 dev = [
     "pre-commit>=4.5.1",
     "pyright>=1.1.407",
