@@ -20,7 +20,7 @@ dependencies = [
 [project.scripts]
 "llm-rpc" = "llm_rpc.cli:main"
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "pre-commit>=4.5.1",
     "pyright>=1.1.407",
