@@ -128,7 +128,7 @@ class FutureStore:
         self,
         request_id: str,
         *,
-        timeout: float=120,
+        timeout: float = 120,
     ) -> Any:
         """
         Retrieve the result of a future, waiting if it's still pending.

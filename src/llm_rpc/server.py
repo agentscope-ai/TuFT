@@ -144,7 +144,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         request: types.UnloadModelRequest,
         state: ServerState = Depends(_get_state),
     ) -> types.UntypedAPIFuture:
-        state.unload_model(request.model_id)
+        await state.unload_model(request.model_id)
         response = types.UnloadModelResponse(model_id=request.model_id)
         return await state.future_store.create_ready_future(response, model_id=request.model_id)
 

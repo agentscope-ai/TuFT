@@ -6,7 +6,6 @@ import asyncio
 import contextlib
 import hashlib
 import json
-import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -279,9 +278,12 @@ class TrainingController:
 
         return await self._with_sequence_guard(record, seq_id, _operation)
 
-    def unload_model(self, model_id: str) -> None:
+    async def unload_model(self, model_id: str) -> None:
+        # TODO: Ensure that all created training runs can be unloaded to reduce
+        # GPU memory usage.
         if model_id not in self.training_runs:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown model")
+        await self.training_runs[model_id].backend.remove_adapter(model_id)
         del self.training_runs[model_id]
 
     def list_training_runs(
@@ -615,7 +617,7 @@ class SamplingController:
             topk_prompt_logprobs=topk_prompt_logprobs,
         )
 
-    def evict_model(self, model_id: str) -> None:
+    async def evict_model(self, model_id: str) -> None:
         for sampling_id, record in list(self.sampling_sessions.items()):
             if record.model_id == model_id:
                 del self.sampling_sessions[sampling_id]
@@ -765,9 +767,9 @@ class ServerState:
     def get_model_info(self, model_id: str) -> types.GetInfoResponse:
         return self.training.get_model_info(model_id)
 
-    def unload_model(self, model_id: str) -> None:
-        self.training.unload_model(model_id)
-        self.sampling.evict_model(model_id)
+    async def unload_model(self, model_id: str) -> None:
+        await self.training.unload_model(model_id)
+        await self.sampling.evict_model(model_id)
 
     def get_session_overview(self, session_id: str) -> types.GetSessionResponse:
         self.sessions.require(session_id)

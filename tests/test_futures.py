@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import time
 import asyncio
+import time
+
 import pytest
 from fastapi import HTTPException
 

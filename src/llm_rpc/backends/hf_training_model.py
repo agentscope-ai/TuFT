@@ -69,7 +69,7 @@ class HFTrainingModel:
         peft_config = LoraConfig(
             r=lora_config.rank,
             target_modules=get_target_modules(str(self.config.model_path), lora_config),
-            lora_alpha=lora_config.rank * 2,
+            lora_alpha=lora_config.rank,
         )
 
         self.model.add_adapter(adapter_name=lora_id, peft_config=peft_config)
@@ -322,6 +322,7 @@ class HFTrainingModel:
         model = AutoModelForCausalLM.from_pretrained(
             str(config.model_path),
             torch_dtype="auto",
+            device_map="auto",
         )
         peft_config = LoraConfig()
         peft_model = get_peft_model(model, peft_config=peft_config, adapter_name="default")
