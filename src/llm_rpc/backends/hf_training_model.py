@@ -69,6 +69,8 @@ class HFTrainingModel:
         peft_config = LoraConfig(
             r=lora_config.rank,
             target_modules=get_target_modules(str(self.config.model_path), lora_config),
+            # TODO: here we set lora_alpha equal to rank for common practice,
+            # but we may expose it in the future if needed.
             lora_alpha=lora_config.rank,
         )
 
