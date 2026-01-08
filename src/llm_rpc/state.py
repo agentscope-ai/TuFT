@@ -6,19 +6,17 @@ import asyncio
 import contextlib
 import hashlib
 import json
-import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable, Dict, List, TypeVar
+from typing import Awaitable, Callable, Dict, List, TypeVar
 
 from fastapi import HTTPException, status
 
 from tinker import types
 
-from .backend import ModelBackend, build_backend
-from .backends import BaseSamplingBackend
+from .backends import BaseSamplingBackend, BaseTrainingBackend
 from .config import AppConfig, ModelConfig
 from .futures import FutureStore
 
@@ -67,6 +65,9 @@ class CheckpointRecord:
             public=self.public,
         )
 
+    def get_metadata(self) -> Dict:
+        return json.loads((self.path / "metadata.json").read_text(encoding="utf-8"))
+
 
 @dataclass
 class TrainingRunRecord:
@@ -74,7 +75,7 @@ class TrainingRunRecord:
     base_model: str
     lora_rank: int
     session_id: str
-    backend: ModelBackend
+    backend: BaseTrainingBackend
     user_metadata: dict[str, str] | None
     created_at: datetime = field(default_factory=_now)
     last_request_time: datetime = field(default_factory=_now)
@@ -84,10 +85,10 @@ class TrainingRunRecord:
     next_sampler_checkpoint: int = 1
     corrupted: bool = False
     next_seq_id: int = 1
-    _execution_lock: threading.Lock = field(init=False, repr=False)
+    _execution_lock: asyncio.Lock = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self._execution_lock = threading.Lock()
+        self._execution_lock = asyncio.Lock()
 
     def to_training_run(self, owner: str) -> types.TrainingRun:
         training_checkpoint = self._latest_checkpoint(self.checkpoints)
@@ -171,18 +172,25 @@ class TrainingController:
 
     def __init__(self, config: AppConfig) -> None:
         self.config = config
+        self.training_backends = self._create_backends(config.supported_models)
         self.training_runs: Dict[str, TrainingRunRecord] = {}
 
-    def _with_sequence_guard(
+    def _create_backends(self, model_configs: List[ModelConfig]) -> Dict[str, BaseTrainingBackend]:
+        backends: Dict[str, BaseTrainingBackend] = {}
+        for config in model_configs:
+            backends[config.model_name] = BaseTrainingBackend.create_backend(config)
+        return backends
+
+    async def _with_sequence_guard(
         self,
         record: TrainingRunRecord,
         seq_id: int | None,
-        operation: Callable[[], T],
+        operation: Callable[[], Awaitable[T]],
     ) -> T:
-        with record._execution_lock:
+        async with record._execution_lock:
             if seq_id is not None:
                 self._reserve_seq_id(record, seq_id)
-            return operation()
+            return await operation()
 
     def _reserve_seq_id(self, record: TrainingRunRecord, seq_id: int) -> None:
         expected = record.next_seq_id
@@ -193,29 +201,33 @@ class TrainingController:
             )
         record.next_seq_id += 1
 
-    def create_model(
+    async def create_model(
         self,
         session_id: str,
         base_model: str,
-        lora_rank: int,
+        lora_config: types.LoraConfig,
         user_metadata: dict[str, str] | None,
     ) -> TrainingRunRecord:
         model_id = str(uuid.uuid4())
-        backend = build_backend(
-            base_model=base_model, lora_rank=lora_rank, seed=self.config.toy_backend_seed
-        )
+        if base_model not in self.training_backends:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"Unknown base model {base_model}",
+            )
+        backend = self.training_backends[base_model]
         record = TrainingRunRecord(
             training_run_id=model_id,
             base_model=base_model,
-            lora_rank=lora_rank,
+            lora_rank=lora_config.rank,
             session_id=session_id,
             backend=backend,
             user_metadata=user_metadata,
         )
+        await backend.create_adapter(model_id, lora_config)
         self.training_runs[model_id] = record
         return record
 
-    def get(self, model_id: str) -> TrainingRunRecord:
+    def get_run_record(self, model_id: str) -> TrainingRunRecord:
         record = self.training_runs.get(model_id)
         if record is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown model")
@@ -228,10 +240,10 @@ class TrainingController:
         ]
 
     def update_activity(self, model_id: str) -> None:
-        record = self.get(model_id)
+        record = self.get_run_record(model_id)
         record.last_request_time = _now()
 
-    def run_forward(
+    async def run_forward(
         self,
         model_id: str,
         data: list[types.Datum],
@@ -241,26 +253,37 @@ class TrainingController:
         *,
         backward: bool,
     ) -> types.ForwardBackwardOutput:
-        record = self.get(model_id)
+        record = self.get_run_record(model_id)
         self.update_activity(model_id)
 
-        def _operation() -> types.ForwardBackwardOutput:
-            if backward:
-                return record.backend.forward_backward(data, loss_fn, loss_fn_config)
-            return record.backend.forward(data, loss_fn, loss_fn_config)
+        async def _operation() -> types.ForwardBackwardOutput:
+            return await record.backend.forward(
+                data,
+                lora_id=model_id,
+                loss_fn=loss_fn,
+                loss_fn_config=loss_fn_config,
+                backward=backward,
+            )
 
-        return self._with_sequence_guard(record, seq_id, _operation)
+        return await self._with_sequence_guard(record, seq_id, _operation)
 
-    def run_optim_step(
+    async def run_optim_step(
         self, model_id: str, params: types.AdamParams, seq_id: int | None
     ) -> types.OptimStepResponse:
-        record = self.get(model_id)
+        record = self.get_run_record(model_id)
         self.update_activity(model_id)
-        return self._with_sequence_guard(record, seq_id, lambda: record.backend.optim_step(params))
 
-    def unload_model(self, model_id: str) -> None:
+        async def _operation() -> types.OptimStepResponse:
+            return await record.backend.optim_step(adam_params=params, lora_id=model_id)
+
+        return await self._with_sequence_guard(record, seq_id, _operation)
+
+    async def unload_model(self, model_id: str) -> None:
+        # TODO: Ensure that all created training runs can be unloaded to reduce
+        # GPU memory usage.
         if model_id not in self.training_runs:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown model")
+        await self.training_runs[model_id].backend.remove_adapter(model_id)
         del self.training_runs[model_id]
 
     def list_training_runs(
@@ -279,11 +302,11 @@ class TrainingController:
         return types.TrainingRunsResponse(training_runs=paged, cursor=cursor)
 
     def get_training_run_view(self, model_id: str) -> types.TrainingRun:
-        record = self.get(model_id)
+        record = self.get_run_record(model_id)
         return record.to_training_run(self.config.model_owner)
 
     def get_model_info(self, model_id: str) -> types.GetInfoResponse:
-        record = self.get(model_id)
+        record = self.get_run_record(model_id)
         model_data = types.ModelData(
             arch="toy-transformer",
             model_name=record.base_model,
@@ -308,16 +331,7 @@ class CheckpointStore:
         self,
         training_run: TrainingRunRecord,
         checkpoint: CheckpointRecord,
-        model_state: object | None = None,
     ) -> None:
-        existing_state: object | None = None
-        if checkpoint.path.exists():
-            try:
-                existing = json.loads(checkpoint.path.read_text())
-                existing_state = existing.get("model_state")
-            except json.JSONDecodeError:
-                existing_state = None
-
         payload = {
             "model_id": training_run.training_run_id,
             "checkpoint_type": checkpoint.checkpoint_type,
@@ -329,14 +343,14 @@ class CheckpointStore:
             "size_bytes": checkpoint.size_bytes,
             "public": checkpoint.public,
             "tinker_path": checkpoint.to_api(training_run.training_run_id).tinker_path,
-            "model_state": model_state if model_state is not None else existing_state,
         }
-        checkpoint.path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        metadata_path = checkpoint.path / "metadata.json"
+        metadata_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         checkpoint.size_bytes = checkpoint.path.stat().st_size
         payload["size_bytes"] = checkpoint.size_bytes
-        checkpoint.path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        metadata_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
-    def save_checkpoint(
+    async def save_checkpoint(
         self,
         training_run: TrainingRunRecord,
         name: str | None,
@@ -350,14 +364,15 @@ class CheckpointStore:
         counter = getattr(training_run, counter_attr)
         checkpoint_name = name or f"checkpoint-{counter:04d}"
         setattr(training_run, counter_attr, counter + 1)
-        folder = "weights" if checkpoint_type == "training" else "sampler_weights"
-        path = self.config.checkpoint_dir / training_run.training_run_id / folder / checkpoint_name
-        path.parent.mkdir(parents=True, exist_ok=True)
+        checkpoint_dir = self.config.checkpoint_dir / training_run.training_run_id / checkpoint_name
+        # todo: check and handle existing checkpoint with same name
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
         created = _now()
+        # for sampler type, optmizer state is not saved
         checkpoint = CheckpointRecord(
             checkpoint_id=checkpoint_name,
             checkpoint_type=checkpoint_type,
-            path=path,
+            path=checkpoint_dir,
             created_at=created,
             size_bytes=0,
         )
@@ -367,11 +382,17 @@ class CheckpointStore:
             else training_run.sampler_checkpoints
         )
         target_map[checkpoint_name] = checkpoint
-        backend_state = training_run.backend.snapshot_state()
-        self._write_metadata(training_run, checkpoint, backend_state)
+        await training_run.backend.save_state(
+            lora_id=training_run.training_run_id,
+            lora_path=checkpoint_dir,
+            optimizer=(checkpoint_type == "training"),
+        )
+        self._write_metadata(training_run, checkpoint)
         return checkpoint
 
-    def load_checkpoint(self, training_run: TrainingRunRecord, path: str, optimizer: bool) -> None:
+    async def load_checkpoint(
+        self, training_run: TrainingRunRecord, path: str, optimizer: bool
+    ) -> None:
         _ = optimizer
         parsed = types.ParsedCheckpointTinkerPath.from_tinker_path(path)
         if parsed.training_run_id != training_run.training_run_id:
@@ -390,20 +411,9 @@ class CheckpointStore:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Checkpoint not found"
             )
-        try:
-            document = json.loads(checkpoint.path.read_text())
-        except json.JSONDecodeError as exc:  # pragma: no cover - corrupt file
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Corrupted checkpoint metadata",
-            ) from exc
-        model_state = document.get("model_state")
-        if model_state is None:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Checkpoint missing model state",
-            )
-        training_run.backend.load_state(model_state)
+        await training_run.backend.load_state(
+            lora_id=training_run.training_run_id, lora_path=checkpoint.path, optimizer=optimizer
+        )
 
     def delete_checkpoint(self, training_run: TrainingRunRecord, checkpoint_id: str) -> None:
         removed = training_run.checkpoints.pop(checkpoint_id, None)
@@ -517,7 +527,8 @@ class SamplingController:
             )
         else:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Missing model reference"
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Missing model reference",
             )
         sampling_session_id = str(uuid.uuid4())
         self.sampling_sessions[sampling_session_id] = SamplingSessionRecord(
@@ -563,7 +574,8 @@ class SamplingController:
             record = self.sampling_sessions.get(request.sampling_session_id)
             if record is None:
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND, detail="Unknown sampling session"
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Unknown sampling session",
                 )
             if request.seq_id is None:
                 raise HTTPException(
@@ -586,7 +598,8 @@ class SamplingController:
                 )
             return backend
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="No model specified for sampling"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No model specified for sampling",
         )
 
     async def run_sample(self, request: types.SampleRequest) -> types.SampleResponse:
@@ -604,7 +617,7 @@ class SamplingController:
             topk_prompt_logprobs=topk_prompt_logprobs,
         )
 
-    def evict_model(self, model_id: str) -> None:
+    async def evict_model(self, model_id: str) -> None:
         for sampling_id, record in list(self.sampling_sessions.items()):
             if record.model_id == model_id:
                 del self.sampling_sessions[sampling_id]
@@ -617,7 +630,7 @@ class SamplingController:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown sampler")
         base = record.base_model
         if base is None and record.model_id:
-            base = self._training.get(record.model_id).base_model
+            base = self._training.get_run_record(record.model_id).base_model
         return types.GetSamplerResponse(
             sampler_id=sampler_id,
             base_model=base or default_base_model,
@@ -650,23 +663,23 @@ class ServerState:
     def heartbeat(self, session_id: str) -> None:
         self.sessions.heartbeat(session_id)
 
-    def create_model(
+    async def create_model(
         self,
         session_id: str,
         base_model: str,
-        lora_rank: int,
+        lora_config: types.LoraConfig,
         user_metadata: dict[str, str] | None,
     ) -> TrainingRunRecord:
         self.sessions.require(session_id)
-        return self.training.create_model(session_id, base_model, lora_rank, user_metadata)
+        return await self.training.create_model(session_id, base_model, lora_config, user_metadata)
 
     def get_training_run(self, model_id: str) -> TrainingRunRecord:
-        return self.training.get(model_id)
+        return self.training.get_run_record(model_id)
 
     def build_supported_models(self) -> list[types.SupportedModel]:
         return self.training.build_supported_models()
 
-    def run_forward(
+    async def run_forward(
         self,
         model_id: str,
         data: list[types.Datum],
@@ -676,14 +689,14 @@ class ServerState:
         *,
         backward: bool,
     ) -> types.ForwardBackwardOutput:
-        return self.training.run_forward(
+        return await self.training.run_forward(
             model_id, data, loss_fn, loss_fn_config, seq_id, backward=backward
         )
 
-    def run_optim_step(
+    async def run_optim_step(
         self, model_id: str, params: types.AdamParams, seq_id: int | None
     ) -> types.OptimStepResponse:
-        return self.training.run_optim_step(model_id, params, seq_id)
+        return await self.training.run_optim_step(model_id, params, seq_id)
 
     def create_sampling_session(
         self,
@@ -704,43 +717,43 @@ class ServerState:
     async def run_sample(self, request: types.SampleRequest) -> types.SampleResponse:
         return await self.sampling.run_sample(request)
 
-    def save_checkpoint(
+    async def save_checkpoint(
         self,
         model_id: str,
         name: str | None,
         checkpoint_type: types.CheckpointType,
     ) -> CheckpointRecord:
-        training_run = self.training.get(model_id)
-        return self.checkpoints.save_checkpoint(training_run, name, checkpoint_type)
+        training_run = self.training.get_run_record(model_id)
+        return await self.checkpoints.save_checkpoint(training_run, name, checkpoint_type)
 
-    def load_checkpoint(self, model_id: str, path: str, optimizer: bool) -> None:
-        training_run = self.training.get(model_id)
-        self.checkpoints.load_checkpoint(training_run, path, optimizer)
+    async def load_checkpoint(self, model_id: str, path: str, optimizer: bool) -> None:
+        training_run = self.training.get_run_record(model_id)
+        await self.checkpoints.load_checkpoint(training_run, path, optimizer)
 
     def delete_checkpoint(self, model_id: str, checkpoint_id: str) -> None:
-        training_run = self.training.get(model_id)
+        training_run = self.training.get_run_record(model_id)
         self.checkpoints.delete_checkpoint(training_run, checkpoint_id)
 
     def list_checkpoints(self, model_id: str) -> list[types.Checkpoint]:
-        training_run = self.training.get(model_id)
+        training_run = self.training.get_run_record(model_id)
         return self.checkpoints.list_checkpoints(training_run)
 
     def list_user_checkpoints(self) -> list[types.Checkpoint]:
         return self.checkpoints.list_user_checkpoints(self.training.training_runs)
 
     def set_checkpoint_visibility(self, model_id: str, checkpoint_id: str, *, public: bool) -> None:
-        training_run = self.training.get(model_id)
+        training_run = self.training.get_run_record(model_id)
         self.checkpoints.set_visibility(training_run, checkpoint_id, public=public)
 
     def get_weights_info(self, tinker_path: str) -> types.WeightsInfoResponse:
         parsed = types.ParsedCheckpointTinkerPath.from_tinker_path(tinker_path)
-        training_run = self.training.get(parsed.training_run_id)
+        training_run = self.training.get_run_record(parsed.training_run_id)
         return self.checkpoints.get_weights_info(training_run)
 
     def build_archive_url(
         self, model_id: str, checkpoint_id: str
     ) -> types.CheckpointArchiveUrlResponse:
-        training_run = self.training.get(model_id)
+        training_run = self.training.get_run_record(model_id)
         return self.checkpoints.build_archive_url(training_run, checkpoint_id)
 
     def list_training_runs(
@@ -754,9 +767,9 @@ class ServerState:
     def get_model_info(self, model_id: str) -> types.GetInfoResponse:
         return self.training.get_model_info(model_id)
 
-    def unload_model(self, model_id: str) -> None:
-        self.training.unload_model(model_id)
-        self.sampling.evict_model(model_id)
+    async def unload_model(self, model_id: str) -> None:
+        await self.training.unload_model(model_id)
+        await self.sampling.evict_model(model_id)
 
     def get_session_overview(self, session_id: str) -> types.GetSessionResponse:
         self.sessions.require(session_id)
