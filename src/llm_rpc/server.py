@@ -114,14 +114,14 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail="Missing LoRA config"
             )
-        training_record = state.create_model(
+        training_record = await state.create_model(
             session_id=request.session_id,
             base_model=request.base_model,
-            lora_rank=request.lora_config.rank,
+            lora_config=request.lora_config,
             user_metadata=request.user_metadata,
         )
         response = types.CreateModelResponse(model_id=training_record.training_run_id)
-        return state.future_store.create_ready_future(
+        return await state.future_store.create_ready_future(
             response, model_id=training_record.training_run_id
         )
 
@@ -144,17 +144,17 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         request: types.UnloadModelRequest,
         state: ServerState = Depends(_get_state),
     ) -> types.UntypedAPIFuture:
-        state.unload_model(request.model_id)
+        await state.unload_model(request.model_id)
         response = types.UnloadModelResponse(model_id=request.model_id)
-        return state.future_store.create_ready_future(response, model_id=request.model_id)
+        return await state.future_store.create_ready_future(response, model_id=request.model_id)
 
-    def _queue_future(
+    async def _queue_future(
         operation: Callable[[], Any],
         state: ServerState,
         *,
         model_id: str | None = None,
     ) -> types.UntypedAPIFuture:
-        return state.future_store.enqueue(operation, model_id=model_id)
+        return await state.future_store.enqueue(operation, model_id=model_id)
 
     @app.post(
         "/api/v1/forward",
@@ -167,8 +167,8 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
     ) -> types.UntypedAPIFuture:
         inp = request.forward_input
 
-        def _operation() -> types.ForwardBackwardOutput:
-            return state.run_forward(
+        async def _operation() -> types.ForwardBackwardOutput:
+            return await state.run_forward(
                 request.model_id,
                 inp.data,
                 inp.loss_fn,
@@ -177,7 +177,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
                 backward=False,
             )
 
-        return _queue_future(_operation, state, model_id=request.model_id)
+        return await _queue_future(_operation, state, model_id=request.model_id)
 
     @app.post(
         "/api/v1/forward_backward",
@@ -190,8 +190,8 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
     ) -> types.UntypedAPIFuture:
         inp = request.forward_backward_input
 
-        def _operation() -> types.ForwardBackwardOutput:
-            return state.run_forward(
+        async def _operation() -> types.ForwardBackwardOutput:
+            return await state.run_forward(
                 request.model_id,
                 inp.data,
                 inp.loss_fn,
@@ -200,7 +200,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
                 backward=True,
             )
 
-        return _queue_future(_operation, state, model_id=request.model_id)
+        return await _queue_future(_operation, state, model_id=request.model_id)
 
     @app.post(
         "/api/v1/optim_step",
@@ -211,8 +211,11 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         request: types.OptimStepRequest,
         state: ServerState = Depends(_get_state),
     ) -> types.UntypedAPIFuture:
-        return _queue_future(
-            lambda: state.run_optim_step(request.model_id, request.adam_params, request.seq_id),
+        async def _operation() -> types.OptimStepResponse:
+            return await state.run_optim_step(request.model_id, request.adam_params, request.seq_id)
+
+        return await _queue_future(
+            _operation,
             state,
             model_id=request.model_id,
         )
@@ -226,11 +229,11 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         request: types.SaveWeightsRequest,
         state: ServerState = Depends(_get_state),
     ) -> types.UntypedAPIFuture:
-        def _operation() -> types.SaveWeightsResponse:
-            checkpoint = state.save_checkpoint(request.model_id, request.path, "training")
+        async def _operation() -> types.SaveWeightsResponse:
+            checkpoint = await state.save_checkpoint(request.model_id, request.path, "training")
             return types.SaveWeightsResponse(path=checkpoint.to_api(request.model_id).tinker_path)
 
-        return _queue_future(_operation, state, model_id=request.model_id)
+        return await _queue_future(_operation, state, model_id=request.model_id)
 
     @app.post(
         "/api/v1/save_weights_for_sampler",
@@ -241,13 +244,13 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         request: types.SaveWeightsForSamplerRequest,
         state: ServerState = Depends(_get_state),
     ) -> types.UntypedAPIFuture:
-        def _operation() -> types.SaveWeightsForSamplerResponse:
-            checkpoint = state.save_checkpoint(request.model_id, request.path, "sampler")
+        async def _operation() -> types.SaveWeightsForSamplerResponse:
+            checkpoint = await state.save_checkpoint(request.model_id, request.path, "sampler")
             return types.SaveWeightsForSamplerResponse(
                 path=checkpoint.to_api(request.model_id).tinker_path
             )
 
-        return _queue_future(_operation, state, model_id=request.model_id)
+        return await _queue_future(_operation, state, model_id=request.model_id)
 
     @app.post(
         "/api/v1/load_weights",
@@ -258,11 +261,11 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         request: types.LoadWeightsRequest,
         state: ServerState = Depends(_get_state),
     ) -> types.UntypedAPIFuture:
-        def _operation() -> types.LoadWeightsResponse:
-            state.load_checkpoint(request.model_id, request.path, request.optimizer)
+        async def _operation() -> types.LoadWeightsResponse:
+            await state.load_checkpoint(request.model_id, request.path, request.optimizer)
             return types.LoadWeightsResponse(path=request.path)
 
-        return _queue_future(_operation, state, model_id=request.model_id)
+        return await _queue_future(_operation, state, model_id=request.model_id)
 
     @app.post(
         "/api/v1/asample",
@@ -273,7 +276,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         request: types.SampleRequest,
         state: ServerState = Depends(_get_state),
     ) -> types.UntypedAPIFuture:
-        return _queue_future(partial(state.run_sample, request=request), state)
+        return await _queue_future(partial(state.run_sample, request=request), state)
 
     @app.post("/api/v1/retrieve_future")
     async def retrieve_future(
@@ -281,7 +284,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         state: ServerState = Depends(_get_state),
     ) -> Any:
         try:
-            payload = state.future_store.retrieve(request.request_id)
+            payload = await state.future_store.retrieve(request.request_id)
         except KeyError as exc:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Unknown request_id"
