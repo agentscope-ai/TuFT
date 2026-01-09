@@ -324,8 +324,6 @@ class TrainingController:
 class CheckpointStore:
     """Bridges in-memory checkpoint metadata with the JSON blobs persisted on disk."""
 
-    # TODO: Add visibility checks when accessing checkpoints.
-
     def __init__(self, config: AppConfig) -> None:
         self.config = config
 
@@ -384,7 +382,9 @@ class CheckpointStore:
                 status_code=status.HTTP_404_NOT_FOUND, detail="Checkpoint not found"
             )
         metadata = self._load_metadata(checkpoint_path)
-        # TODO: add visibility checks
+
+        # TODO: check if the lora_checkpoint belongs to the current user or is public
+
         base_model = metadata["base_model"]
         lora_checkpoint_path = checkpoint_path / "adapter"
         return base_model, lora_checkpoint_path
@@ -435,6 +435,7 @@ class CheckpointStore:
     ) -> None:
         _ = optimizer
         parsed = types.ParsedCheckpointTinkerPath.from_tinker_path(path)
+        # TODO: check ownership and visibility
         if parsed.training_run_id != training_run.training_run_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -589,7 +590,7 @@ class SamplingController:
         self.sampling_sessions[sampling_session_id] = SamplingSessionRecord(
             sampling_session_id=sampling_session_id,
             session_id=session_id,
-            model_id=base_model_ref,
+            model_id=sampling_session_id,
             base_model=base_model_ref,
             model_path=str(adapter_path) if adapter_path else None,
             session_seq_id=session_seq_id,
@@ -616,14 +617,6 @@ class SamplingController:
         )
         record.history.append(entry)
 
-    def _resolve_backend_from_record(self, record: SamplingSessionRecord) -> BaseSamplingBackend:
-        # TODO: support model_id mapping to a lora request structure
-        if record.base_model:
-            return self._base_backends[record.base_model]
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Broken sampling session"
-        )
-
     def resolve_backend(self, request: types.SampleRequest) -> BaseSamplingBackend:
         if request.sampling_session_id:
             record = self.sampling_sessions.get(request.sampling_session_id)
@@ -638,23 +631,15 @@ class SamplingController:
                     detail="Missing seq_id for sampling session",
                 )
             self._record_sequence(record, request.seq_id, request.prompt)
-            return self._resolve_backend_from_record(record)
-        if request.model_path:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="Sampling from trained models is not supported yet",
-            )
-        if request.base_model:
-            backend = self._base_backends.get(request.base_model)
-            if backend is None:
+            if record.base_model not in self._base_backends:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    detail="Unknown base model %s".format(),
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Sampling session has unknown base model",
                 )
-            return backend
+            return self._base_backends[record.base_model]
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No model specified for sampling",
+            detail="Sampling Session ID is required for sampling",
         )
 
     async def run_sample(self, request: types.SampleRequest) -> types.SampleResponse:
@@ -670,6 +655,7 @@ class SamplingController:
             sampling_params=sampling_params,
             include_prompt_logprobs=include_prompt_logprobs,
             topk_prompt_logprobs=topk_prompt_logprobs,
+            lora_id=request.sampling_session_id,
         )
 
     async def evict_model(self, model_id: str) -> None:
