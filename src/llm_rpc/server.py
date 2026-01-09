@@ -93,7 +93,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         request: types.CreateSamplingSessionRequest,
         state: ServerState = Depends(_get_state),
     ) -> types.CreateSamplingSessionResponse:
-        sampling_session_id = state.create_sampling_session(
+        sampling_session_id = await state.create_sampling_session(
             session_id=request.session_id,
             base_model=request.base_model,
             model_path=request.model_path,

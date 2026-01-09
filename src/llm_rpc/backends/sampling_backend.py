@@ -1,6 +1,8 @@
 """Sampling backend implementated using vLLM"""
 
+import asyncio
 from logging import getLogger
+from pathlib import Path
 from typing import Optional
 
 from tinker import types
@@ -24,6 +26,8 @@ class VLLMSamplingBackend(BaseSamplingBackend):
         super().__init__(config)
         self.engine = self._create_engine(config)
         self.lora_adapters: dict[str, LoRARequest] = {}
+        self._counter = 1
+        self._lock = asyncio.Lock()
 
     def _create_engine(self, config: ModelConfig):
         import ray
@@ -56,6 +60,8 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                     logprobs=config.logprobs,
                     min_response_tokens=config.min_response_tokens,
                     repetition_penalty=1.0,
+                    enable_lora=True,
+                    enable_runtime_lora_updating=True,
                 )
             )
         )
@@ -75,6 +81,8 @@ class VLLMSamplingBackend(BaseSamplingBackend):
         lora_id: Optional[str] = None,
     ) -> types.SampleResponse:
         """Sampling using vLLM engine."""
+        if lora_id is not None and lora_id not in self.lora_adapters:
+            raise ValueError(f"LoRA adapter {lora_id} not found in backend.")
         return await self.engine.sample.remote(
             prompt=prompt,
             num_samples=num_samples,
@@ -84,12 +92,32 @@ class VLLMSamplingBackend(BaseSamplingBackend):
             lora_request=self.lora_adapters.get(lora_id, None),  # type: ignore
         )
 
+    async def add_adapter(self, lora_id: str, adapter_path: Path) -> None:
+        from vllm.lora.request import LoRARequest
+
+        async with self._lock:
+            self._counter += 1
+            self.lora_adapters[lora_id] = LoRARequest(
+                lora_int_id=self._counter + 1,
+                lora_name=lora_id,
+                lora_path=str(adapter_path),
+            )
+
+    async def remove_adapter(self, lora_id: str) -> None:
+        async with self._lock:
+            if lora_id in self.lora_adapters:
+                del self.lora_adapters[lora_id]
+        # TODO: unload LoRA from vLLM engine
+
 
 class DummySamplingBackend(BaseSamplingBackend):
     """A dummy sampling backend that returns fixed responses for unittest."""
 
     def __init__(self, config: ModelConfig) -> None:
         super().__init__(config)
+        self.lora_adapters: dict[str, Path] = {}
+        self._counter = 1
+        self._lock = asyncio.Lock()
 
     async def async_init(self) -> None:
         """No initialization needed for dummy backend."""
@@ -139,3 +167,10 @@ class DummySamplingBackend(BaseSamplingBackend):
     def _generate_tokens(self, prompt_tokens: list[int], max_tokens: int) -> list[int]:
         start = prompt_tokens[-1] if prompt_tokens else (abs(self.config.seed) % 32000) + 1
         return [(start + i) % 32000 for i in range(1, max_tokens + 1)]
+
+    async def add_adapter(self, lora_id: str, adapter_path: Path) -> None:
+        self.lora_adapters[lora_id] = adapter_path
+
+    async def remove_adapter(self, lora_id: str) -> None:
+        if lora_id in self.lora_adapters:
+            del self.lora_adapters[lora_id]

@@ -10,4 +10,4 @@ def cross_entropy_loss(
     weights = loss_fn_inputs["weights"]
 
     loss = -(target_logprobs * weights).sum()
-    return loss, {"cross_entropy_loss:sum": loss.item()}
+    return loss, {"loss:sum": loss.item()}
