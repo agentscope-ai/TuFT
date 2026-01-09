@@ -617,7 +617,17 @@ class SamplingController:
         )
         record.history.append(entry)
 
-    def resolve_backend(self, request: types.SampleRequest) -> BaseSamplingBackend:
+    def _resolve_backend(
+        self, request: types.SampleRequest
+    ) -> Tuple[BaseSamplingBackend, str | None]:
+        """Resolve the appropriate backend for the sampling request.
+
+        Args:
+            request: The sampling request.
+
+        Returns:
+            A tuple of the resolved backend and the LoRA ID if applicable.
+        """
         if request.sampling_session_id:
             record = self.sampling_sessions.get(request.sampling_session_id)
             if record is None:
@@ -636,14 +646,18 @@ class SamplingController:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Sampling session has unknown base model",
                 )
-            return self._base_backends[record.base_model]
+            if record.model_path is None:
+                lora_id = None
+            else:
+                lora_id = record.sampling_session_id
+            return self._base_backends[record.base_model], lora_id
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Sampling Session ID is required for sampling",
         )
 
     async def run_sample(self, request: types.SampleRequest) -> types.SampleResponse:
-        backend = self.resolve_backend(request)
+        backend, lora_id = self._resolve_backend(request)
         prompt = request.prompt
         sampling_params = request.sampling_params
         num_samples = request.num_samples
@@ -655,7 +669,7 @@ class SamplingController:
             sampling_params=sampling_params,
             include_prompt_logprobs=include_prompt_logprobs,
             topk_prompt_logprobs=topk_prompt_logprobs,
-            lora_id=request.sampling_session_id,
+            lora_id=lora_id,
         )
 
     async def evict_model(self, model_id: str) -> None:

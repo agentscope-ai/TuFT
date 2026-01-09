@@ -129,8 +129,18 @@ def test_training_and_sampling_round_trip(server_endpoint: str) -> None:
         )
         assert archive.url.startswith("file:")
 
+        # create sampling client from saved checkpoint
         sampling_client = service_client.create_sampling_client(model_path=sampler_response.path)
         sample_res = sampling_client.sample(
+            prompt=types.ModelInput.from_ints([99, 5, 12]),
+            num_samples=1,
+            sampling_params=types.SamplingParams(max_tokens=5, temperature=0.5),
+        ).result(timeout=10)
+        assert sample_res.sequences and sample_res.sequences[0].tokens
+
+        # create sampling client from base model
+        sampling_client_base = service_client.create_sampling_client(base_model=base_model)
+        sample_res = sampling_client_base.sample(
             prompt=types.ModelInput.from_ints([99, 5, 12]),
             num_samples=1,
             sampling_params=types.SamplingParams(max_tokens=5, temperature=0.5),
