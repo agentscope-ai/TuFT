@@ -27,7 +27,7 @@ MODULE_MAP = {
     "qwen": {
         "attn": ["q_proj", "k_proj", "v_proj", "o_proj"],
         "mlp": ["gate_proj", "up_proj", "down_proj"],
-        "unembed": ["lm_head"],
+        "unembed": [],  # set unembed will cause warning in Qwen models
     },
 }
 
@@ -323,7 +323,7 @@ class HFTrainingModel:
     def _init_peft_model(self, config: ModelConfig):
         model = AutoModelForCausalLM.from_pretrained(
             str(config.model_path),
-            torch_dtype="auto",
+            dtype="auto",
             device_map="auto",
         )
         peft_config = LoraConfig()

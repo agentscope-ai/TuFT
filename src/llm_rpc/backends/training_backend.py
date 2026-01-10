@@ -151,7 +151,7 @@ class DummyTrainingBackend(BaseTrainingBackend):
             outputs.append({"logprobs": logprob_tensor})
 
         metrics = {
-            "loss:mean": total_loss / max(len(data), 1),
+            "loss:sum": total_loss,
             "step:max": float(self.step),
         }
         if backward:

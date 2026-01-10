@@ -184,9 +184,21 @@ async def test_training_backend():
 
 
 # From offical Tinker on  Qwen/Qwen3-8B:
-# Loss per token at step 0: 4.2463
-# Loss per token at step 1: 3.8110
-# Loss per token at step 2: 2.6812
-# Loss per token at step 3: 1.8330
-# Loss per token at step 4: 1.0662
-# Loss per token at step 5: 0.5573
+# Loss per token: 4.2681
+# Forward Backward Metrics: {'clock_cycle:unique': 8649633.0, 'loss:sum': 230.4754238128662}
+# Optimization Step Metrics: None
+# Loss per token: 3.8261
+# Forward Backward Metrics: {'clock_cycle:unique': 8649635.0, 'loss:sum': 206.60849380493164}
+# Optimization Step Metrics: None
+# Loss per token: 2.7188
+# Forward Backward Metrics: {'clock_cycle:unique': 8649637.0, 'loss:sum': 146.8175163269043}
+# Optimization Step Metrics: None
+# Loss per token: 1.8391
+# Forward Backward Metrics: {'clock_cycle:unique': 8649639.0, 'loss:sum': 99.31112432479858}
+# Optimization Step Metrics: None
+# Loss per token: 1.0804
+# Forward Backward Metrics: {'clock_cycle:unique': 8649641.0, 'loss:sum': 58.34414064884186}
+# Optimization Step Metrics: None
+# Loss per token: 0.5762
+# Forward Backward Metrics: {'clock_cycle:unique': 8649643.0, 'loss:sum': 31.11434930562973}
+# Optimization Step Metrics: None

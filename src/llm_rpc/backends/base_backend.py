@@ -35,6 +35,14 @@ class BaseSamplingBackend(BaseBackend):
     ) -> types.SampleResponse:
         """Abstract method for sampling."""
 
+    @abstractmethod
+    async def add_adapter(self, lora_id: str, adapter_path: Path) -> None:
+        """Add LoRA adapter to the backend."""
+
+    @abstractmethod
+    async def remove_adapter(self, lora_id: str) -> None:
+        """Remove LoRA adapter from the backend."""
+
     @classmethod
     def create_backend(cls, config: ModelConfig) -> "BaseSamplingBackend":
         """Factory method to create a sampling backend instance."""

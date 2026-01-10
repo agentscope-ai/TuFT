@@ -56,7 +56,7 @@ async def test_sampling_session_requires_seq_id(request, tmp_path) -> None:
     use_gpu = request.config.getoption("--gpu")
     state = _build_state(tmp_path, use_gpu)
     session_id = _create_session(state)
-    sampling_session_id = state.create_sampling_session(
+    sampling_session_id = await state.create_sampling_session(
         session_id=session_id,
         base_model="Qwen/Qwen3-0.6B",
         model_path=None,
@@ -78,7 +78,7 @@ async def test_sampling_session_seq_id_must_increase(request, tmp_path) -> None:
     use_gpu = request.config.getoption("--gpu")
     state = _build_state(tmp_path, use_gpu)
     session_id = _create_session(state)
-    sampling_session_id = state.create_sampling_session(
+    sampling_session_id = await state.create_sampling_session(
         session_id=session_id,
         base_model="Qwen/Qwen3-0.6B",
         model_path=None,
