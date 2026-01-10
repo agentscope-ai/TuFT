@@ -372,6 +372,7 @@ class CheckpointStore:
     ) -> Tuple[str, Path]:
         """Load a checkpoint from a tinker path for sampling purposes."""
         parsed_path = types.ParsedCheckpointTinkerPath.from_tinker_path(path)
+        # TODO: organize the id <-> checkpoint path conversation logic
         checkpoint_path = CheckpointStore.to_checkpoint_path(
             checkpoint_dir=self.config.checkpoint_dir,
             training_run_id=parsed_path.training_run_id,

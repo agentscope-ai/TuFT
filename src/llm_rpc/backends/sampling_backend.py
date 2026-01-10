@@ -81,15 +81,17 @@ class VLLMSamplingBackend(BaseSamplingBackend):
         lora_id: Optional[str] = None,
     ) -> types.SampleResponse:
         """Sampling using vLLM engine."""
-        if lora_id is not None and lora_id not in self.lora_adapters:
-            raise ValueError(f"LoRA adapter {lora_id} not found in backend.")
+        async with self._lock:
+            if lora_id is not None and lora_id not in self.lora_adapters:
+                raise ValueError(f"LoRA adapter {lora_id} not found in backend.")
+            lora_request = self.lora_adapters[lora_id] if lora_id is not None else None
         return await self.engine.sample.remote(
             prompt=prompt,
             num_samples=num_samples,
             sampling_params=sampling_params,
             include_prompt_logprobs=include_prompt_logprobs,
             topk_prompt_logprobs=topk_prompt_logprobs,
-            lora_request=self.lora_adapters.get(lora_id, None),  # type: ignore
+            lora_request=lora_request,
         )
 
     async def add_adapter(self, lora_id: str, adapter_path: Path) -> None:
