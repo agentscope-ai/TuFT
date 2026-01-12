@@ -5,37 +5,102 @@ from __future__ import annotations
 import asyncio
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal
+from typing import Annotated, Any, Callable, Literal
 
 from fastapi import HTTPException
 
 from tinker import types
 from tinker.types.try_again_response import TryAgainResponse
 
+from .persistence import (
+    PersistedMarker,
+    persistable,
+    redis_persistent,
+    unwrap_proxy,
+)
+
 QueueState = Literal["active", "paused_capacity", "paused_rate_limit"]
 
 
+@persistable
 @dataclass
 class FutureRecord:
-    payload: Any | None = None
+    """Future record with persistence support.
+
+    Fields:
+        event: Not serialized (init=False) - created fresh on each instance.
+               After restore, if status is ready/failed, event is auto-set.
+    """
+
+    request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     model_id: str | None = None
     queue_state: QueueState = "active"
     status: Literal["pending", "ready", "failed"] = "pending"
+    payload: Any | None = None
     error: types.RequestFailedResponse | None = None
-    request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    event: asyncio.Event = field(default_factory=asyncio.Event)
+    # Not serialized - init=False fields are auto-excluded
+    # TODO: make sure repr=False is right here
+    event: asyncio.Event = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        # TODO: connect future event to checkpoint store
+        self.event = asyncio.Event()
+        # If already completed, set the event
+        if self.status in ("ready", "failed"):
+            self.event.set()
 
 
+@redis_persistent(
+    restore_callback="_on_restore",
+)
 class FutureStore:
     """Runs controller work asynchronously and tracks each request's lifecycle.
 
     Used for retrieve_future polling.
+    The _records dict is automatically persisted to Redis.
     """
 
+    # Persisted field - auto-synced to Redis
+    _records: Annotated[dict[str, FutureRecord], PersistedMarker()]
+
     def __init__(self) -> None:
-        self._records: dict[str, FutureRecord] = {}
+        # _records is auto-initialized by @redis_persistent decorator
         self._lock = asyncio.Lock()
-        self._tasks: set[asyncio.Task] = set()
+        self._tasks = set()
+
+    def _on_restore(self) -> None:
+        """Restore callback: handle pending tasks after Redis restore.
+
+        Called only when data is restored from Redis (server restart scenario).
+
+        Current behavior: Mark all pending tasks as failed.
+        This is the safest approach since execution context is lost.
+
+        TODO: Future enhancement - checkpoint-based recovery:
+            - Find the checkpoint that was being created when server crashed
+            - Mark only futures after that checkpoint as failed
+            - Allow client to retry from known good state
+        """
+        pending_count = 0
+        completed_count = 0
+
+        for request_id in list(self._records.keys()):
+            record = self._records[request_id]
+            actual_record = unwrap_proxy(record)
+
+            if actual_record.status == "pending":
+                # Mark as failed - execution context is lost
+                actual_record.status = "failed"
+                actual_record.error = types.RequestFailedResponse(
+                    error="Server restarted while task was pending. Please retry.",
+                    category=types.RequestErrorCategory.Server,
+                )
+                actual_record.event.set()
+                pending_count += 1
+            else:
+                # Already completed - ensure event is set
+                actual_record.event.set()
+                completed_count += 1
 
     def _store_record(self, record: FutureRecord) -> None:
         """Synchronous method to store record (call within lock context)."""
@@ -96,7 +161,6 @@ class FutureStore:
     ) -> types.UntypedAPIFuture:
         """Create a future that's already completed."""
         record = FutureRecord(payload=payload, model_id=model_id, status="ready")
-        record.event.set()
 
         async with self._lock:
             self._store_record(record)
@@ -109,10 +173,18 @@ class FutureStore:
             record = self._records.get(request_id)
             if record is None:
                 return
-            record.payload = payload
-            record.status = "ready"
-            record.error = None
-            record.event.set()
+            # record.payload = payload
+            # record.status = "ready"
+            # record.error = None
+            # record.event.set()
+
+            # use unwrap_proxy to reduce redis sync times
+            actual = unwrap_proxy(record)
+            actual.payload = payload
+            actual.status = "ready"
+            actual.error = None
+            actual.event.set()
+            self._records[request_id] = actual
 
     async def _mark_failed(self, request_id: str, failure: types.RequestFailedResponse) -> None:
         """Mark a future as failed with the given error."""
@@ -120,9 +192,16 @@ class FutureStore:
             record = self._records.get(request_id)
             if record is None:
                 return
-            record.status = "failed"
-            record.error = failure
-            record.event.set()
+            # record.status = "failed"
+            # record.error = failure
+            # record.event.set()
+
+            # use unwrap_proxy to reduce redis sync times
+            actual = unwrap_proxy(record)
+            actual.status = "failed"
+            actual.error = failure
+            actual.event.set()
+            self._records[request_id] = actual
 
     async def retrieve(
         self,
@@ -182,4 +261,56 @@ class FutureStore:
             await asyncio.gather(*self._tasks, return_exceptions=True)
 
         self._tasks.clear()
-        self._records.clear()
+        # Note: We don't clear _records here as they are persisted
+        # They will be handled on next server start via _on_restore
+
+    # =========================================================================
+    # Checkpoint-based recovery hooks (TBD - for future implementation)
+    # =========================================================================
+
+    def get_pending_request_ids(self) -> list[str]:
+        """Get all pending request IDs.
+
+        This can be used by checkpoint recovery logic to determine which
+        futures to mark as failed after a checkpoint restore.
+        """
+        pending = []
+        for request_id, record in self._records.items():
+            actual_record = unwrap_proxy(record)
+            if actual_record.status == "pending":
+                pending.append(request_id)
+        return pending
+
+    def mark_requests_failed_after(
+        self,
+        checkpoint_request_id: str | None,
+        error_message: str = "Server restored from checkpoint. Please retry.",
+    ) -> int:
+        """Mark all requests after a given checkpoint as failed.
+
+        This is a placeholder for checkpoint-based recovery.
+
+        Args:
+            checkpoint_request_id: The last successful request ID before checkpoint.
+                                  If None, all pending requests are marked as failed.
+            error_message: Error message to include in the failure response.
+
+        Returns:
+            Number of requests marked as failed.
+
+        TODO: Implement ordering logic based on request timestamps or sequence IDs.
+        """
+        # For now, just mark all pending as failed (same as _on_restore)
+        count = 0
+        for request_id in list(self._records.keys()):
+            record = self._records[request_id]
+            actual_record = unwrap_proxy(record)
+            if actual_record.status == "pending":
+                actual_record.status = "failed"
+                actual_record.error = types.RequestFailedResponse(
+                    error=error_message,
+                    category=types.RequestErrorCategory.Server,
+                )
+                actual_record.event.set()
+                count += 1
+        return count

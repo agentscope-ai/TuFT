@@ -115,9 +115,17 @@ class PersistentProxy(Generic[T]):
         target = object.__getattribute__(self, "_proxy_target")
         return iter(target)
 
+    def __bool__(self) -> bool:
+        """Return True if the proxy wraps a non-None target."""
+        target = object.__getattribute__(self, "_proxy_target")
+        return target is not None
+
     def __len__(self):
         target = object.__getattribute__(self, "_proxy_target")
-        return len(target)
+        if hasattr(target, "__len__"):
+            return len(target)
+        # For objects without __len__, raise TypeError as expected
+        raise TypeError(f"object of type '{type(target).__name__}' has no len()")
 
     def __contains__(self, item):
         target = object.__getattribute__(self, "_proxy_target")

@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Awaitable, Callable, Dict, List, Tuple, TypeVar
+from typing import Annotated, Awaitable, Callable, Dict, List, Tuple, TypeVar
 
 from fastapi import HTTPException, status
 
@@ -19,8 +19,19 @@ from tinker import types
 from .backends import BaseSamplingBackend, BaseTrainingBackend
 from .config import AppConfig, ModelConfig
 from .futures import FutureStore
+from .persistence import (
+    PersistedMarker,
+    RedisConnection,
+    persistable,
+    redis_persistent,
+    unwrap_proxy,
+)
+from .persistence.serializers import ModelSerializer
 
 T = TypeVar("T")
+
+# TODO: remove this after we have a better way to mark/detect non-serializable types
+ModelSerializer.add_skip_types(BaseTrainingBackend, BaseSamplingBackend)
 
 
 def _now() -> datetime:
@@ -34,6 +45,7 @@ def _build_tinker_path(
     return f"tinker://{training_run_id}/{folder}/{checkpoint_id}"
 
 
+@persistable
 @dataclass
 class SessionRecord:
     session_id: str
@@ -44,6 +56,7 @@ class SessionRecord:
     last_heartbeat: datetime = field(default_factory=_now)
 
 
+@persistable
 @dataclass
 class CheckpointRecord:
     checkpoint_id: str
@@ -69,14 +82,16 @@ class CheckpointRecord:
         return json.loads((self.path / "metadata.json").read_text(encoding="utf-8"))
 
 
+@persistable
 @dataclass
 class TrainingRunRecord:
     training_run_id: str
     base_model: str
     lora_rank: int
     session_id: str
-    backend: BaseTrainingBackend
     user_metadata: dict[str, str] | None
+    # backend is optional for persistence - will be None after restore, rebuilt via callback
+    backend: BaseTrainingBackend | None = field(default=None)
     created_at: datetime = field(default_factory=_now)
     last_request_time: datetime = field(default_factory=_now)
     checkpoints: Dict[str, CheckpointRecord] = field(default_factory=dict)
@@ -113,6 +128,16 @@ class TrainingRunRecord:
         return latest.to_api(self.training_run_id)
 
 
+@persistable
+@dataclass
+class SamplingHistoryEntry:
+    seq_id: int
+    prompt_token_count: int
+    prompt_hash: str
+    created_at: datetime = field(default_factory=_now)
+
+
+@persistable
 @dataclass
 class SamplingSessionRecord:
     sampling_session_id: str
@@ -122,22 +147,19 @@ class SamplingSessionRecord:
     model_path: str | None
     session_seq_id: int
     last_seq_id: int = -1
-    history: list["SamplingHistoryEntry"] = field(default_factory=list)
+    history: list[SamplingHistoryEntry] = field(default_factory=list)
 
 
-@dataclass
-class SamplingHistoryEntry:
-    seq_id: int
-    prompt_token_count: int
-    prompt_hash: str
-    created_at: datetime = field(default_factory=_now)
-
-
+@redis_persistent()
 class SessionManager:
     """Maintains session metadata and heartbeats so other controllers can enforce ownership."""
 
+    # Persisted field - auto-synced to Redis
+    _sessions: Annotated[Dict[str, SessionRecord], PersistedMarker()]
+
     def __init__(self) -> None:
-        self._sessions: Dict[str, SessionRecord] = {}
+        # _sessions is auto-initialized by @redis_persistent decorator
+        pass
 
     def create_session(self, request: types.CreateSessionRequest) -> SessionRecord:
         session_id = str(uuid.uuid4())
@@ -164,22 +186,55 @@ class SessionManager:
         return sorted(self._sessions.keys())
 
 
+@redis_persistent(
+    restore_callback="_rebuild_backends",
+)
 class TrainingController:
     """Tracks training runs, enforces request ordering.
 
     Routes work into ModelBackend instances.
     """
 
+    training_runs: Annotated[Dict[str, TrainingRunRecord], PersistedMarker()]
+
     def __init__(self, config: AppConfig) -> None:
         self.config = config
         self.training_backends = self._create_backends(config.supported_models)
-        self.training_runs: Dict[str, TrainingRunRecord] = {}
+        # training_runs is auto-initialized by @redis_persistent decorator
 
     def _create_backends(self, model_configs: List[ModelConfig]) -> Dict[str, BaseTrainingBackend]:
         backends: Dict[str, BaseTrainingBackend] = {}
         for config in model_configs:
             backends[config.model_name] = BaseTrainingBackend.create_backend(config)
         return backends
+
+    def _rebuild_backends(self) -> None:
+        """Restore callback: rebuild backend references after Redis restore.
+
+        Called only when data is restored from Redis (server restart scenario).
+        Associates each TrainingRunRecord with its corresponding backend.
+
+        TODO: Future enhancement - restore from checkpoint:
+            - Find latest checkpoint for each training run
+            - Load model state from checkpoint
+            - Mark futures after checkpoint as failed
+        """
+        restored_count = 0
+        corrupted_count = 0
+
+        for model_id in list(self.training_runs.keys()):
+            record = self.training_runs[model_id]
+            # Unwrap proxy to get actual object for modification
+            actual_record = unwrap_proxy(record)
+
+            if actual_record.base_model in self.training_backends:
+                actual_record.backend = self.training_backends[actual_record.base_model]
+                restored_count += 1
+            else:
+                # Model no longer supported - mark as corrupted
+                actual_record.corrupted = True
+                actual_record.backend = None
+                corrupted_count += 1
 
     async def _with_sequence_guard(
         self,
@@ -231,6 +286,9 @@ class TrainingController:
         record = self.training_runs.get(model_id)
         if record is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown model")
+        # Ensure backend is associated (it's not serialized)
+        if record.backend is None and record.base_model in self.training_backends:
+            record.backend = self.training_backends[record.base_model]
         return record
 
     def build_supported_models(self) -> list[types.SupportedModel]:
@@ -429,6 +487,8 @@ class CheckpointStore:
             optimizer=(checkpoint_type == "training"),
         )
         self._save_metadata(training_run, checkpoint)
+        # Re-store checkpoint to sync updated size_bytes to Redis
+        target_map[checkpoint_name] = checkpoint
         return checkpoint
 
     async def load_checkpoint(
@@ -525,8 +585,13 @@ class CheckpointStore:
         )
 
 
+@redis_persistent(
+    restore_callback="_rebuild_sampling_state",
+)
 class SamplingController:
     """Manages sampling sessions and connects them to the correct training or base-model backend."""
+
+    sampling_sessions: Annotated[Dict[str, SamplingSessionRecord], PersistedMarker()]
 
     def __init__(
         self,
@@ -537,15 +602,48 @@ class SamplingController:
         self.config = config
         self._training = training_controller
         self._checkpoints = checkpoint_store
-        self.sampling_sessions: Dict[str, SamplingSessionRecord] = {}
-        self._base_backends: Dict[str, BaseSamplingBackend] = self._create_backends(
-            config.supported_models
-        )
+        # sampling_sessions is auto-initialized by @redis_persistent decorator
+        self._base_backends = self._create_backends(config.supported_models)
+
+    def _rebuild_sampling_state(self) -> None:
+        """Restore callback: validate sampling sessions after Redis restore.
+
+        Called only when data is restored from Redis (server restart scenario).
+        Note: Adapter re-loading is done asynchronously in async_init.
+        """
+        invalid_sessions = []
+        for session_id, record in list(self.sampling_sessions.items()):
+            actual_record = unwrap_proxy(record)
+            # Validate base_model is still supported
+            if actual_record.base_model and actual_record.base_model not in self._base_backends:
+                invalid_sessions.append(session_id)
+
+        # Remove invalid sessions
+        for session_id in invalid_sessions:
+            del self.sampling_sessions[session_id]
 
     async def async_init(self) -> None:
-        """Perform any async initialization here."""
+        """Perform any async initialization here, including adapter reloading."""
         init_tasks = [backend.async_init() for backend in self._base_backends.values()]
         await asyncio.gather(*init_tasks)
+
+        # Reload adapters for sessions with model_path
+        # TODO: make sure adapter path here is related to sampling future
+        # for session_id, record in list(self.sampling_sessions.items()):
+        #     actual_record = unwrap_proxy(record)
+        #     if actual_record.model_path and actual_record.base_model:
+        #         adapter_path = Path(actual_record.model_path)
+        #         if adapter_path.exists() and actual_record.base_model in self._base_backends:
+        #             try:
+        #                 backend = self._base_backends[actual_record.base_model]
+        #                 await backend.add_adapter(
+        #                     lora_id=actual_record.sampling_session_id,
+        #                     adapter_path=adapter_path,
+        #                 )
+        #             except Exception:
+        #                 del self.sampling_sessions[session_id]
+        #         elif not adapter_path.exists():
+        #             del self.sampling_sessions[session_id]
 
     def _create_backends(self, model_configs: List[ModelConfig]) -> Dict[str, BaseSamplingBackend]:
         backends: Dict[str, BaseSamplingBackend] = {}

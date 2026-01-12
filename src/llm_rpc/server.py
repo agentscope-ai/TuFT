@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 from datetime import timezone
 from functools import partial
@@ -14,6 +15,7 @@ from pydantic import BaseModel
 from tinker import types
 
 from .config import AppConfig
+from .persistence import RedisConnection
 from .state import ServerState
 
 
@@ -42,11 +44,16 @@ def _get_state(request: Request) -> ServerState:
 def create_root_app(config: AppConfig | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        await app.state.server_state.async_init()
-        yield
+        RedisConnection.configure(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+        app.state.server_state = ServerState(config)
+        try:
+            await app.state.server_state.async_init()
+            yield
+        finally:
+            await app.state.server_state.future_store.shutdown()
+            RedisConnection.close()
 
     app = FastAPI(title="LLM-RPC", version="0.1.0", lifespan=lifespan)
-    app.state.server_state = ServerState(config)
 
     @app.get("/api/v1/healthz", response_model=types.HealthResponse)
     async def healthz() -> types.HealthResponse:

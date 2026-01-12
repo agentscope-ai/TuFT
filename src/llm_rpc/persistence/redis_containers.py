@@ -155,7 +155,9 @@ class PersistentDict(MutableMapping[K, V], Generic[K, V]):
                         element_type=element_type,
                     )
                     nested_store.clear()
-                    nested_store.extend([unwrap_proxy(v) for v in nested_value])
+                    # Only extend if there are items to add (rpush requires at least one value)
+                    if nested_value:
+                        nested_store.extend([unwrap_proxy(v) for v in nested_value])
 
                 elif container_type == "set" and isinstance(nested_value, (set, frozenset)):
                     nested_store = PersistentSet(
@@ -198,7 +200,7 @@ class PersistentDict(MutableMapping[K, V], Generic[K, V]):
         else:
             serialized = raw
 
-        if self._value_type and is_model_type(self._value_type):
+        if self._value_type and is_model_type(self._value_type) and isinstance(serialized, dict):
             obj = ModelSerializer.deserialize(serialized, self._value_type)
 
             # Replace nested containers with PersistentDict/List/Set
@@ -238,7 +240,7 @@ class PersistentDict(MutableMapping[K, V], Generic[K, V]):
 
             return obj
 
-        return serialized
+        return serialized  # type: ignore[return-value]
 
     def __delitem__(self, key: K) -> None:
         """Delete a value and all its nested data."""
@@ -260,9 +262,10 @@ class PersistentDict(MutableMapping[K, V], Generic[K, V]):
 
     def _delete_by_prefix(self, prefix: str) -> None:
         """Delete all Redis keys matching a prefix pattern."""
-        cursor = 0
+        cursor: int = 0
         while True:
-            cursor, keys = self._redis.scan(cursor, match=f"{prefix}*")
+            result = self._redis.scan(cursor, match=f"{prefix}*")
+            cursor, keys = int(result[0]), result[1]  # type: ignore[index]
             if keys:
                 self._redis.delete(*keys)
             if cursor == 0:
@@ -312,7 +315,7 @@ class PersistentDict(MutableMapping[K, V], Generic[K, V]):
             else:
                 serialized = raw
 
-            if self._value_type and is_model_type(self._value_type):
+            if self._value_type and is_model_type(self._value_type) and isinstance(serialized, dict):
                 # Deserialize without calling hook (defer to batch call)
                 obj = ModelSerializer.deserialize(
                     serialized,
@@ -443,7 +446,7 @@ class PersistentList(MutableSequence[T], Generic[T]):
         else:
             data = raw
 
-        if self._element_type and is_model_type(self._element_type):
+        if self._element_type and is_model_type(self._element_type) and isinstance(data, dict):
             obj = ModelSerializer.deserialize(data, self._element_type)
 
             # Wrap in proxy if @persistable
@@ -455,7 +458,7 @@ class PersistentList(MutableSequence[T], Generic[T]):
                 return PersistentProxy(obj, sync, index, self)  # type: ignore
 
             return obj
-        return data
+        return data  # type: ignore[return-value]
 
     @overload
     def __getitem__(self, index: int) -> T: ...
@@ -484,7 +487,7 @@ class PersistentList(MutableSequence[T], Generic[T]):
             self._store[index] = self._serialize_element(value)  # type: ignore
 
     def __delitem__(self, index: int | slice) -> None:
-        del self._store[index]
+        self._store.__delitem__(index)  # type: ignore[arg-type]
 
     def __len__(self) -> int:
         return len(self._store)
@@ -535,7 +538,7 @@ class PersistentList(MutableSequence[T], Generic[T]):
             else:
                 data = raw
 
-            if self._element_type and is_model_type(self._element_type):
+            if self._element_type and is_model_type(self._element_type) and isinstance(data, dict):
                 obj = ModelSerializer.deserialize(
                     data,
                     self._element_type,
@@ -552,7 +555,7 @@ class PersistentList(MutableSequence[T], Generic[T]):
                 else:
                     result.append(obj)
             else:
-                result.append(data)
+                result.append(data)  # type: ignore[arg-type]
 
         return result
 
@@ -590,9 +593,9 @@ class PersistentSet(MutableSet[T], Generic[T]):
         else:
             data = raw
 
-        if self._element_type and is_model_type(self._element_type):
+        if self._element_type and is_model_type(self._element_type) and isinstance(data, dict):
             return ModelSerializer.deserialize(data, self._element_type)
-        return data
+        return data  # type: ignore[return-value]
 
     def __contains__(self, value: object) -> bool:
         try:
@@ -718,9 +721,9 @@ class PersistentDeque(Generic[T]):
         else:
             data = raw
 
-        if self._element_type and is_model_type(self._element_type):
+        if self._element_type and is_model_type(self._element_type) and isinstance(data, dict):
             return ModelSerializer.deserialize(data, self._element_type)
-        return data
+        return data  # type: ignore[return-value]
 
     def append(self, value: T) -> None:
         """Add to the right side."""
@@ -845,7 +848,7 @@ class PersistentLock:
 
     def locked(self) -> bool:
         """Check if the lock is currently held."""
-        return self._store.locked()
+        return bool(self._store.locked())
 
     def __enter__(self):
         self.acquire()

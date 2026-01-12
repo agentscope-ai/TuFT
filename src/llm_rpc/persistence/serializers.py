@@ -78,6 +78,23 @@ class ModelSerializer:
     # Types that should always be skipped during serialization
     SKIP_TYPES = (asyncio.Lock, asyncio.Event, asyncio.Task, asyncio.Semaphore)
 
+    # Additional types to skip - set dynamically to avoid circular imports
+    _extra_skip_types: tuple = ()
+
+    @classmethod
+    def add_skip_types(cls, *types: type) -> None:
+        """Add additional types to skip during serialization."""
+        cls._extra_skip_types = cls._extra_skip_types + types
+
+    @classmethod
+    def should_skip(cls, value: Any) -> bool:
+        """Check if a value should be skipped during serialization."""
+        if isinstance(value, cls.SKIP_TYPES):
+            return True
+        if cls._extra_skip_types and isinstance(value, cls._extra_skip_types):
+            return True
+        return False
+
     @classmethod
     def get_model_fields(cls, model_type: type) -> dict[str, type | None]:
         """
@@ -158,7 +175,7 @@ class ModelSerializer:
                 value = getattr(obj, name)
 
                 # Skip non-serializable types
-                if isinstance(value, cls.SKIP_TYPES):
+                if cls.should_skip(value):
                     continue
 
                 result[name] = cls._serialize_value(value)
@@ -184,14 +201,23 @@ class ModelSerializer:
 
         # Handle nested models
         if is_model_instance(value):
-            type_name = type(value).__name__
-            module = type(value).__module__
-            return {
-                "__type__": "model",
-                "class": type_name,
-                "module": module,
-                "value": cls.serialize(value),
-            }
+            # For @persistable models, serialize with type info for reconstruction
+            if is_persistable(type(value)):
+                type_name = type(value).__name__
+                module = type(value).__module__
+                return {
+                    "__type__": "model",
+                    "class": type_name,
+                    "module": module,
+                    "value": cls.serialize(value),
+                }
+            # For other Pydantic models (e.g., tinker types), use model_dump
+            # This preserves them as plain dicts that FastAPI can serialize
+            if is_pydantic_instance(value):
+                return value.model_dump(mode="python")
+            # For other dataclasses, serialize as dict
+            if is_dataclass_instance(value):
+                return cls.serialize(value)
 
         # Handle lists
         if isinstance(value, list):
@@ -305,13 +331,17 @@ class ModelSerializer:
 
             instance = target_class(**init_kwargs)
 
-            # For non-init excluded fields, set them after construction
+            # For non-init excluded fields with explicit default/default_factory,
+            # set them after construction. Skip if no explicit default is provided
+            # to allow __post_init__ to handle initialization.
             for name, exclude_marker in excluded.items():
                 if name in fields_info and not fields_info[name].init:
-                    try:
-                        object.__setattr__(instance, name, exclude_marker.get_default_value())
-                    except Exception:
-                        pass
+                    # Only set if there's an explicit default or default_factory
+                    if exclude_marker.default is not None or exclude_marker.default_factory is not None:
+                        try:
+                            object.__setattr__(instance, name, exclude_marker.get_default_value())
+                        except Exception:
+                            pass
 
             # Collect object for batch hook calling, or call hook immediately
             if collected_objects is not None:
