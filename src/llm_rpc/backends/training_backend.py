@@ -1,11 +1,11 @@
 import asyncio
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Sequence
 
 import numpy as np
 
 from llm_rpc.backends.base_backend import BaseTrainingBackend
+from llm_rpc.checkpoints import CheckpointRecord
 from llm_rpc.config import ModelConfig
 from tinker import types
 
@@ -70,16 +70,20 @@ class HFTrainingBackend(BaseTrainingBackend):
         """
         return await self.model.optim_step.remote(adam_params, lora_id)
 
-    async def save_state(self, lora_id: str, lora_path: Path, optimizer: bool) -> None:
+    async def save_state(
+        self, lora_id: str, checkpoint_record: "CheckpointRecord", optimizer: bool
+    ) -> None:
         """Save the state of the specified LoRA adapter."""
         await self.model.save_state.remote(
-            lora_id=lora_id, save_path=lora_path, optimizer=optimizer
+            lora_id=lora_id, checkpoint_record=checkpoint_record, optimizer=optimizer
         )
 
-    async def load_state(self, lora_id: str, lora_path: Path, optimizer: bool) -> None:
+    async def load_state(
+        self, lora_id: str, checkpoint_record: "CheckpointRecord", optimizer: bool
+    ) -> None:
         """Load the state of the specified LoRA adapter from the given path."""
         await self.model.load_state.remote(
-            lora_id=lora_id, load_path=lora_path, optimizer=optimizer
+            lora_id=lora_id, checkpoint_record=checkpoint_record, optimizer=optimizer
         )
 
 
@@ -220,12 +224,16 @@ class DummyTrainingBackend(BaseTrainingBackend):
         }
         return types.OptimStepResponse(metrics=metrics)
 
-    async def save_state(self, lora_id: str, lora_path: Path, optimizer: bool) -> None:
+    async def save_state(
+        self, lora_id: str, checkpoint_record: "CheckpointRecord", optimizer: bool
+    ) -> None:
         if lora_id not in self._adapters:
             raise ValueError(f"Adapter {lora_id} does not exist.")
         # dummy save
 
-    async def load_state(self, lora_id: str, lora_path: Path, optimizer: bool) -> None:
+    async def load_state(
+        self, lora_id: str, checkpoint_record: "CheckpointRecord", optimizer: bool
+    ) -> None:
         # create a dummy adapter on load
         self._adapters[lora_id] = types.LoraConfig(rank=4)
 

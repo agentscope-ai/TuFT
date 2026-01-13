@@ -8,6 +8,7 @@ import pytest
 import transformers
 
 from llm_rpc.backends.training_backend import HFTrainingBackend
+from llm_rpc.checkpoints import CheckpointRecord
 from llm_rpc.config import ModelConfig
 from tinker import types
 
@@ -130,14 +131,34 @@ async def test_training_backend():
     loss_per_tokens_loaded_2 = []
     with tempfile.TemporaryDirectory() as tmpdirname:
         temp_dir = Path(tmpdirname)
-        save_path_1 = temp_dir / "test_lora_1"
-        save_path_2 = temp_dir / "test_lora_2"
-        await backend.save_state(lora_id="test_lora_1", lora_path=save_path_1, optimizer=True)
-        await backend.save_state(lora_id="test_lora_2", lora_path=save_path_2, optimizer=False)
+        checkpoint_1 = CheckpointRecord(
+            checkpoint_id="test_lora_1",
+            checkpoint_type="training",
+            path=temp_dir / "test_lora_1",
+            training_run_id="test_run_1",
+            size_bytes=0,
+        )
+        checkpoint_2 = CheckpointRecord(
+            checkpoint_id="test_lora_2",
+            checkpoint_type="training",
+            path=temp_dir / "test_lora_2",
+            training_run_id="test_run_2",
+            size_bytes=0,
+        )
+        await backend.save_state(
+            lora_id="test_lora_1", checkpoint_record=checkpoint_1, optimizer=True
+        )
+        await backend.save_state(
+            lora_id="test_lora_2", checkpoint_record=checkpoint_2, optimizer=False
+        )
         # create a new backend and load the saved adapter
         # run forward with the loaded adapter and verify the loss is similar
-        await backend.load_state(lora_id="test_lora_3", lora_path=save_path_1, optimizer=True)
-        await backend.load_state(lora_id="test_lora_4", lora_path=save_path_2, optimizer=False)
+        await backend.load_state(
+            lora_id="test_lora_3", checkpoint_record=checkpoint_1, optimizer=True
+        )
+        await backend.load_state(
+            lora_id="test_lora_4", checkpoint_record=checkpoint_2, optimizer=False
+        )
 
         for step in range(3, 6):
             outputs_1 = await backend.forward(

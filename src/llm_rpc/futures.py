@@ -7,17 +7,10 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Annotated, Any, Callable, Literal
 
-from fastapi import HTTPException
-
 from tinker import types
 from tinker.types.try_again_response import TryAgainResponse
 
-from .persistence import (
-    PersistedMarker,
-    persistable,
-    redis_persistent,
-    unwrap_proxy,
-)
+from .exceptions import LLMRPCException
 
 QueueState = Literal["active", "paused_capacity", "paused_rate_limit"]
 
@@ -127,8 +120,8 @@ class FutureStore:
                     # Run sync operation in thread pool to avoid blocking
                     loop = asyncio.get_running_loop()
                     payload = await loop.run_in_executor(None, operation)
-            except HTTPException as exc:
-                message = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+            except LLMRPCException as exc:
+                message = exc.detail
                 failure = types.RequestFailedResponse(
                     error=message,
                     category=types.RequestErrorCategory.User,
