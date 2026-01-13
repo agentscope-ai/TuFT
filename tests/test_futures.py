@@ -4,8 +4,8 @@ import asyncio
 import time
 
 import pytest
-from fastapi import HTTPException
 
+from llm_rpc.exceptions import UnknownModelException
 from llm_rpc.futures import FutureStore
 from tinker import types
 from tinker.types.try_again_response import TryAgainResponse
@@ -44,12 +44,12 @@ async def test_future_store_records_failures_as_request_failed():
     store = FutureStore()
 
     def _operation() -> types.SaveWeightsResponse:
-        raise HTTPException(status_code=400, detail="bad request")
+        raise UnknownModelException("unknown")
 
     future = await store.enqueue(_operation)
     result = await _wait_for_result(store, future.request_id)
     assert isinstance(result, types.RequestFailedResponse)
-    assert result.error == "bad request"
+    assert result.error == "Unknown model: unknown"
     assert result.category == types.RequestErrorCategory.User
     await store.shutdown()
 
