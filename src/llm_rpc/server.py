@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from tinker import types
 
 from .config import AppConfig
+from .exceptions import LLMRPCException
 from .state import ServerState
 
 
@@ -93,12 +94,23 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         request: types.CreateSamplingSessionRequest,
         state: ServerState = Depends(_get_state),
     ) -> types.CreateSamplingSessionResponse:
-        sampling_session_id = await state.create_sampling_session(
-            session_id=request.session_id,
-            base_model=request.base_model,
-            model_path=request.model_path,
-            session_seq_id=request.sampling_session_seq_id,
-        )
+        try:
+            sampling_session_id = await state.create_sampling_session(
+                session_id=request.session_id,
+                base_model=request.base_model,
+                model_path=request.model_path,
+                session_seq_id=request.sampling_session_seq_id,
+            )
+        except LLMRPCException as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to create sampling session: {exc.detail}",
+            ) from exc
+        except Exception as exc:  # pylint: disable=broad-except
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to create sampling session: {str(exc)}",
+            ) from exc
         return types.CreateSamplingSessionResponse(sampling_session_id=sampling_session_id)
 
     @app.post(
@@ -114,12 +126,23 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail="Missing LoRA config"
             )
-        training_record = await state.create_model(
-            session_id=request.session_id,
-            base_model=request.base_model,
-            lora_config=request.lora_config,
-            user_metadata=request.user_metadata,
-        )
+        try:
+            training_record = await state.create_model(
+                session_id=request.session_id,
+                base_model=request.base_model,
+                lora_config=request.lora_config,
+                user_metadata=request.user_metadata,
+            )
+        except LLMRPCException as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to create model: {exc.detail}",
+            ) from exc
+        except Exception as exc:  # pylint: disable=broad-except
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to create model: {str(exc)}",
+            ) from exc
         response = types.CreateModelResponse(model_id=training_record.training_run_id)
         return await state.future_store.create_ready_future(
             response, model_id=training_record.training_run_id
@@ -144,7 +167,18 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         request: types.UnloadModelRequest,
         state: ServerState = Depends(_get_state),
     ) -> types.UntypedAPIFuture:
-        await state.unload_model(request.model_id)
+        try:
+            await state.unload_model(request.model_id)
+        except LLMRPCException as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to unload model: {exc.detail}",
+            ) from exc
+        except Exception as exc:  # pylint: disable=broad-except
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to unload model: {str(exc)}",
+            ) from exc
         response = types.UnloadModelResponse(model_id=request.model_id)
         return await state.future_store.create_ready_future(response, model_id=request.model_id)
 
@@ -231,7 +265,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
     ) -> types.UntypedAPIFuture:
         async def _operation() -> types.SaveWeightsResponse:
             checkpoint = await state.save_checkpoint(request.model_id, request.path, "training")
-            return types.SaveWeightsResponse(path=checkpoint.to_api(request.model_id).tinker_path)
+            return types.SaveWeightsResponse(path=checkpoint.tinker_checkpoint.tinker_path)
 
         return await _queue_future(_operation, state, model_id=request.model_id)
 
@@ -247,7 +281,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         async def _operation() -> types.SaveWeightsForSamplerResponse:
             checkpoint = await state.save_checkpoint(request.model_id, request.path, "sampler")
             return types.SaveWeightsForSamplerResponse(
-                path=checkpoint.to_api(request.model_id).tinker_path
+                path=checkpoint.tinker_checkpoint.tinker_path
             )
 
         return await _queue_future(_operation, state, model_id=request.model_id)

@@ -5,6 +5,7 @@ from typing import Optional
 
 from tinker import types
 
+from ..checkpoints import CheckpointRecord
 from ..config import ModelConfig
 
 
@@ -87,11 +88,15 @@ class BaseTrainingBackend(BaseBackend):
         """Abstract method for optimization step."""
 
     @abstractmethod
-    async def save_state(self, lora_id: str, lora_path: Path, optimizer: bool) -> None:
+    async def save_state(
+        self, lora_id: str, checkpoint_record: "CheckpointRecord", optimizer: bool
+    ) -> None:
         """Abstract method for saving model state."""
 
     @abstractmethod
-    async def load_state(self, lora_id: str, lora_path: Path, optimizer: bool) -> None:
+    async def load_state(
+        self, lora_id: str, checkpoint_record: "CheckpointRecord", optimizer: bool
+    ) -> None:
         """Abstract method for loading model state."""
 
     @classmethod

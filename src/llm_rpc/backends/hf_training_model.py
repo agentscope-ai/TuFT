@@ -1,22 +1,19 @@
 import asyncio
 import shutil
-from pathlib import Path
-from typing import TYPE_CHECKING, Dict
+from typing import Dict
 
 import ray
 import torch
 from peft import LoraConfig, get_peft_model
-from safetensors.torch import load_file, save_file
+from ray.actor import ActorProxy
 from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoModelForCausalLM
 
+from llm_rpc.checkpoints import CheckpointRecord
 from llm_rpc.config import ModelConfig
 from llm_rpc.loss_fn import get_loss_fn
 from tinker import types
 from tinker.types import LoraConfig as TinkerLoraConfig
-
-if TYPE_CHECKING:
-    from ray.actor import ActorProxy
 
 MODULE_MAP = {
     "llama": {
@@ -80,7 +77,7 @@ class HFTrainingModel:
             params = [p for p in self.model.parameters() if p.requires_grad]
             self.adapter_optimizer[lora_id] = torch.optim.AdamW(params)
 
-    async def save_state(self, lora_id: str, save_path: Path, optimizer: bool):
+    async def save_state(self, lora_id: str, checkpoint_record: CheckpointRecord, optimizer: bool):
         """
         Save LoRA adapter and optimizer state.
         Args:
@@ -92,7 +89,7 @@ class HFTrainingModel:
             raise ValueError(f"Adapter {lora_id} not found.")
 
         # 1. Save adapter (LoRA weights)
-        adapter_dir = save_path / "adapter"
+        adapter_dir = checkpoint_record.adapter_path
         adapter_dir.mkdir(parents=True, exist_ok=True)
         # peft automatically creates a subdirectory with adapter name inside the given path
         self.model.save_pretrained(str(adapter_dir), selected_adapters=[lora_id])
@@ -111,26 +108,23 @@ class HFTrainingModel:
 
         # 2. Save optimizer state
         if optimizer:
-            opt_dir = save_path / "optimizer"
+            opt_dir = checkpoint_record.optimizer_path
             opt_dir.mkdir(parents=True, exist_ok=True)
             opt_state = self.adapter_optimizer[lora_id].state_dict()
-            opt_path = opt_dir / (f"{lora_id}.safetensors")
-            save_file(
-                {k: v for k, v in opt_state.items() if isinstance(v, torch.Tensor)},
-                str(opt_path),
-            )
+            opt_path = opt_dir / (f"{lora_id}.pt")
+            torch.save(opt_state, opt_path)
 
-    async def load_state(self, lora_id: str, load_path: Path, optimizer: bool):
+    async def load_state(self, lora_id: str, checkpoint_record: CheckpointRecord, optimizer: bool):
         """
         Load LoRA adapter and optimizer state (standard format).
         Args:
             lora_id: The LoRA adapter ID to load.
-            load_path: The directory path to load the state from.
+            checkpoint_record: The CheckpointRecord containing paths to load from.
             optimizer: Whether to load the optimizer state.
         """
         # 1. Load adapter
         # find lora adapter name from the directory
-        self.model.load_adapter(model_id=str(load_path / "adapter"), adapter_name=lora_id)
+        self.model.load_adapter(model_id=str(checkpoint_record.adapter_path), adapter_name=lora_id)
 
         # 2. Load optimizer state if needed
         async with self._lock:
@@ -138,11 +132,11 @@ class HFTrainingModel:
             params = [p for p in self.model.parameters() if p.requires_grad]
             optimizer_obj = torch.optim.AdamW(params)
             if optimizer:
-                opt_dir = load_path / "optimizer"
-                opt_path = opt_dir / f"{lora_id}.safetensors"
+                opt_dir = checkpoint_record.optimizer_path
+                opt_path = opt_dir / f"{lora_id}.pt"
                 state_dict = None
                 if opt_path.exists():
-                    state_dict = load_file(str(opt_path))
+                    state_dict = torch.load(opt_path)
                 if state_dict is not None:
                     optimizer_obj.load_state_dict(state_dict)
             self.adapter_optimizer[lora_id] = optimizer_obj
@@ -259,7 +253,7 @@ class HFTrainingModel:
             param_group["weight_decay"] = adam_params.weight_decay
         optimizer.step()
         optimizer.zero_grad()
-        return types.OptimStepResponse(metrics={})
+        return types.OptimStepResponse()
 
     # --------------------------------
     # Helper methods
