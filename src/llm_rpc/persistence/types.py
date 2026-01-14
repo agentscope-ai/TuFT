@@ -218,9 +218,9 @@ def _validate_persistable_fields(cls: type) -> None:
                 for non_serial in NON_SERIALIZABLE_TYPES:
                     if issubclass(actual_type, non_serial):
                         logger.warning(
-                            f"Field '{field_name}' in {cls.__name__} has non-serializable type "
-                            f"{actual_type.__name__}. Consider marking it with PersistenceExclude() "
-                            f"or using init=False in dataclass field."
+                            f"Field '{field_name}' in {cls.__name__} has non-serializable "
+                            f"type {actual_type.__name__}. Consider marking it with "
+                            f"PersistenceExclude() or using init=False in dataclass field."
                         )
                         break
         except TypeError:
@@ -277,6 +277,4 @@ def call_post_deserialize(obj: Any) -> None:
         try:
             hook()
         except Exception as e:
-            logger.warning(
-                f"__post_deserialize__ hook failed for {type(obj).__name__}: {e}"
-            )
+            logger.warning(f"__post_deserialize__ hook failed for {type(obj).__name__}: {e}")

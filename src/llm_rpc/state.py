@@ -5,14 +5,17 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Dict, TypeVar
+from typing import Annotated, Dict, TypeVar
 
 from tinker import types
 
+from .backends import BaseSamplingBackend, BaseTrainingBackend
 from .checkpoints import CheckpointRecord
 from .config import AppConfig
 from .exceptions import SessionNotFoundException
 from .futures import FutureStore
+from .persistence import PersistedMarker, persistable, redis_persistent
+from .persistence.serializers import ModelSerializer
 from .sampling_controller import SamplingController
 from .training_controller import TrainingController, TrainingRunRecord
 
@@ -26,6 +29,7 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+@persistable
 @dataclass
 class SessionRecord:
     session_id: str
@@ -36,6 +40,7 @@ class SessionRecord:
     last_heartbeat: datetime = field(default_factory=_now)
 
 
+@redis_persistent()
 class SessionManager:
     """Maintains session metadata and heartbeats so other controllers can enforce ownership."""
 
@@ -88,6 +93,55 @@ class ServerState:
     async def async_init(self) -> None:
         """Put any async initialization logic here"""
         await self.sampling.async_init()
+        await self._restore_from_checkpoints()
+
+    async def _restore_from_checkpoints(self) -> None:
+        """Restore server state from checkpoints after Redis restore.
+
+        This method handles checkpoint-based recovery:
+        1. For each model_id with pending futures, find the latest checkpoint
+        2. Load the checkpoint to restore model state
+        3. Mark all futures created after the checkpoint as failed
+        4. For models without checkpoints, mark all pending futures as failed
+        """
+        if not self.future_store.needs_checkpoint_recovery:
+            return
+
+        pending_by_model = self.future_store.get_pending_futures_by_model()
+
+        for model_id, _pending_futures in pending_by_model.items():
+            if model_id is None:
+                # Futures without model_id (e.g., sample operations)
+                # Mark all as failed since we can't restore them
+                self.future_store.mark_futures_failed_after_checkpoint(
+                    model_id=None,
+                    checkpoint_time=None,
+                    error_message="Server restarted. Please retry.",
+                )
+                continue
+
+            # Try to restore from checkpoint
+            latest_ckpt = await self.training.restore_from_checkpoint(model_id)
+
+            if latest_ckpt is None:
+                # No checkpoint available - mark all pending as failed
+                self.future_store.mark_futures_failed_after_checkpoint(
+                    model_id=model_id,
+                    checkpoint_time=None,
+                    error_message=f"No checkpoint found for model {model_id}. Please retry.",
+                )
+            else:
+                # Mark futures after the checkpoint as failed
+                self.future_store.mark_futures_failed_after_checkpoint(
+                    model_id=model_id,
+                    checkpoint_time=latest_ckpt.created_at,
+                    error_message=(
+                        f"Server restored from checkpoint {latest_ckpt.checkpoint_id}. "
+                        "Operations after this checkpoint need to be retried."
+                    ),
+                )
+
+        self.future_store.clear_recovery_flag()
 
     def create_session(self, request: types.CreateSessionRequest) -> SessionRecord:
         return self.sessions.create_session(request)

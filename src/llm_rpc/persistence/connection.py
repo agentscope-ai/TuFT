@@ -79,8 +79,7 @@ class RedisConnection:
         """
         if cls._url is None:
             raise RuntimeError(
-                "Redis connection not configured. "
-                "Call RedisConnection.configure(url) first."
+                "Redis connection not configured. " "Call RedisConnection.configure(url) first."
             )
 
         current_pid = os.getpid()

@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any, get_args, get_origin, get_type_hints
 
 from .types import (
-    PersistenceExclude,
     call_post_deserialize,
     get_excluded_fields,
     get_persistable_class,
@@ -115,7 +114,8 @@ class ModelSerializer:
 
         if is_pydantic_type(model_type):
             return {
-                name: info.annotation for name, info in model_type.model_fields.items()  # type: ignore
+                name: info.annotation
+                for name, info in model_type.model_fields.items()  # type: ignore
             }
 
         return {}
@@ -181,9 +181,7 @@ class ModelSerializer:
                 result[name] = cls._serialize_value(value)
             return result
 
-        raise TypeError(
-            f"Cannot serialize {type(obj)}, must be dataclass or Pydantic model"
-        )
+        raise TypeError(f"Cannot serialize {type(obj)}, must be dataclass or Pydantic model")
 
     @classmethod
     def _serialize_value(cls, value: Any) -> Any:
@@ -337,7 +335,10 @@ class ModelSerializer:
             for name, exclude_marker in excluded.items():
                 if name in fields_info and not fields_info[name].init:
                     # Only set if there's an explicit default or default_factory
-                    if exclude_marker.default is not None or exclude_marker.default_factory is not None:
+                    if (
+                        exclude_marker.default is not None
+                        or exclude_marker.default_factory is not None
+                    ):
                         try:
                             object.__setattr__(instance, name, exclude_marker.get_default_value())
                         except Exception:
@@ -410,10 +411,7 @@ class ModelSerializer:
                         args = get_args(expected_type)
                         if len(args) == 2:
                             value_type = args[1]
-                return {
-                    k: cls._deserialize_value(v, value_type)
-                    for k, v in value["value"].items()
-                }
+                return {k: cls._deserialize_value(v, value_type) for k, v in value["value"].items()}
 
             if type_name == "enum":
                 enum_class = get_persistable_class(value["module"], value["class"])

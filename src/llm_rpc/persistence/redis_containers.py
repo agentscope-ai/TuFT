@@ -315,7 +315,11 @@ class PersistentDict(MutableMapping[K, V], Generic[K, V]):
             else:
                 serialized = raw
 
-            if self._value_type and is_model_type(self._value_type) and isinstance(serialized, dict):
+            if (
+                self._value_type
+                and is_model_type(self._value_type)
+                and isinstance(serialized, dict)
+            ):
                 # Deserialize without calling hook (defer to batch call)
                 obj = ModelSerializer.deserialize(
                     serialized,
@@ -334,7 +338,11 @@ class PersistentDict(MutableMapping[K, V], Generic[K, V]):
                             value_type=element_type,
                         )
                         # Recursively eager load nested dicts
-                        if collected_objects is not None and element_type and is_model_type(element_type):
+                        if (
+                            collected_objects is not None
+                            and element_type
+                            and is_model_type(element_type)
+                        ):
                             nested_store.eager_load_all(collected_objects)
                         setattr(obj, field_name, nested_store)
 
@@ -344,7 +352,11 @@ class PersistentDict(MutableMapping[K, V], Generic[K, V]):
                             element_type=element_type,
                         )
                         # Eagerly load list items
-                        if collected_objects is not None and element_type and is_model_type(element_type):
+                        if (
+                            collected_objects is not None
+                            and element_type
+                            and is_model_type(element_type)
+                        ):
                             nested_store_list.eager_load_all(collected_objects)
                         setattr(obj, field_name, nested_store_list)
 
@@ -548,8 +560,8 @@ class PersistentList(MutableSequence[T], Generic[T]):
 
                 if is_persistable(self._element_type):
 
-                    def sync():
-                        self[i] = obj
+                    def sync(idx=i, value=obj):
+                        self[idx] = value
 
                     result.append(PersistentProxy(obj, sync, i, self))  # type: ignore
                 else:

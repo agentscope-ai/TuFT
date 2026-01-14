@@ -16,6 +16,8 @@ from tinker import types
 
 from .config import AppConfig
 from .exceptions import LLMRPCException
+from .futures import OperationType
+from .persistence import RedisConnection
 from .state import ServerState
 
 
@@ -193,8 +195,15 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         state: ServerState,
         *,
         model_id: str | None = None,
+        operation_type: OperationType | None = None,
+        operation_args: dict | None = None,
     ) -> types.UntypedAPIFuture:
-        return await state.future_store.enqueue(operation, model_id=model_id)
+        return await state.future_store.enqueue(
+            operation,
+            model_id=model_id,
+            operation_type=operation_type,
+            operation_args=operation_args,
+        )
 
     @app.post(
         "/api/v1/forward",
@@ -217,7 +226,17 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
                 backward=False,
             )
 
-        return await _queue_future(_operation, state, model_id=request.model_id)
+        return await _queue_future(
+            _operation,
+            state,
+            model_id=request.model_id,
+            operation_type="forward",
+            operation_args={
+                "model_id": request.model_id,
+                "seq_id": request.seq_id,
+                "loss_fn": inp.loss_fn,
+            },
+        )
 
     @app.post(
         "/api/v1/forward_backward",
@@ -240,7 +259,17 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
                 backward=True,
             )
 
-        return await _queue_future(_operation, state, model_id=request.model_id)
+        return await _queue_future(
+            _operation,
+            state,
+            model_id=request.model_id,
+            operation_type="forward_backward",
+            operation_args={
+                "model_id": request.model_id,
+                "seq_id": request.seq_id,
+                "loss_fn": inp.loss_fn,
+            },
+        )
 
     @app.post(
         "/api/v1/optim_step",
@@ -258,6 +287,11 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
             _operation,
             state,
             model_id=request.model_id,
+            operation_type="optim_step",
+            operation_args={
+                "model_id": request.model_id,
+                "seq_id": request.seq_id,
+            },
         )
 
     @app.post(
@@ -273,7 +307,17 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
             checkpoint = await state.save_checkpoint(request.model_id, request.path, "training")
             return types.SaveWeightsResponse(path=checkpoint.tinker_checkpoint.tinker_path)
 
-        return await _queue_future(_operation, state, model_id=request.model_id)
+        return await _queue_future(
+            _operation,
+            state,
+            model_id=request.model_id,
+            operation_type="save_weights",
+            operation_args={
+                "model_id": request.model_id,
+                "path": request.path,
+                "checkpoint_type": "training",
+            },
+        )
 
     @app.post(
         "/api/v1/save_weights_for_sampler",
@@ -290,7 +334,17 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
                 path=checkpoint.tinker_checkpoint.tinker_path
             )
 
-        return await _queue_future(_operation, state, model_id=request.model_id)
+        return await _queue_future(
+            _operation,
+            state,
+            model_id=request.model_id,
+            operation_type="save_weights_for_sampler",
+            operation_args={
+                "model_id": request.model_id,
+                "path": request.path,
+                "checkpoint_type": "sampler",
+            },
+        )
 
     @app.post(
         "/api/v1/load_weights",
@@ -305,7 +359,17 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
             await state.load_checkpoint(request.model_id, request.path, request.optimizer)
             return types.LoadWeightsResponse(path=request.path)
 
-        return await _queue_future(_operation, state, model_id=request.model_id)
+        return await _queue_future(
+            _operation,
+            state,
+            model_id=request.model_id,
+            operation_type="load_weights",
+            operation_args={
+                "model_id": request.model_id,
+                "path": request.path,
+                "optimizer": request.optimizer,
+            },
+        )
 
     @app.post(
         "/api/v1/asample",
@@ -316,7 +380,14 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         request: types.SampleRequest,
         state: ServerState = Depends(_get_state),
     ) -> types.UntypedAPIFuture:
-        return await _queue_future(partial(state.run_sample, request=request), state)
+        return await _queue_future(
+            partial(state.run_sample, request=request),
+            state,
+            operation_type="sample",
+            operation_args={
+                "sampling_session_id": request.sampling_session_id,
+            },
+        )
 
     @app.post("/api/v1/retrieve_future")
     async def retrieve_future(

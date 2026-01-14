@@ -12,6 +12,8 @@ from pydantic import BaseModel
 
 from tinker import types
 
+from .persistence import persistable
+
 
 class CheckpointMetadata(BaseModel):
     """A representation of checkpoint metadata."""
@@ -29,6 +31,7 @@ class CheckpointMetadata(BaseModel):
     size_bytes: int | None = None
 
 
+@persistable
 @dataclass
 class CheckpointRecord:
     """A record representing a checkpoint on disk."""

@@ -5,14 +5,36 @@ from __future__ import annotations
 import asyncio
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Annotated, Any, Callable, Literal
 
 from tinker import types
 from tinker.types.try_again_response import TryAgainResponse
 
 from .exceptions import LLMRPCException
+from .persistence import (
+    PersistedMarker,
+    persistable,
+    redis_persistent,
+    unwrap_proxy,
+)
 
 QueueState = Literal["active", "paused_capacity", "paused_rate_limit"]
+
+# Operation types for persistence and recovery
+OperationType = Literal[
+    "forward",
+    "forward_backward",
+    "optim_step",
+    "save_weights",
+    "save_weights_for_sampler",
+    "load_weights",
+    "sample",
+]
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 @persistable
@@ -23,6 +45,9 @@ class FutureRecord:
     Fields:
         event: Not serialized (init=False) - created fresh on each instance.
                After restore, if status is ready/failed, event is auto-set.
+        operation_type: Type of operation for recovery purposes.
+        operation_args: Serializable arguments for the operation.
+        created_at: Timestamp when the future was created.
     """
 
     request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -31,8 +56,11 @@ class FutureRecord:
     status: Literal["pending", "ready", "failed"] = "pending"
     payload: Any | None = None
     error: types.RequestFailedResponse | None = None
+    # Operation info for recovery
+    operation_type: OperationType | None = None
+    operation_args: dict[str, Any] | None = None
+    created_at: datetime = field(default_factory=_now)
     # Not serialized - init=False fields are auto-excluded
-    # TODO: make sure repr=False is right here
     event: asyncio.Event = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -60,40 +88,123 @@ class FutureStore:
         # _records is auto-initialized by @redis_persistent decorator
         self._lock = asyncio.Lock()
         self._tasks = set()
+        self._needs_checkpoint_recovery = False
 
     def _on_restore(self) -> None:
         """Restore callback: handle pending tasks after Redis restore.
 
         Called only when data is restored from Redis (server restart scenario).
 
-        Current behavior: Mark all pending tasks as failed.
-        This is the safest approach since execution context is lost.
+        This method sets up state for checkpoint-based recovery:
+        - For completed futures: ensure event is set
+        - For pending futures: defer to async_restore_with_checkpoints()
 
-        TODO: Future enhancement - checkpoint-based recovery:
-            - Find the checkpoint that was being created when server crashed
-            - Mark only futures after that checkpoint as failed
-            - Allow client to retry from known good state
+        Note: Pending futures are NOT marked as failed here. They will be
+        handled by async_restore_with_checkpoints() which has access to
+        checkpoint information for proper recovery.
         """
-        pending_count = 0
-        completed_count = 0
-
+        has_pending = False
         for request_id in list(self._records.keys()):
             record = self._records[request_id]
             actual_record = unwrap_proxy(record)
 
             if actual_record.status == "pending":
-                # Mark as failed - execution context is lost
-                actual_record.status = "failed"
-                actual_record.error = types.RequestFailedResponse(
-                    error="Server restarted while task was pending. Please retry.",
-                    category=types.RequestErrorCategory.Server,
-                )
-                actual_record.event.set()
-                pending_count += 1
+                # Don't mark as failed yet - defer to async checkpoint recovery
+                has_pending = True
             else:
                 # Already completed - ensure event is set
                 actual_record.event.set()
-                completed_count += 1
+
+        self._needs_checkpoint_recovery = has_pending
+
+    def get_pending_futures_by_model(self) -> dict[str | None, list[FutureRecord]]:
+        """Group all pending futures by model_id.
+
+        Returns:
+            Dict mapping model_id to list of pending FutureRecords, sorted by created_at.
+        """
+        by_model: dict[str | None, list[FutureRecord]] = {}
+        for record in self._records.values():
+            actual = unwrap_proxy(record)
+            if actual.status == "pending":
+                if actual.model_id not in by_model:
+                    by_model[actual.model_id] = []
+                by_model[actual.model_id].append(actual)
+
+        # Sort each list by created_at
+        for model_id in by_model:
+            by_model[model_id].sort(key=lambda r: r.created_at)
+
+        return by_model
+
+    def mark_futures_failed_after_checkpoint(
+        self,
+        model_id: str | None,
+        checkpoint_time: datetime | None,
+        error_message: str = "Server restored from checkpoint. Please retry.",
+    ) -> int:
+        """Mark all pending futures for a model after a checkpoint time as failed.
+
+        Args:
+            model_id: The model ID to filter futures.
+            checkpoint_time: The checkpoint creation time. Futures created after
+                           this time will be marked as failed. If None, all
+                           pending futures for this model are marked as failed.
+            error_message: Error message to include in the failure response.
+
+        Returns:
+            Number of futures marked as failed.
+        """
+        count = 0
+        for request_id in list(self._records.keys()):
+            record = self._records[request_id]
+            actual = unwrap_proxy(record)
+
+            if actual.status != "pending":
+                continue
+
+            if actual.model_id != model_id:
+                continue
+
+            # If no checkpoint time, mark all as failed
+            # If checkpoint time exists, only mark futures created after it
+            if checkpoint_time is None or actual.created_at > checkpoint_time:
+                actual.status = "failed"
+                actual.error = types.RequestFailedResponse(
+                    error=error_message,
+                    category=types.RequestErrorCategory.Server,
+                )
+                actual.event.set()
+                count += 1
+
+        return count
+
+    def mark_all_pending_failed(
+        self,
+        error_message: str = "Server restarted while task was pending. Please retry.",
+    ) -> int:
+        """Mark all pending futures as failed.
+
+        This is a fallback for when checkpoint recovery is not possible.
+
+        Returns:
+            Number of futures marked as failed.
+        """
+        count = 0
+        for request_id in list(self._records.keys()):
+            record = self._records[request_id]
+            actual = unwrap_proxy(record)
+
+            if actual.status == "pending":
+                actual.status = "failed"
+                actual.error = types.RequestFailedResponse(
+                    error=error_message,
+                    category=types.RequestErrorCategory.Server,
+                )
+                actual.event.set()
+                count += 1
+
+        return count
 
     def _store_record(self, record: FutureRecord) -> None:
         """Synchronous method to store record (call within lock context)."""
@@ -105,9 +216,24 @@ class FutureStore:
         *,
         model_id: str | None = None,
         queue_state: QueueState = "active",
+        operation_type: OperationType | None = None,
+        operation_args: dict[str, Any] | None = None,
     ) -> types.UntypedAPIFuture:
-        """Enqueue a task (sync or async) and return a future immediately."""
-        record = FutureRecord(model_id=model_id, queue_state=queue_state)
+        """Enqueue a task (sync or async) and return a future immediately.
+
+        Args:
+            operation: The callable to execute asynchronously.
+            model_id: Optional model ID associated with this operation.
+            queue_state: Current queue state for retry handling.
+            operation_type: Type of operation for persistence/recovery.
+            operation_args: Serializable arguments for recovery purposes.
+        """
+        record = FutureRecord(
+            model_id=model_id,
+            queue_state=queue_state,
+            operation_type=operation_type,
+            operation_args=operation_args,
+        )
 
         async with self._lock:
             self._store_record(record)
@@ -257,53 +383,11 @@ class FutureStore:
         # Note: We don't clear _records here as they are persisted
         # They will be handled on next server start via _on_restore
 
-    # =========================================================================
-    # Checkpoint-based recovery hooks (TBD - for future implementation)
-    # =========================================================================
+    @property
+    def needs_checkpoint_recovery(self) -> bool:
+        """Check if checkpoint-based recovery is needed."""
+        return self._needs_checkpoint_recovery
 
-    def get_pending_request_ids(self) -> list[str]:
-        """Get all pending request IDs.
-
-        This can be used by checkpoint recovery logic to determine which
-        futures to mark as failed after a checkpoint restore.
-        """
-        pending = []
-        for request_id, record in self._records.items():
-            actual_record = unwrap_proxy(record)
-            if actual_record.status == "pending":
-                pending.append(request_id)
-        return pending
-
-    def mark_requests_failed_after(
-        self,
-        checkpoint_request_id: str | None,
-        error_message: str = "Server restored from checkpoint. Please retry.",
-    ) -> int:
-        """Mark all requests after a given checkpoint as failed.
-
-        This is a placeholder for checkpoint-based recovery.
-
-        Args:
-            checkpoint_request_id: The last successful request ID before checkpoint.
-                                  If None, all pending requests are marked as failed.
-            error_message: Error message to include in the failure response.
-
-        Returns:
-            Number of requests marked as failed.
-
-        TODO: Implement ordering logic based on request timestamps or sequence IDs.
-        """
-        # For now, just mark all pending as failed (same as _on_restore)
-        count = 0
-        for request_id in list(self._records.keys()):
-            record = self._records[request_id]
-            actual_record = unwrap_proxy(record)
-            if actual_record.status == "pending":
-                actual_record.status = "failed"
-                actual_record.error = types.RequestFailedResponse(
-                    error=error_message,
-                    category=types.RequestErrorCategory.Server,
-                )
-                actual_record.event.set()
-                count += 1
-        return count
+    def clear_recovery_flag(self) -> None:
+        """Clear the recovery flag after successful recovery."""
+        self._needs_checkpoint_recovery = False

@@ -25,12 +25,14 @@ from dataclasses import dataclass, field
 from typing import Annotated, Any, Dict
 from llm_rpc.persistence import persistable, PersistenceExclude
 
+
 @persistable
 @dataclass
 class CheckpointRecord:
     checkpoint_id: str
     path: Path
     size_bytes: int
+
 
 @persistable
 @dataclass
@@ -42,9 +44,7 @@ class TrainingRunRecord:
     backend: Annotated[Any, PersistenceExclude()]
 
     # Excluded with a default factory - creates new lock on deserialize
-    _execution_lock: Annotated[asyncio.Lock, PersistenceExclude(
-        default_factory=asyncio.Lock
-    )]
+    _execution_lock: Annotated[asyncio.Lock, PersistenceExclude(default_factory=asyncio.Lock)]
 
     # Excluded with a default value
     _cache: Annotated[dict, PersistenceExclude(default_factory=dict)]
@@ -74,6 +74,7 @@ from llm_rpc.persistence import (
 # Configure Redis at startup
 RedisConnection.configure("redis://localhost:6379/0")
 
+
 # Can use without arguments - defaults apply
 @redis_persistent
 class TrainingController:
@@ -84,6 +85,7 @@ class TrainingController:
 
     def __init__(self, config):
         self.config = config
+
 
 # Or with explicit configuration
 @redis_persistent(
@@ -150,7 +152,7 @@ from .redis_containers import (
     PersistentNextId,
     PersistentSet,
 )
-from .types import PersistenceExclude, PersistedMarker, persistable
+from .types import PersistedMarker, PersistenceExclude, persistable
 
 __all__ = [
     # Decorator for controller classes

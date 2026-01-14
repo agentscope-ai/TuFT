@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import dataclasses
 from typing import Any, Callable, Generic, TypeVar
 
-from .serializers import is_model_instance, is_model_type
-from .types import get_excluded_fields, is_persistable
+from .serializers import is_model_instance
+from .types import is_persistable
 
 T = TypeVar("T")
 

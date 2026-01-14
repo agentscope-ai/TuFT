@@ -6,7 +6,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Annotated, Dict, List, Tuple
 
 from tinker import types
 
@@ -21,8 +21,10 @@ from .exceptions import (
     SessionNotFoundException,
     UnknownModelException,
 )
+from .persistence import PersistedMarker, persistable, redis_persistent, unwrap_proxy
 
 
+@persistable
 @dataclass
 class SamplingSessionRecord:
     sampling_session_id: str
@@ -35,6 +37,7 @@ class SamplingSessionRecord:
     history: list["SamplingHistoryEntry"] = field(default_factory=list)
 
 
+@persistable
 @dataclass
 class SamplingHistoryEntry:
     seq_id: int
@@ -43,23 +46,66 @@ class SamplingHistoryEntry:
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+@redis_persistent(
+    restore_callback="_rebuild_sampling_state",
+)
 class SamplingController:
     """Manages sampling sessions and connects them to the correct training or base-model backend."""
+
+    # Persisted field - auto-synced to Redis
+    sampling_sessions: Annotated[Dict[str, SamplingSessionRecord], PersistedMarker()]
 
     def __init__(
         self,
         config: AppConfig,
     ) -> None:
         self.config = config
-        self.sampling_sessions: Dict[str, SamplingSessionRecord] = {}
+        # sampling_sessions is auto-initialized by @redis_persistent decorator
         self._base_backends: Dict[str, BaseSamplingBackend] = self._create_backends(
             config.supported_models
         )
 
-    async def async_init(self) -> None:
-        """Perform any async initialization here."""
+    def _rebuild_sampling_state(self) -> None:
+        """Restore callback: validate sampling sessions after Redis restore.
+
+        Called only when data is restored from Redis (server restart scenario).
+        Note: Adapter re-loading is done asynchronously in async_init.
+        """
+        invalid_sessions = []
+        for session_id, record in list(self.sampling_sessions.items()):
+            actual_record = unwrap_proxy(record)
+            # Validate base_model is still supported
+            if actual_record.base_model and actual_record.base_model not in self._base_backends:
+                invalid_sessions.append(session_id)
+
+        # Remove invalid sessions
+        for session_id in invalid_sessions:
+            del self.sampling_sessions[session_id]
+            # TODO: add warning log here (should not delete session if it is not invalid)
+
+    async def async_init(self) -> None:  # Note: run after _rebuild_sampling_state
+        """Perform any async initialization here, including adapter reloading."""
         init_tasks = [backend.async_init() for backend in self._base_backends.values()]
         await asyncio.gather(*init_tasks)
+
+        # Re-add adapters in trinity vllm engine
+        for session_id, record in list(self.sampling_sessions.items()):
+            actual_record = unwrap_proxy(record)
+            if actual_record.model_path and actual_record.base_model:
+                adapter_path = Path(actual_record.model_path)
+                if adapter_path.exists() and actual_record.base_model in self._base_backends:
+                    try:
+                        backend = self._base_backends[actual_record.base_model]
+                        await backend.add_adapter(
+                            lora_id=actual_record.sampling_session_id,
+                            adapter_path=adapter_path,
+                        )
+                    except Exception:
+                        del self.sampling_sessions[session_id]
+                        # TODO: add warning log here (should not delete if not invalid)
+                elif not adapter_path.exists():
+                    del self.sampling_sessions[session_id]
+                    # TODO: add warning log here (should not delete session if it is not invalid)
 
     def _create_backends(self, model_configs: List[ModelConfig]) -> Dict[str, BaseSamplingBackend]:
         backends: Dict[str, BaseSamplingBackend] = {}
@@ -105,7 +151,7 @@ class SamplingController:
                 raise UnknownModelException(model_name=base_model_ref)
             sampling_backend = self._base_backends[base_model_ref]
             await sampling_backend.add_adapter(
-                lora_id=sampling_session_id, adapter_path=adapter_path
+                lora_id=sampling_session_id, adapter_path=parsed_checkpoint.adapter_path
             )
             # TODO: remove adapter when session is deleted
         elif base_model:

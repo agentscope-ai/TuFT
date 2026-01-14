@@ -16,6 +16,8 @@ dependencies = [
     "ray>=2.50.0",
     "transformers>=4.57.3",
     "peft>=0.18.0",
+    "pottery",
+    "redis",
 ]
 
 [project.scripts]
