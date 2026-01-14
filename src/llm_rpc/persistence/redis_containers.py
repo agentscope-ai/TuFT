@@ -83,10 +83,7 @@ class PersistentDict(MutableMapping[K, V], Generic[K, V]):
 
         def sync():
             # Get the current object from the reference
-            if not target_ref:
-                return
-
-            obj = target_ref[0]
+            obj = target_ref[0] if target_ref else None
             if obj is None:
                 return
 

@@ -103,7 +103,8 @@ class SamplingController:
                     except Exception:
                         del self.sampling_sessions[session_id]
                         # TODO: add warning log here (should not delete if not invalid)
-                elif not adapter_path.exists():
+                else:
+                    # Delete session if adapter doesn't exist OR base_model not in backends
                     del self.sampling_sessions[session_id]
                     # TODO: add warning log here (should not delete session if it is not invalid)
 

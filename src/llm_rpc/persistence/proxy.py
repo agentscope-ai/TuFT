@@ -72,8 +72,11 @@ class PersistentProxy(Generic[T]):
         target = object.__getattribute__(self, "_proxy_target")
         sync = object.__getattribute__(self, "_proxy_sync")
 
+        # Unwrap proxy if value is a PersistentProxy to avoid serialization issues
+        actual_value = unwrap_proxy(value)
+
         # Set the attribute on the actual target
-        setattr(target, name, value)
+        setattr(target, name, actual_value)
 
         # Trigger sync to Redis
         sync()

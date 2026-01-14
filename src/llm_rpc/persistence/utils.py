@@ -49,11 +49,14 @@ def build_redis_key(
     - Without instance_id: {namespace}::{class_name}::{part1}::{part2}::...
     - With instance_id: {namespace}::{class_name}::{instance_id}::{part1}::...
 
+    Note: All parts are automatically escaped using escape_key() to prevent
+    conflicts with the '::' delimiter. You do not need to pre-escape parts.
+
     Args:
         namespace: The key namespace prefix
         class_name: The name of the class
         instance_id: Optional instance identifier for multi-instance deployment
-        *parts: Additional key parts (field name, escaped keys, etc.)
+        *parts: Additional key parts (field name, keys, etc.) - automatically escaped
 
     Returns:
         Properly formatted Redis key
@@ -61,5 +64,6 @@ def build_redis_key(
     components = [namespace, class_name]
     if instance_id:
         components.append(instance_id)
-    components.extend(parts)
+    # Automatically escape all parts to prevent delimiter conflicts
+    components.extend(escape_key(part) for part in parts)
     return "::".join(components)
