@@ -6,6 +6,8 @@ import os
 import threading
 from typing import TYPE_CHECKING
 
+from .persistence_config import REDIS_AVAILABLE
+
 if TYPE_CHECKING:
     from redis import Redis
 
@@ -17,12 +19,17 @@ class RedisConnection:
     This class manages a single Redis connection that is shared across
     all persistence operations. Configure it once at application startup.
 
+    When persistence is disabled, this class provides no-op methods that
+    don't require Redis to be installed.
+
     Usage:
-        # At application startup
-        RedisConnection.configure("redis://localhost:6379/0")
+        # At application startup (after PersistenceSettings.configure())
+        if PersistenceSettings.is_enabled():
+            RedisConnection.configure(PersistenceSettings.get_redis_url())
 
         # Get connection anywhere in the application
-        redis = RedisConnection.get()
+        if RedisConnection.is_configured():
+            redis = RedisConnection.get()
 
         # At shutdown
         RedisConnection.close()
@@ -46,6 +53,10 @@ class RedisConnection:
             url: Redis connection URL (e.g., "redis://localhost:6379/0")
             **kwargs: Additional arguments passed to Redis.from_url()
         """
+        if not REDIS_AVAILABLE:
+            # Redis not installed, skip configuration
+            return
+
         with cls._lock:
             cls._url = url
             cls._kwargs = kwargs
@@ -58,6 +69,12 @@ class RedisConnection:
     @classmethod
     def _create_connection(cls) -> "Redis":
         """Create a new Redis connection instance."""
+        if not REDIS_AVAILABLE:
+            raise RuntimeError(
+                "Redis dependencies not installed. "
+                "Install with: pip install llm-rpc[persistence]"
+            )
+
         from redis import Redis
 
         return Redis.from_url(cls._url, decode_responses=True, **cls._kwargs)  # type: ignore[arg-type]
@@ -75,8 +92,14 @@ class RedisConnection:
             The configured Redis connection
 
         Raises:
-            RuntimeError: If configure() has not been called
+            RuntimeError: If configure() has not been called or Redis is not available
         """
+        if not REDIS_AVAILABLE:
+            raise RuntimeError(
+                "Redis dependencies not installed. "
+                "Install with: pip install llm-rpc[persistence]"
+            )
+
         if cls._url is None:
             raise RuntimeError(
                 "Redis connection not configured. " "Call RedisConnection.configure(url) first."
@@ -103,7 +126,7 @@ class RedisConnection:
     @classmethod
     def is_configured(cls) -> bool:
         """Check if Redis connection is configured."""
-        return cls._url is not None
+        return cls._url is not None and REDIS_AVAILABLE
 
     @classmethod
     def close(cls) -> None:

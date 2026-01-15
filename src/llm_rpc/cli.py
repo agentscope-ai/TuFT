@@ -7,7 +7,7 @@ from pathlib import Path
 import typer
 import uvicorn
 
-from .config import AppConfig, load_yaml_config
+from .config import load_yaml_config
 from .server import create_root_app
 
 app = typer.Typer(help="Start the local LLM-RPC server.")
@@ -24,21 +24,8 @@ _CHECKPOINT_DIR_OPTION = typer.Option(
 _MODEL_CONFIG_OPTION = typer.Option(
     None,
     "--model-config",
-    help="Path to a model configuration file (YAML)",
+    help="Path to a configuration file (YAML). Contains model config and persistence config.",
 )
-
-
-def _build_config(
-    model_config_path: Path | None,
-    checkpoint_dir: Path | None,
-) -> AppConfig:
-    if model_config_path is None:
-        raise typer.BadParameter("Model configuration file must be provided via --model-config")
-    config = load_yaml_config(model_config_path)
-    if checkpoint_dir is not None:
-        config.checkpoint_dir = checkpoint_dir.expanduser()
-    config.ensure_directories()
-    return config
 
 
 @app.callback(invoke_without_command=True)
@@ -51,7 +38,13 @@ def start(
     checkpoint_dir: Path | None = _CHECKPOINT_DIR_OPTION,
 ) -> None:
     """Start the FastAPI server using uvicorn."""
-    config = _build_config(model_config, checkpoint_dir)
+    if model_config is None:
+        raise typer.BadParameter("Configuration file must be provided via --model-config")
+    config = load_yaml_config(model_config)
+    if checkpoint_dir is not None:
+        config.checkpoint_dir = checkpoint_dir.expanduser()
+    config.ensure_directories()
+
     uvicorn.run(
         create_root_app(config),
         host=host,

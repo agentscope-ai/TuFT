@@ -72,9 +72,7 @@ class FutureRecord:
             self.event.set()
 
 
-@redis_persistent(
-    restore_callback="_on_restore",
-)
+@redis_persistent(restore_callback="_on_restore")
 class FutureStore:
     """Runs controller work asynchronously and tracks each request's lifecycle.
 

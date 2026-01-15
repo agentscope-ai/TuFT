@@ -107,6 +107,83 @@ print("Sampler weights saved to:", sampler_weights.path)
 
 Adjust the fake token IDs with your own prompts once you have a tokenizer locally.
 
+## Persistence Configuration
+
+LLM-RPC supports optional Redis-based persistence for state recovery across restarts. Persistence is **disabled by default** and can be enabled through multiple methods.
+
+### Installation
+
+To use persistence features, install with the persistence extra:
+
+```bash
+uv pip install -e ".[persistence]"
+```
+
+### Configuration Methods
+
+Persistence can be configured via (in order of priority):
+
+1. **Environment Variables** (highest priority)
+2. **Configuration File** (YAML)
+3. **Default Values**
+
+#### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `LLM_RPC_PERSISTENCE_ENABLED` | Enable persistence (`true`/`false`) | `false` |
+| `LLM_RPC_REDIS_URL` | Redis connection URL | `redis://localhost:6379/0` |
+| `LLM_RPC_PERSISTENCE_NAMESPACE` | Key namespace prefix | `llm_rpc` |
+| `LLM_RPC_PERSISTENCE_INSTANCE_ID` | Instance identifier | `None` |
+
+Example:
+
+```bash
+export LLM_RPC_PERSISTENCE_ENABLED=true
+export LLM_RPC_REDIS_URL=redis://localhost:6379/0
+llm-rpc --port 8080 --model-config models.yaml
+```
+
+#### Configuration File
+
+Add a `persistence` section to your YAML configuration file:
+
+```yaml
+persistence:
+  enabled: true
+  redis_url: redis://localhost:6379/0
+  namespace: llm_rpc
+  instance_id: null  # null for single instance, "auto" for UUID, or specific ID
+```
+
+#### Instance ID Options
+
+The `instance_id` setting controls how multiple server instances share data:
+
+- `null` (default): Single instance mode. All instances share data.
+- `"auto"`: Generate a random UUID per instance. Each instance gets isolated data.
+- `"node-1"` (specific string): Instances with the same ID share data.
+
+### Programmatic Configuration
+
+For advanced use cases, you can configure persistence programmatically:
+
+```python
+from llm_rpc.persistence import PersistenceSettings, RedisConnection
+
+# Configure persistence settings
+PersistenceSettings.configure(
+    enabled=True,
+    redis_url="redis://localhost:6379/0",
+    namespace="llm_rpc",
+    instance_id=None,
+)
+
+# Configure Redis connection (only if persistence is enabled)
+if PersistenceSettings.is_enabled():
+    RedisConnection.configure(PersistenceSettings.get_redis_url())
+```
+
 ## Development
 
 - Design docs are located in [`docs`](./docs/).

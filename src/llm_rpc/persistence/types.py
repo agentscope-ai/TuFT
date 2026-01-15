@@ -4,10 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import logging
 from typing import Annotated, Any, Callable, get_args, get_origin, get_type_hints
-
-logger = logging.getLogger(__name__)
 
 
 class PersistedMarker:
@@ -188,43 +185,18 @@ def persistable(cls: type) -> type:
     # Mark as persistable
     cls._is_persistable = True  # type: ignore
 
-    # Validate fields and warn about potential issues
+    # Validate fields (silently skip issues)
     _validate_persistable_fields(cls)
 
     return cls
 
 
 def _validate_persistable_fields(cls: type) -> None:
-    """Validate fields of a persistable class and warn about issues."""
+    """Validate fields of a persistable class."""
     try:
-        hints = get_type_hints(cls, include_extras=True)
+        get_type_hints(cls, include_extras=True)
     except Exception:
-        return
-
-    excluded = get_excluded_fields(cls)
-
-    for field_name, hint in hints.items():
-        if field_name in excluded:
-            continue
-
-        # Get the actual type (strip Annotated wrapper)
-        actual_type = hint
-        if get_origin(hint) is Annotated:
-            actual_type = get_args(hint)[0]
-
-        # Check if type is known to be non-serializable
-        try:
-            if isinstance(actual_type, type):
-                for non_serial in NON_SERIALIZABLE_TYPES:
-                    if issubclass(actual_type, non_serial):
-                        logger.warning(
-                            f"Field '{field_name}' in {cls.__name__} has non-serializable "
-                            f"type {actual_type.__name__}. Consider marking it with "
-                            f"PersistenceExclude() or using init=False in dataclass field."
-                        )
-                        break
-        except TypeError:
-            pass
+        pass
 
 
 def is_persistable(cls: type | None) -> bool:
@@ -276,5 +248,5 @@ def call_post_deserialize(obj: Any) -> None:
     if hook is not None and callable(hook):
         try:
             hook()
-        except Exception as e:
-            logger.warning(f"__post_deserialize__ hook failed for {type(obj).__name__}: {e}")
+        except Exception:
+            pass

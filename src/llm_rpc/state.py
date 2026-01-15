@@ -42,7 +42,7 @@ class SessionRecord:
     last_heartbeat: datetime = field(default_factory=_now)
 
 
-@redis_persistent()
+@redis_persistent
 class SessionManager:
     """Maintains session metadata and heartbeats so other controllers can enforce ownership."""
 

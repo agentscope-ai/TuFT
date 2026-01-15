@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from contextlib import asynccontextmanager
 from datetime import timezone
 from functools import partial
@@ -19,7 +18,7 @@ from .auth import User
 from .config import AppConfig
 from .exceptions import LLMRPCException
 from .futures import OperationType
-from .persistence import RedisConnection
+from .persistence import PersistenceSettings, RedisConnection
 from .state import ServerState
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
@@ -69,14 +68,25 @@ def _get_state(request: Request) -> ServerState:
 def create_root_app(config: AppConfig | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        RedisConnection.configure(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+        # Configure persistence from AppConfig
+        if config is not None:
+            PersistenceSettings.configure_from_config(config.persistence)
+        else:
+            # Configure from environment variables only
+            PersistenceSettings.configure()
+
+        # Configure Redis connection if persistence is enabled
+        if PersistenceSettings.is_enabled():
+            RedisConnection.configure(PersistenceSettings.get_redis_url())
+
         app.state.server_state = ServerState(config)
         try:
             await app.state.server_state.async_init()
             yield
         finally:
             await app.state.server_state.future_store.shutdown()
-            RedisConnection.close()
+            if PersistenceSettings.is_enabled():
+                RedisConnection.close()
 
     def require_user_dependency(route):
         if not any(dep.dependency == _get_user for dep in getattr(route, "dependencies", [])):

@@ -73,9 +73,7 @@ class TrainingRunRecord:
         return latest.tinker_checkpoint
 
 
-@redis_persistent(
-    restore_callback="_rebuild_backends",
-)
+@redis_persistent(restore_callback="_rebuild_backends")
 class TrainingController:
     """Tracks training runs, enforces request ordering.
 

@@ -48,9 +48,7 @@ class SamplingHistoryEntry:
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
-@redis_persistent(
-    restore_callback="_rebuild_sampling_state",
-)
+@redis_persistent(restore_callback="_rebuild_sampling_state")
 class SamplingController:
     """Manages sampling sessions and connects them to the correct training or base-model backend."""
 

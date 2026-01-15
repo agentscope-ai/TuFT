@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-import logging
-import uuid
 from functools import wraps
 from typing import Annotated, Any, Callable, TypeVar, get_args, get_origin, get_type_hints, overload
 
-from .redis_containers import PersistentDict
+from .persistence_config import REDIS_AVAILABLE, PersistenceSettings
 from .types import PersistedMarker, call_post_deserialize
-
-logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
@@ -22,8 +18,6 @@ def redis_persistent(cls: type[T]) -> type[T]: ...
 @overload
 def redis_persistent(
     *,
-    namespace: str = "llm_rpc",
-    instance_id: str | None = None,
     restore_callback: str | None = None,
 ) -> Callable[[type[T]], type[T]]: ...
 
@@ -31,8 +25,6 @@ def redis_persistent(
 def redis_persistent(
     cls: type[T] | None = None,
     *,
-    namespace: str = "llm_rpc",
-    instance_id: str | None = None,
     restore_callback: str | None = None,
 ) -> type[T] | Callable[[type[T]], type[T]]:
     """
@@ -45,31 +37,29 @@ def redis_persistent(
         @redis_persistent()
         class MyController: ...
 
-        @redis_persistent(namespace="my_app", restore_callback="_on_restore")
+        @redis_persistent(restore_callback="_on_restore")
         class MyController: ...
 
     This decorator scans the class for attributes marked with
     `Annotated[Type, PersistedMarker()]` and replaces them with
     `PersistentDict` instances that automatically sync to Redis.
 
+    When persistence is disabled (via PersistenceSettings), uses regular
+    Python dicts instead, providing the same interface without Redis.
+
+    Configuration is read from global PersistenceSettings:
+    - namespace: from PersistenceSettings.get_namespace()
+    - instance_id: from PersistenceSettings.get_effective_instance_id()
+    - enabled: from PersistenceSettings.is_enabled()
+
     Args:
-        namespace: Redis key namespace prefix. Defaults to "llm_rpc".
-        instance_id: Instance identifier for multi-instance deployment.
-            - None: Single instance mode (default). All instances share data.
-            - str: Specified ID (e.g., "node-1"). Instances with same ID share data.
-            - "auto": Generate a random UUID. Each instance gets isolated data.
-                     Useful for testing where you don't want persistence.
         restore_callback: Name of the instance method to call after data is
             restored from Redis. This callback is ONLY called when there is
             existing data in Redis (i.e., when recovering from a restart).
             Use this to rebuild non-serializable objects like backends.
 
     Example:
-        @redis_persistent(
-            namespace="llm_rpc",
-            instance_id=None,
-            restore_callback="_rebuild_backends"
-        )
+        @redis_persistent(restore_callback="_rebuild_backends")
         class TrainingController:
             # Not persisted - no PersistedMarker annotation
             config: AppConfig
@@ -88,7 +78,7 @@ def redis_persistent(
                 for record in self.training_runs.values():
                     record.backend = self.backends.get(record.base_model)
 
-    Redis Key Format:
+    Redis Key Format (when persistence is enabled):
         Without instance_id: {namespace}::{ClassName}::{field_name}
         With instance_id: {namespace}::{ClassName}::{instance_id}::{field_name}
     """
@@ -98,19 +88,15 @@ def redis_persistent(
 
         @wraps(original_init)
         def new_init(self: Any, *args: Any, **kwargs: Any) -> None:
-            # Determine effective instance_id
-            effective_instance_id = instance_id
-            if instance_id == "auto":
-                effective_instance_id = str(uuid.uuid4())
-                logger.debug(
-                    f"Auto-generated instance_id for {target_cls.__name__}: {effective_instance_id}"
-                )
+            # Get persistence configuration from global settings
+            persistence_enabled = PersistenceSettings.is_enabled()
+            namespace = PersistenceSettings.get_namespace()
+            effective_instance_id = PersistenceSettings.get_effective_instance_id()
 
             # Get type hints including Annotated metadata
             try:
                 hints = get_type_hints(target_cls, include_extras=True)
-            except Exception as e:
-                logger.warning(f"Failed to get type hints for {target_cls.__name__}: {e}")
+            except Exception:
                 hints = {}
 
             # Find persisted fields (those marked with PersistedMarker)
@@ -145,7 +131,7 @@ def redis_persistent(
             # Collect all deserialized objects for batch hook calling
             collected_objects: list[Any] = []
 
-            # Create PersistentDict for each persisted field
+            # Create PersistentDict or regular dict for each persisted field
             for field_name, (actual_type, _) in persisted_fields.items():
                 field_prefix = f"{base_prefix}::{field_name}"
 
@@ -156,23 +142,26 @@ def redis_persistent(
                     if len(dict_args) == 2:
                         value_type = dict_args[1]
 
-                persistent_dict: PersistentDict[Any, Any] = PersistentDict(
-                    key_prefix=field_prefix,
-                    value_type=value_type,
-                )
+                if persistence_enabled and REDIS_AVAILABLE:
+                    # Use Redis-backed PersistentDict
+                    from .redis_containers import PersistentDict
 
-                # Check if there's existing data (recovery scenario)
-                if len(persistent_dict) > 0:
-                    has_restored_data = True
-                    logger.info(
-                        f"Restored {len(persistent_dict)} items for "
-                        f"{target_cls.__name__}.{field_name} from Redis"
+                    persistent_dict: PersistentDict[Any, Any] = PersistentDict(
+                        key_prefix=field_prefix,
+                        value_type=value_type,
                     )
-                    # Eagerly load all data and collect objects for hook calling
-                    persistent_dict.eager_load_all(collected_objects)
 
-                # Set the PersistentDict as the attribute
-                setattr(self, field_name, persistent_dict)
+                    # Check if there's existing data (recovery scenario)
+                    if len(persistent_dict) > 0:
+                        has_restored_data = True
+                        # Eagerly load all data and collect objects for hook calling
+                        persistent_dict.eager_load_all(collected_objects)
+
+                    # Set the PersistentDict as the attribute
+                    setattr(self, field_name, persistent_dict)
+                else:
+                    # Use regular dict when persistence is disabled
+                    setattr(self, field_name, {})
 
             # Call original __init__
             original_init(self, *args, **kwargs)
@@ -182,10 +171,6 @@ def redis_persistent(
             if collected_objects:
                 for obj in collected_objects:
                     call_post_deserialize(obj)
-                logger.debug(
-                    f"Called __post_deserialize__ on {len(collected_objects)} "
-                    f"objects for {target_cls.__name__}"
-                )
 
             # Call restore callback if data was restored
             if has_restored_data and restore_callback:
@@ -193,26 +178,12 @@ def redis_persistent(
                 if callback is not None and callable(callback):
                     try:
                         callback()
-                        logger.info(
-                            f"Restore callback '{restore_callback}' executed "
-                            f"successfully for {target_cls.__name__}"
-                        )
-                    except Exception as e:
-                        logger.warning(
-                            f"Restore callback '{restore_callback}' failed "
-                            f"for {target_cls.__name__}: {e}"
-                        )
-                else:
-                    logger.warning(
-                        f"Restore callback '{restore_callback}' not found "
-                        f"or not callable on {target_cls.__name__}"
-                    )
+                    except Exception:
+                        pass
 
         target_cls.__init__ = new_init  # type: ignore
 
         # Add metadata to class for introspection
-        target_cls._redis_persistent_namespace = namespace  # type: ignore
-        target_cls._redis_persistent_instance_id = instance_id  # type: ignore
         target_cls._redis_persistent_restore_callback = restore_callback  # type: ignore
 
         return target_cls
