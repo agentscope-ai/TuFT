@@ -11,7 +11,7 @@ from typing import Annotated, Any, Callable, Literal
 from tinker import types
 from tinker.types.try_again_response import TryAgainResponse
 
-from .exceptions import LLMRPCException
+from .exceptions import FutureNotFoundException, LLMRPCException, UserMismatchException
 from .persistence import (
     PersistedMarker,
     persistable,
@@ -52,6 +52,7 @@ class FutureRecord:
 
     request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     model_id: str | None = None
+    user_id: str | None = None
     queue_state: QueueState = "active"
     status: Literal["pending", "ready", "failed"] = "pending"
     payload: Any | None = None
@@ -213,6 +214,7 @@ class FutureStore:
     async def enqueue(
         self,
         operation: Callable[[], Any],
+        user_id: str,
         *,
         model_id: str | None = None,
         queue_state: QueueState = "active",
@@ -223,6 +225,7 @@ class FutureStore:
 
         Args:
             operation: The callable to execute asynchronously.
+            user_id: User ID associated with this operation.
             model_id: Optional model ID associated with this operation.
             queue_state: Current queue state for retry handling.
             operation_type: Type of operation for persistence/recovery.
@@ -230,6 +233,7 @@ class FutureStore:
         """
         record = FutureRecord(
             model_id=model_id,
+            user_id=user_id,
             queue_state=queue_state,
             operation_type=operation_type,
             operation_args=operation_args,
@@ -275,11 +279,13 @@ class FutureStore:
     async def create_ready_future(
         self,
         payload: Any,
+        user_id: str,
         *,
         model_id: str | None = None,
     ) -> types.UntypedAPIFuture:
         """Create a future that's already completed."""
-        record = FutureRecord(payload=payload, model_id=model_id, status="ready")
+        record = FutureRecord(payload=payload, model_id=model_id, user_id=user_id, status="ready")
+        record.event.set()
 
         async with self._lock:
             self._store_record(record)
@@ -325,6 +331,7 @@ class FutureStore:
     async def retrieve(
         self,
         request_id: str,
+        user_id: str,
         *,
         timeout: float = 120,
     ) -> Any:
@@ -333,13 +340,15 @@ class FutureStore:
 
         Args:
             request_id: The ID of the request to retrieve
+            user_id: The ID of the user making the request
             timeout: Maximum time to wait in seconds (None for no timeout)
 
         Returns:
             The payload if ready, or error response if failed
 
         Raises:
-            KeyError: If request_id not found
+            FutureNotFoundException: If request_id not found
+            UserMismatchException: If user_id does not match the owner
             asyncio.TimeoutError: If timeout is exceeded
         """
         # Get the record
@@ -347,8 +356,9 @@ class FutureStore:
             record = self._records.get(request_id)
 
         if record is None:
-            raise KeyError(request_id)
-
+            raise FutureNotFoundException(request_id)
+        if record.user_id != user_id:
+            raise UserMismatchException()
         # Wait for completion if still pending
         if record.status == "pending":
             try:

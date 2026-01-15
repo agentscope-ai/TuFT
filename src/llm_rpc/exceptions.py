@@ -25,6 +25,10 @@ class SessionException(LLMRPCException):
     """Base exception for Session related errors."""
 
 
+class AuthenticationException(LLMRPCException):
+    """Base exception for Authentication related errors."""
+
+
 class UnknownModelException(ModelException):
     """A model was requested that is not known."""
 
@@ -79,6 +83,15 @@ class MissingSequenceIDException(FutureException):
         super().__init__(detail)
 
 
+class FutureNotFoundException(FutureException):
+    """Future not found."""
+
+    def __init__(self, request_id: str):
+        detail = f"Future with request ID {request_id} not found."
+        super().__init__(detail)
+        self.request_id = request_id
+
+
 class SessionNotFoundException(SessionException):
     """Session not found."""
 
@@ -86,3 +99,13 @@ class SessionNotFoundException(SessionException):
         detail = f"Session {session_id} not found."
         super().__init__(detail)
         self.session_id = session_id
+
+
+class UserMismatchException(AuthenticationException):
+    """User ID does not match the owner of the resource.
+    Do not expose user IDs in the detail message for security reasons.
+    """
+
+    def __init__(self):
+        detail = "You do not have permission to access this resource."
+        super().__init__(detail)

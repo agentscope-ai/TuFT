@@ -25,6 +25,9 @@ def _find_free_port() -> int:
 
 @pytest.fixture(scope="module")
 def server_endpoint(tmp_path_factory: pytest.TempPathFactory, request):
+    # Clear TINKER_API_KEY to ensure the test uses the explicitly passed API key
+    # instead of the environment variable
+    saved_api_key = os.environ.pop("TINKER_API_KEY", None)
     ray.init(ignore_reinit_error=True)
     if request.config.getoption("--gpu"):
         assert (
@@ -43,6 +46,10 @@ def server_endpoint(tmp_path_factory: pytest.TempPathFactory, request):
             tensor_parallel_size=1,
         )
     ]
+    config.authorized_users = {
+        "tml-test-key-1": "default",
+        "tml-test-key-2": "default",
+    }
     app = create_root_app(config)
     port = _find_free_port()
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
@@ -70,11 +77,14 @@ def server_endpoint(tmp_path_factory: pytest.TempPathFactory, request):
     thread.join(timeout=5)
     client.close()
     ray.shutdown()
+    # Restore TINKER_API_KEY if it was set
+    if saved_api_key is not None:
+        os.environ["TINKER_API_KEY"] = saved_api_key
 
 
 @pytest.mark.integration
 def test_training_and_sampling_round_trip(server_endpoint: str) -> None:
-    service_client = ServiceClient(api_key="tml-test-key", base_url=server_endpoint, timeout=15)
+    service_client = ServiceClient(api_key="tml-test-key-1", base_url=server_endpoint, timeout=15)
     try:
         capabilities = service_client.get_server_capabilities()
         assert capabilities.supported_models, "server did not report supported models"
@@ -131,11 +141,13 @@ def test_training_and_sampling_round_trip(server_endpoint: str) -> None:
 
         # create sampling client from saved checkpoint
         sampling_client = service_client.create_sampling_client(model_path=sampler_response.path)
+
         sample_res = sampling_client.sample(
             prompt=types.ModelInput.from_ints([99, 5, 12]),
             num_samples=1,
             sampling_params=types.SamplingParams(max_tokens=5, temperature=0.5),
         ).result(timeout=10)
+
         assert sample_res.sequences and sample_res.sequences[0].tokens
 
         # create sampling client from base model

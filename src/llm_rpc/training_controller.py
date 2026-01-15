@@ -19,6 +19,7 @@ from .exceptions import (
     CheckpointNotFoundException,
     SequenceConflictException,
     UnknownModelException,
+    UserMismatchException,
 )
 from .persistence import PersistedMarker, persistable, redis_persistent, unwrap_proxy
 
@@ -32,6 +33,7 @@ class TrainingRunRecord:
     base_model: str
     lora_rank: int
     session_id: str
+    model_owner: str
     user_metadata: dict[str, str] | None
     # backend is optional for persistence - will be None after restore, rebuilt via callback
     backend: BaseTrainingBackend | None = field(default=None)
@@ -48,13 +50,13 @@ class TrainingRunRecord:
     def __post_init__(self) -> None:
         self._execution_lock = asyncio.Lock()
 
-    def to_training_run(self, owner: str) -> types.TrainingRun:
+    def to_training_run(self) -> types.TrainingRun:
         training_checkpoint = self._latest_checkpoint(self.checkpoints)
         sampler_checkpoint = self._latest_checkpoint(self.sampler_checkpoints)
         return types.TrainingRun(
             training_run_id=self.training_run_id,
             base_model=self.base_model,
-            model_owner=owner,
+            model_owner=self.model_owner,
             is_lora=True,
             corrupted=self.corrupted,
             lora_rank=self.lora_rank,
@@ -140,6 +142,7 @@ class TrainingController:
         session_id: str,
         base_model: str,
         lora_config: types.LoraConfig,
+        model_owner: str,
         user_metadata: dict[str, str] | None,
     ) -> TrainingRunRecord:
         model_id = str(uuid.uuid4())
@@ -151,6 +154,7 @@ class TrainingController:
             base_model=base_model,
             lora_rank=lora_config.rank,
             session_id=session_id,
+            model_owner=model_owner,
             user_metadata=user_metadata,
             backend=backend,
         )
@@ -158,13 +162,20 @@ class TrainingController:
         self.training_runs[model_id] = record
         return record
 
-    def get_run_record(self, model_id: str) -> TrainingRunRecord:
+    def get_run_record(
+        self,
+        model_id: str,
+        user_id: str,
+        enforce_user_match: bool = True,
+    ) -> TrainingRunRecord:
         record = self.training_runs.get(model_id)
         if record is None:
             raise UnknownModelException(model_name=model_id)
         # Ensure backend is associated (it's not serialized)
         if record.backend is None and record.base_model in self.training_backends:
             record.backend = self.training_backends[record.base_model]
+        if enforce_user_match and record.model_owner != user_id:
+            raise UserMismatchException()
         return record
 
     def build_supported_models(self) -> list[types.SupportedModel]:
@@ -173,13 +184,14 @@ class TrainingController:
             for model in self.config.supported_models
         ]
 
-    def update_activity(self, model_id: str) -> None:
-        record = self.get_run_record(model_id)
+    def update_activity(self, model_id: str, user_id: str) -> None:
+        record = self.get_run_record(model_id, user_id)
         record.last_request_time = datetime.now(timezone.utc)
 
     async def run_forward(
         self,
         model_id: str,
+        user_id: str,
         data: list[types.Datum],
         loss_fn: types.LossFnType,
         loss_fn_config: dict[str, float] | None,
@@ -187,8 +199,8 @@ class TrainingController:
         *,
         backward: bool,
     ) -> types.ForwardBackwardOutput:
-        record = self.get_run_record(model_id)
-        self.update_activity(model_id)
+        record = self.get_run_record(model_id, user_id)
+        self.update_activity(model_id, user_id)
 
         async def _operation() -> types.ForwardBackwardOutput:
             return await record.backend.forward(
@@ -202,30 +214,33 @@ class TrainingController:
         return await self._with_sequence_guard(record, seq_id, _operation)
 
     async def run_optim_step(
-        self, model_id: str, params: types.AdamParams, seq_id: int | None
+        self, model_id: str, user_id: str, params: types.AdamParams, seq_id: int | None
     ) -> types.OptimStepResponse:
-        record = self.get_run_record(model_id)
-        self.update_activity(model_id)
+        record = self.get_run_record(model_id, user_id)
+        self.update_activity(model_id, user_id)
 
         async def _operation() -> types.OptimStepResponse:
             return await record.backend.optim_step(adam_params=params, lora_id=model_id)
 
         return await self._with_sequence_guard(record, seq_id, _operation)
 
-    async def unload_model(self, model_id: str) -> None:
+    async def unload_model(self, model_id: str, user_id: str) -> None:
         # TODO: Ensure that all created training runs can be unloaded to reduce
         # GPU memory usage.
         if model_id not in self.training_runs:
             raise UnknownModelException(model_name=model_id)
+        if self.training_runs[model_id].model_owner != user_id:
+            raise UserMismatchException()
         await self.training_runs[model_id].backend.remove_adapter(model_id)
         del self.training_runs[model_id]
 
     def list_training_runs(
-        self, *, limit: int | None = None, offset: int = 0
+        self, *, user_id: str, limit: int | None = None, offset: int = 0
     ) -> types.TrainingRunsResponse:
         runs = [
-            record.to_training_run(self.config.model_owner)
+            record.to_training_run()
             for record in self.training_runs.values()
+            if record.model_owner == user_id
         ]
         runs.sort(key=lambda run: run.last_request_time, reverse=True)
         total = len(runs)
@@ -235,12 +250,12 @@ class TrainingController:
         cursor = types.Cursor(offset=offset, limit=limit or total, total_count=total)
         return types.TrainingRunsResponse(training_runs=paged, cursor=cursor)
 
-    def get_training_run_view(self, model_id: str) -> types.TrainingRun:
-        record = self.get_run_record(model_id)
-        return record.to_training_run(self.config.model_owner)
+    def get_training_run_view(self, model_id: str, user_id: str) -> types.TrainingRun:
+        record = self.get_run_record(model_id=model_id, user_id=user_id)
+        return record.to_training_run()
 
-    def get_model_info(self, model_id: str) -> types.GetInfoResponse:
-        record = self.get_run_record(model_id)
+    def get_model_info(self, model_id: str, user_id: str) -> types.GetInfoResponse:
+        record = self.get_run_record(model_id=model_id, user_id=user_id)
         model_data = types.ModelData(
             arch="toy-transformer",
             model_name=record.base_model,
@@ -257,11 +272,12 @@ class TrainingController:
     async def save_checkpoint(
         self,
         model_id: str,
+        user_id: str,
         name: str | None,
         checkpoint_type: types.CheckpointType,
     ) -> CheckpointRecord:
         """Save a checkpoint for the given training run."""
-        training_run = self.get_run_record(model_id)
+        training_run = self.get_run_record(model_id=model_id, user_id=user_id)
         counter_attr = (
             "next_training_checkpoint"
             if checkpoint_type == "training"
@@ -273,6 +289,7 @@ class TrainingController:
         checkpoint = CheckpointRecord.from_training_run(
             training_run_id=training_run.training_run_id,
             checkpoint_name=checkpoint_name,
+            owner_name=training_run.model_owner,
             checkpoint_type=checkpoint_type,
             checkpoint_root_dir=self.config.checkpoint_dir,
             exist_ok=True,
@@ -301,13 +318,12 @@ class TrainingController:
     async def load_checkpoint(
         self,
         model_id: str,
+        user_id: str,
         path: str,
         optimizer: bool,
-        user_name: str = "default",
-        # TODO: implement user management
     ) -> None:
         """Load a checkpoint."""
-        training_run = self.get_run_record(model_id)
+        training_run = self.get_run_record(model_id, user_id, enforce_user_match=False)
         try:
             parsed_checkpoint = CheckpointRecord.from_tinker_path(path, self.config.checkpoint_dir)
         except FileNotFoundError as exc:
@@ -334,7 +350,7 @@ class TrainingController:
             raise CheckpointMetadataReadException(
                 checkpoint_id=parsed_checkpoint.checkpoint_id
             ) from exc
-        if metadata.get("public", False) or metadata.get("owner_name") == user_name:
+        if metadata.public or (metadata.owner_name == user_id):
             await actual_run.backend.load_state(
                 lora_id=actual_run.training_run_id,
                 checkpoint_record=checkpoint,
@@ -343,7 +359,8 @@ class TrainingController:
         else:
             raise CheckpointAccessDeniedException(checkpoint_id=parsed_checkpoint.checkpoint_id)
 
-    def delete_checkpoint(self, training_run: TrainingRunRecord, checkpoint_id: str) -> None:
+    def delete_checkpoint(self, model_id: str, user_id: str, checkpoint_id: str) -> None:
+        training_run = self.get_run_record(model_id, user_id)
         removed = training_run.checkpoints.pop(checkpoint_id, None)
         if removed is None:
             removed = training_run.sampler_checkpoints.pop(checkpoint_id, None)
@@ -351,7 +368,8 @@ class TrainingController:
             raise CheckpointNotFoundException(checkpoint_id=checkpoint_id)
         removed.delete()
 
-    def list_checkpoints(self, training_run: TrainingRunRecord) -> list[types.Checkpoint]:
+    def list_checkpoints(self, model_id: str, user_id: str) -> list[types.Checkpoint]:
+        training_run = self.get_run_record(model_id, user_id)
         checkpoints = [item.tinker_checkpoint for item in training_run.checkpoints.values()]
         checkpoints += [
             item.tinker_checkpoint for item in training_run.sampler_checkpoints.values()
@@ -360,17 +378,20 @@ class TrainingController:
         return checkpoints
 
     def list_user_checkpoints(
-        self, training_runs: Dict[str, TrainingRunRecord]
+        self,
+        user_id: str,
     ) -> list[types.Checkpoint]:
         checkpoints: list[types.Checkpoint] = []
-        for record in training_runs.values():
-            checkpoints.extend(self.list_checkpoints(record))
+        training_runs = [run for run in self.training_runs.values() if run.model_owner == user_id]
+        for run in training_runs:
+            checkpoints.extend([item.tinker_checkpoint for item in run.checkpoints.values()])
         checkpoints.sort(key=lambda item: item.time, reverse=True)
         return checkpoints
 
     def set_visibility(
-        self, training_run: TrainingRunRecord, checkpoint_id: str, *, public: bool
+        self, model_id: str, checkpoint_id: str, user_id: str, *, public: bool
     ) -> None:
+        training_run = self.get_run_record(model_id=model_id, user_id=user_id)
         target = training_run.checkpoints.get(
             checkpoint_id
         ) or training_run.sampler_checkpoints.get(checkpoint_id)
@@ -379,8 +400,12 @@ class TrainingController:
         target.set_visibility(public)
 
     def build_archive_url(
-        self, training_run: TrainingRunRecord, checkpoint_id: str
+        self,
+        model_id: str,
+        user_id: str,
+        checkpoint_id: str,
     ) -> types.CheckpointArchiveUrlResponse:
+        training_run = self.get_run_record(model_id, user_id)
         checkpoint = training_run.checkpoints.get(
             checkpoint_id
         ) or training_run.sampler_checkpoints.get(checkpoint_id)
@@ -389,7 +414,8 @@ class TrainingController:
         expires = datetime.now(timezone.utc) + timedelta(minutes=15)
         return types.CheckpointArchiveUrlResponse(url=checkpoint.path.as_uri(), expires=expires)
 
-    def get_weights_info(self, training_run: TrainingRunRecord) -> types.WeightsInfoResponse:
+    def get_weights_info(self, model_id: str, user_id: str) -> types.WeightsInfoResponse:
+        training_run = self.get_run_record(model_id, user_id)
         return types.WeightsInfoResponse(
             base_model=training_run.base_model,
             is_lora=True,

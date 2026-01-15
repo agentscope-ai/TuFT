@@ -10,15 +10,37 @@ from typing import Any, Callable
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import Response
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 
 from tinker import types
 
+from .auth import User
 from .config import AppConfig
 from .exceptions import LLMRPCException
 from .futures import OperationType
 from .persistence import RedisConnection
 from .state import ServerState
+
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+async def _get_user(
+    request: Request,
+    api_key: str = Depends(api_key_header),
+) -> User:
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing API key",
+        )
+    user = request.app.state.server_state.get_user(api_key)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid API key",
+        )
+    return user
 
 
 class WeightsInfoBody(BaseModel):
@@ -31,7 +53,8 @@ def _normalize_checkpoint_id(raw: str) -> str:
     prefix, remainder = raw.split("/", 1)
     if prefix not in {"weights", "sampler_weights"} or not remainder:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid checkpoint reference"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid checkpoint reference",
         )
     return remainder
 
@@ -55,7 +78,16 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
             await app.state.server_state.future_store.shutdown()
             RedisConnection.close()
 
-    app = FastAPI(title="LLM-RPC", version="0.1.0", lifespan=lifespan)
+    def require_user_dependency(route):
+        if not any(dep.dependency == _get_user for dep in getattr(route, "dependencies", [])):
+            route.dependencies = getattr(route, "dependencies", []) + [Depends(_get_user)]
+        return route
+
+    app = FastAPI(
+        title="LLM-RPC",
+        version="0.1.0",
+        lifespan=lifespan,
+    )
 
     @app.get("/api/v1/healthz", response_model=types.HealthResponse)
     async def healthz() -> types.HealthResponse:
@@ -78,8 +110,9 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
     async def create_session(
         request: types.CreateSessionRequest,
         state: ServerState = Depends(_get_state),
+        user: User = Depends(_get_user),
     ) -> types.CreateSessionResponse:
-        record = state.create_session(request)
+        record = state.create_session(request, user)
         return types.CreateSessionResponse(session_id=record.session_id)
 
     @app.post(
@@ -89,8 +122,9 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
     async def session_heartbeat(
         request: types.SessionHeartbeatRequest,
         state: ServerState = Depends(_get_state),
+        user: User = Depends(_get_user),
     ) -> types.SessionHeartbeatResponse:
-        state.heartbeat(request.session_id)
+        state.heartbeat(request.session_id, user_id=user.user_id)
         return types.SessionHeartbeatResponse()
 
     @app.post(
@@ -101,10 +135,12 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
     async def create_sampling_session(
         request: types.CreateSamplingSessionRequest,
         state: ServerState = Depends(_get_state),
+        user: User = Depends(_get_user),
     ) -> types.CreateSamplingSessionResponse:
         try:
             sampling_session_id = await state.create_sampling_session(
                 session_id=request.session_id,
+                user_id=user.user_id,
                 base_model=request.base_model,
                 model_path=request.model_path,
                 session_seq_id=request.sampling_session_seq_id,
@@ -129,6 +165,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
     async def create_model(
         request: types.CreateModelRequest,
         state: ServerState = Depends(_get_state),
+        user: User = Depends(_get_user),
     ) -> types.UntypedAPIFuture:
         if request.lora_config is None:
             raise HTTPException(
@@ -139,6 +176,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
                 session_id=request.session_id,
                 base_model=request.base_model,
                 lora_config=request.lora_config,
+                model_owner=user.user_id,
                 user_metadata=request.user_metadata,
             )
         except LLMRPCException as exc:
@@ -153,7 +191,9 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
             ) from exc
         response = types.CreateModelResponse(model_id=training_record.training_run_id)
         return await state.future_store.create_ready_future(
-            response, model_id=training_record.training_run_id
+            response,
+            model_id=training_record.training_run_id,
+            user_id=user.user_id,
         )
 
     @app.post(
@@ -163,8 +203,9 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
     async def get_info(
         request: types.GetInfoRequest,
         state: ServerState = Depends(_get_state),
+        user: User = Depends(_get_user),
     ) -> types.GetInfoResponse:
-        return state.get_model_info(request.model_id)
+        return state.get_model_info(request.model_id, user_id=user.user_id)
 
     @app.post(
         "/api/v1/unload_model",
@@ -174,9 +215,10 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
     async def unload_model(
         request: types.UnloadModelRequest,
         state: ServerState = Depends(_get_state),
+        user: User = Depends(_get_user),
     ) -> types.UntypedAPIFuture:
         try:
-            await state.unload_model(request.model_id)
+            await state.unload_model(request.model_id, user_id=user.user_id)
         except LLMRPCException as exc:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -188,11 +230,14 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
                 detail=f"Failed to unload model: {str(exc)}",
             ) from exc
         response = types.UnloadModelResponse(model_id=request.model_id)
-        return await state.future_store.create_ready_future(response, model_id=request.model_id)
+        return await state.future_store.create_ready_future(
+            response, model_id=request.model_id, user_id=user.user_id
+        )
 
     async def _queue_future(
         operation: Callable[[], Any],
         state: ServerState,
+        user_id: str,
         *,
         model_id: str | None = None,
         operation_type: OperationType | None = None,
@@ -200,6 +245,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
     ) -> types.UntypedAPIFuture:
         return await state.future_store.enqueue(
             operation,
+            user_id=user_id,
             model_id=model_id,
             operation_type=operation_type,
             operation_args=operation_args,
@@ -213,12 +259,14 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
     async def forward(
         request: types.ForwardRequest,
         state: ServerState = Depends(_get_state),
+        user: User = Depends(_get_user),
     ) -> types.UntypedAPIFuture:
         inp = request.forward_input
 
         async def _operation() -> types.ForwardBackwardOutput:
             return await state.run_forward(
                 request.model_id,
+                user.user_id,
                 inp.data,
                 inp.loss_fn,
                 inp.loss_fn_config,
@@ -229,6 +277,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         return await _queue_future(
             _operation,
             state,
+            user_id=user.user_id,
             model_id=request.model_id,
             operation_type="forward",
             operation_args={
@@ -246,12 +295,14 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
     async def forward_backward(
         request: types.ForwardBackwardRequest,
         state: ServerState = Depends(_get_state),
+        user: User = Depends(_get_user),
     ) -> types.UntypedAPIFuture:
         inp = request.forward_backward_input
 
         async def _operation() -> types.ForwardBackwardOutput:
             return await state.run_forward(
                 request.model_id,
+                user.user_id,
                 inp.data,
                 inp.loss_fn,
                 inp.loss_fn_config,
@@ -262,6 +313,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         return await _queue_future(
             _operation,
             state,
+            user_id=user.user_id,
             model_id=request.model_id,
             operation_type="forward_backward",
             operation_args={
@@ -279,13 +331,20 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
     async def optim_step(
         request: types.OptimStepRequest,
         state: ServerState = Depends(_get_state),
+        user: User = Depends(_get_user),
     ) -> types.UntypedAPIFuture:
         async def _operation() -> types.OptimStepResponse:
-            return await state.run_optim_step(request.model_id, request.adam_params, request.seq_id)
+            return await state.run_optim_step(
+                request.model_id,
+                user.user_id,
+                request.adam_params,
+                request.seq_id,
+            )
 
         return await _queue_future(
             _operation,
             state,
+            user_id=user.user_id,
             model_id=request.model_id,
             operation_type="optim_step",
             operation_args={
@@ -302,14 +361,21 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
     async def save_weights(
         request: types.SaveWeightsRequest,
         state: ServerState = Depends(_get_state),
+        user: User = Depends(_get_user),
     ) -> types.UntypedAPIFuture:
         async def _operation() -> types.SaveWeightsResponse:
-            checkpoint = await state.save_checkpoint(request.model_id, request.path, "training")
+            checkpoint = await state.save_checkpoint(
+                request.model_id,
+                user.user_id,
+                request.path,
+                "training",
+            )
             return types.SaveWeightsResponse(path=checkpoint.tinker_checkpoint.tinker_path)
 
         return await _queue_future(
             _operation,
             state,
+            user_id=user.user_id,
             model_id=request.model_id,
             operation_type="save_weights",
             operation_args={
@@ -327,9 +393,15 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
     async def save_weights_for_sampler(
         request: types.SaveWeightsForSamplerRequest,
         state: ServerState = Depends(_get_state),
+        user: User = Depends(_get_user),
     ) -> types.UntypedAPIFuture:
         async def _operation() -> types.SaveWeightsForSamplerResponse:
-            checkpoint = await state.save_checkpoint(request.model_id, request.path, "sampler")
+            checkpoint = await state.save_checkpoint(
+                request.model_id,
+                user.user_id,
+                request.path,
+                "sampler",
+            )
             return types.SaveWeightsForSamplerResponse(
                 path=checkpoint.tinker_checkpoint.tinker_path
             )
@@ -337,6 +409,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         return await _queue_future(
             _operation,
             state,
+            user_id=user.user_id,
             model_id=request.model_id,
             operation_type="save_weights_for_sampler",
             operation_args={
@@ -354,14 +427,21 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
     async def load_weights(
         request: types.LoadWeightsRequest,
         state: ServerState = Depends(_get_state),
+        user: User = Depends(_get_user),
     ) -> types.UntypedAPIFuture:
         async def _operation() -> types.LoadWeightsResponse:
-            await state.load_checkpoint(request.model_id, request.path, request.optimizer)
+            await state.load_checkpoint(
+                model_id=request.model_id,
+                user_id=user.user_id,
+                path=request.path,
+                optimizer=request.optimizer,
+            )
             return types.LoadWeightsResponse(path=request.path)
 
         return await _queue_future(
             _operation,
             state,
+            user_id=user.user_id,
             model_id=request.model_id,
             operation_type="load_weights",
             operation_args={
@@ -379,10 +459,12 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
     async def asample(
         request: types.SampleRequest,
         state: ServerState = Depends(_get_state),
+        user: User = Depends(_get_user),
     ) -> types.UntypedAPIFuture:
         return await _queue_future(
-            partial(state.run_sample, request=request),
-            state,
+            partial(state.run_sample, request=request, user_id=user.user_id),
+            state=state,
+            user_id=user.user_id,
             operation_type="sample",
             operation_args={
                 "sampling_session_id": request.sampling_session_id,
@@ -393,9 +475,12 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
     async def retrieve_future(
         request: types.FutureRetrieveRequest,
         state: ServerState = Depends(_get_state),
+        user: User = Depends(_get_user),
     ) -> Any:
         try:
-            payload = await state.future_store.retrieve(request.request_id)
+            payload = await state.future_store.retrieve(
+                request_id=request.request_id, user_id=user.user_id
+            )
         except KeyError as exc:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Unknown request_id"
@@ -410,17 +495,20 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         limit: int = Query(20, ge=1, le=500),
         offset: int = Query(0, ge=0),
         state: ServerState = Depends(_get_state),
+        user: User = Depends(_get_user),
     ) -> types.TrainingRunsResponse:
-        return state.list_training_runs(limit=limit, offset=offset)
+        return state.list_training_runs(user_id=user.user_id, limit=limit, offset=offset)
 
     @app.get(
         "/api/v1/training_runs/{model_id}",
         response_model=types.TrainingRun,
     )
     async def get_training_run(
-        model_id: str, state: ServerState = Depends(_get_state)
+        model_id: str,
+        state: ServerState = Depends(_get_state),
+        user: User = Depends(_get_user),
     ) -> types.TrainingRun:
-        return state.get_training_run_view(model_id)
+        return state.get_training_run_view(model_id=model_id, user_id=user.user_id)
 
     def _build_checkpoint_cursor(total: int, limit: int, offset: int) -> types.Cursor:
         return types.Cursor(offset=offset, limit=limit, total_count=total)
@@ -434,8 +522,9 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         limit: int = Query(100, ge=1, le=1000),
         offset: int = Query(0, ge=0),
         state: ServerState = Depends(_get_state),
+        user: User = Depends(_get_user),
     ) -> types.CheckpointsListResponse:
-        checkpoints = state.list_checkpoints(model_id)
+        checkpoints = state.list_checkpoints(model_id, user_id=user.user_id)
         total = len(checkpoints)
         start = min(offset, total)
         end = min(start + limit, total)
@@ -451,8 +540,9 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         model_id: str,
         checkpoint_path: str,
         state: ServerState = Depends(_get_state),
+        user: User = Depends(_get_user),
     ) -> None:
-        state.delete_checkpoint(model_id, _normalize_checkpoint_id(checkpoint_path))
+        state.delete_checkpoint(model_id, user.user_id, _normalize_checkpoint_id(checkpoint_path))
 
     @app.post(
         "/api/v1/training_runs/{model_id}/checkpoints/{checkpoint_path:path}/publish",
@@ -462,9 +552,13 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         model_id: str,
         checkpoint_path: str,
         state: ServerState = Depends(_get_state),
+        user: User = Depends(_get_user),
     ) -> None:
         state.set_checkpoint_visibility(
-            model_id, _normalize_checkpoint_id(checkpoint_path), public=True
+            model_id,
+            user.user_id,
+            _normalize_checkpoint_id(checkpoint_path),
+            public=True,
         )
 
     @app.delete(
@@ -475,9 +569,13 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         model_id: str,
         checkpoint_path: str,
         state: ServerState = Depends(_get_state),
+        user: User = Depends(_get_user),
     ) -> None:
         state.set_checkpoint_visibility(
-            model_id, _normalize_checkpoint_id(checkpoint_path), public=False
+            model_id,
+            user.user_id,
+            _normalize_checkpoint_id(checkpoint_path),
+            public=False,
         )
 
     @app.get(
@@ -488,8 +586,13 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         model_id: str,
         checkpoint_path: str,
         state: ServerState = Depends(_get_state),
+        user: User = Depends(_get_user),
     ) -> Response:
-        archive = state.build_archive_url(model_id, _normalize_checkpoint_id(checkpoint_path))
+        archive = state.build_archive_url(
+            model_id,
+            user_id=user.user_id,
+            checkpoint_id=_normalize_checkpoint_id(checkpoint_path),
+        )
         expires = archive.expires.astimezone(timezone.utc)
         return Response(
             status_code=status.HTTP_302_FOUND,
@@ -507,8 +610,9 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         limit: int = Query(100, ge=1, le=1000),
         offset: int = Query(0, ge=0),
         state: ServerState = Depends(_get_state),
+        user: User = Depends(_get_user),
     ) -> types.CheckpointsListResponse:
-        checkpoints = state.list_user_checkpoints()
+        checkpoints = state.list_user_checkpoints(user.user_id)
         total = len(checkpoints)
         start = min(offset, total)
         end = min(start + limit, total)
@@ -523,17 +627,20 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
     async def weights_info(
         body: WeightsInfoBody,
         state: ServerState = Depends(_get_state),
+        user: User = Depends(_get_user),
     ) -> types.WeightsInfoResponse:
-        return state.get_weights_info(body.tinker_path)
+        return state.get_weights_info(body.tinker_path, user.user_id)
 
     @app.get(
         "/api/v1/sessions/{session_id}",
         response_model=types.GetSessionResponse,
     )
     async def get_session(
-        session_id: str, state: ServerState = Depends(_get_state)
+        session_id: str,
+        state: ServerState = Depends(_get_state),
+        user: User = Depends(_get_user),
     ) -> types.GetSessionResponse:
-        return state.get_session_overview(session_id)
+        return state.get_session_overview(session_id, user.user_id)
 
     @app.get(
         "/api/v1/sessions",
@@ -543,8 +650,9 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         limit: int = Query(20, ge=1, le=500),
         offset: int = Query(0, ge=0),
         state: ServerState = Depends(_get_state),
+        user: User = Depends(_get_user),
     ) -> types.ListSessionsResponse:
-        return state.list_sessions(limit=limit, offset=offset)
+        return state.list_sessions(user_id=user.user_id, limit=limit, offset=offset)
 
     @app.post(
         "/api/v1/telemetry",
@@ -561,8 +669,13 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         response_model=types.GetSamplerResponse,
     )
     async def get_sampler(
-        sampler_id: str, state: ServerState = Depends(_get_state)
+        sampler_id: str,
+        state: ServerState = Depends(_get_state),
+        user: User = Depends(_get_user),
     ) -> types.GetSamplerResponse:
-        return state.get_sampler_info(sampler_id)
+        return state.get_sampler_info(sampler_id, user.user_id)
 
+    for route in app.routes:
+        if getattr(route, "path", None) != "/api/v1/healthz" and hasattr(route, "dependencies"):
+            require_user_dependency(route)
     return app

@@ -13,6 +13,7 @@ def test_checkpoint_record(tmp_path):
     record = CheckpointRecord.from_training_run(
         training_run_id=training_run_id,
         checkpoint_name=checkpoint_id,
+        owner_name="default",
         checkpoint_type=checkpoint_type,
         checkpoint_root_dir=tmp_path,
     )
@@ -45,9 +46,9 @@ def test_checkpoint_record(tmp_path):
     assert record2.owner_name == "default"
 
     # test set_visibility
-    assert record2.metadata["public"] is False
+    assert record2.public is False
     record2.set_visibility(True)
-    assert record2.metadata["public"] is True
+    assert record2.public is True
 
     # test delete
     record2.delete()

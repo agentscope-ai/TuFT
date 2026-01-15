@@ -14,3 +14,6 @@ supported_models:
     temperature: 1.0
     top_p: 1.0
     top_k: -1
+authorized_users:
+  tml-EMPTY: default
+  tml-test-key: tester
