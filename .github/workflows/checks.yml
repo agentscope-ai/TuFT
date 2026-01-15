@@ -2,7 +2,7 @@ name: Checks
 
 on:
   push:
-    branches: [main, dev/**]
+    branches: [main, dev/**, feature/**]
   pull_request:
     branches: [main]
 
@@ -12,6 +12,20 @@ jobs:
     strategy:
       matrix:
         python-version: ['3.11', '3.12', '3.13']
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      TEST_REDIS_URL: redis://localhost:6379/15
 
     steps:
       - name: Checkout code
