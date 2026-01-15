@@ -133,6 +133,7 @@ async def test_training_backend():
         temp_dir = Path(tmpdirname)
         checkpoint_1 = CheckpointRecord(
             checkpoint_id="test_lora_1",
+            owner_name="default",
             checkpoint_type="training",
             path=temp_dir / "test_lora_1",
             training_run_id="test_run_1",
@@ -140,6 +141,7 @@ async def test_training_backend():
         )
         checkpoint_2 = CheckpointRecord(
             checkpoint_id="test_lora_2",
+            owner_name="default",
             checkpoint_type="training",
             path=temp_dir / "test_lora_2",
             training_run_id="test_run_2",
