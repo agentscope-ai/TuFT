@@ -14,12 +14,13 @@ from .backends import BaseSamplingBackend
 from .checkpoints import CheckpointRecord
 from .config import AppConfig, ModelConfig
 from .exceptions import (
-    CheckpointMetadataReadException,
+    CheckpointAccessDeniedException,
     CheckpointNotFoundException,
     MissingSequenceIDException,
     SequenceConflictException,
     SessionNotFoundException,
     UnknownModelException,
+    UserMismatchException,
 )
 
 
@@ -29,6 +30,7 @@ class SamplingSessionRecord:
     session_id: str
     model_id: str
     base_model: str
+    user_id: str
     model_path: str | None
     session_seq_id: int
     last_seq_id: int = -1
@@ -71,6 +73,7 @@ class SamplingController:
         self,
         *,
         session_id: str,
+        user_id: str,
         base_model: str | None,
         model_path: str | None,
         session_seq_id: int,
@@ -94,15 +97,17 @@ class SamplingController:
                 raise CheckpointNotFoundException(
                     checkpoint_id=parsed_checkpoint.checkpoint_id,
                 )
-            try:
-                base_model_ref = parsed_checkpoint.metadata.get("base_model")
-            except FileNotFoundError as exc:
-                raise CheckpointMetadataReadException(
+            metadata = parsed_checkpoint.metadata
+            base_model_ref = metadata.base_model
+            is_public = parsed_checkpoint.public
+            model_owner = parsed_checkpoint.owner_name
+            if not is_public and model_owner != user_id:
+                raise CheckpointAccessDeniedException(
                     checkpoint_id=parsed_checkpoint.checkpoint_id,
-                ) from exc
-            adapter_path = parsed_checkpoint.adapter_path
+                )
             if base_model_ref not in self._base_backends:
                 raise UnknownModelException(model_name=base_model_ref)
+            adapter_path = parsed_checkpoint.adapter_path
             sampling_backend = self._base_backends[base_model_ref]
             await sampling_backend.add_adapter(
                 lora_id=sampling_session_id, adapter_path=adapter_path
@@ -117,6 +122,7 @@ class SamplingController:
         self.sampling_sessions[sampling_session_id] = SamplingSessionRecord(
             sampling_session_id=sampling_session_id,
             session_id=session_id,
+            user_id=user_id,
             model_id=sampling_session_id,
             base_model=base_model_ref,
             model_path=str(adapter_path) if adapter_path else None,
@@ -142,7 +148,7 @@ class SamplingController:
         record.history.append(entry)
 
     def _resolve_backend(
-        self, request: types.SampleRequest
+        self, request: types.SampleRequest, user_id: str
     ) -> Tuple[BaseSamplingBackend, str | None]:
         """Resolve the appropriate backend for the sampling request.
 
@@ -156,6 +162,8 @@ class SamplingController:
             record = self.sampling_sessions.get(request.sampling_session_id)
             if record is None:
                 raise SessionNotFoundException(session_id=request.sampling_session_id)
+            if record.user_id != user_id:
+                raise UserMismatchException()
             if request.seq_id is None:
                 raise MissingSequenceIDException()
             self._record_sequence(record, request.seq_id, request.prompt)
@@ -168,8 +176,12 @@ class SamplingController:
             return self._base_backends[record.base_model], lora_id
         raise SessionNotFoundException(session_id="None")
 
-    async def run_sample(self, request: types.SampleRequest) -> types.SampleResponse:
-        backend, lora_id = self._resolve_backend(request)
+    async def run_sample(
+        self,
+        request: types.SampleRequest,
+        user_id: str,
+    ) -> types.SampleResponse:
+        backend, lora_id = self._resolve_backend(request, user_id=user_id)
         prompt = request.prompt
         sampling_params = request.sampling_params
         num_samples = request.num_samples
@@ -184,17 +196,19 @@ class SamplingController:
             lora_id=lora_id,
         )
 
-    async def evict_model(self, model_id: str) -> None:
+    async def evict_model(self, model_id: str, user_id: str) -> None:
         for sampling_id, record in list(self.sampling_sessions.items()):
-            if record.model_id == model_id:
+            if record.model_id == model_id and record.user_id == user_id:
                 del self.sampling_sessions[sampling_id]
 
     def get_sampler_info(
-        self, sampler_id: str, default_base_model: str
+        self, sampler_id: str, user_id: str, default_base_model: str
     ) -> types.GetSamplerResponse:
         record = self.sampling_sessions.get(sampler_id)
         if record is None:
             raise SessionNotFoundException(session_id=sampler_id)
+        if record.user_id != user_id:
+            raise UserMismatchException()
         base = record.base_model
         return types.GetSamplerResponse(
             sampler_id=sampler_id,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, List
+from typing import Dict, Iterable, List
 
 
 def _default_checkpoint_dir() -> Path:
@@ -19,6 +19,9 @@ class AppConfig:
     supported_models: List[ModelConfig] = field(default_factory=list)
     model_owner: str = "local-user"
     toy_backend_seed: int = 0
+    # TODO: Temporary implementation for user authorization,
+    # replace with proper auth system later
+    authorized_users: Dict[str, str] = field(default_factory=dict)
 
     def ensure_directories(self) -> None:
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)

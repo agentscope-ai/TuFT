@@ -1,16 +1,16 @@
 """Module for managing checkpoints on disk."""
 
 import contextlib
-import json
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from tinker import types
+
+from .exceptions import CheckpointMetadataReadException
 
 
 class CheckpointMetadata(BaseModel):
@@ -23,10 +23,10 @@ class CheckpointMetadata(BaseModel):
     created_at: str
     session_id: str
     tinker_path: str
-    owner_name: str = "default"
+    owner_name: str
+    size_bytes: int = 0
     lora_rank: int | None = None
     public: bool = False
-    size_bytes: int | None = None
 
 
 @dataclass
@@ -34,13 +34,13 @@ class CheckpointRecord:
     """A record representing a checkpoint on disk."""
 
     checkpoint_id: str
+    owner_name: str
     checkpoint_type: types.CheckpointType
     training_run_id: str
     path: Path
     size_bytes: int
     public: bool = False
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    owner_name: str = "default"  # TODO: implement user management
 
     @property
     def tinker_checkpoint(self) -> types.Checkpoint:
@@ -55,9 +55,21 @@ class CheckpointRecord:
         )
 
     @property
-    def metadata(self) -> Dict:
-        """Get the checkpoint metadata as a dictionary."""
-        return json.loads(self.metadata_path.read_text(encoding="utf-8"))
+    def metadata(self) -> CheckpointMetadata:
+        """Get the checkpoint metadata.
+
+        Raises:
+            CheckpointMetadataReadException: If the metadata file does not
+                exist or is invalid.
+        """
+        try:
+            return CheckpointMetadata.model_validate_json(
+                self.metadata_path.read_text(encoding="utf-8")
+            )
+        except FileNotFoundError as exc:
+            raise CheckpointMetadataReadException(checkpoint_id=self.checkpoint_id) from exc
+        except ValidationError as exc:
+            raise CheckpointMetadataReadException(checkpoint_id=self.checkpoint_id) from exc
 
     @property
     def tinker_path(self) -> str:
@@ -84,14 +96,14 @@ class CheckpointRecord:
         """Set the visibility of the checkpoint."""
         self.public = public
         metadata = self.metadata
-        metadata["public"] = public
+        metadata.public = public
         self.save_metadata(
-            base_model=metadata["base_model"],
-            session_id=metadata["session_id"],
-            lora_rank=metadata["lora_rank"],
+            base_model=metadata.base_model,
+            session_id=metadata.session_id,
+            lora_rank=metadata.lora_rank,
         )
 
-    def save_metadata(self, base_model: str, session_id: str, lora_rank: int) -> None:
+    def save_metadata(self, base_model: str, session_id: str, lora_rank: int | None) -> None:
         """Save the checkpoint metadata to disk."""
         # check the format of metadata
         try:
@@ -124,23 +136,20 @@ class CheckpointRecord:
         checkpoint_path = (
             checkpoint_root_dir / parsed.training_run_id / parsed.checkpoint_id.split("/", 1)[-1]
         )
-        metadata_raw = (checkpoint_path / "metadata.json").read_text(encoding="utf-8")
-        metadata = json.loads(metadata_raw)
-
-        return cls(
+        record = cls(
             checkpoint_id=parsed.checkpoint_id.split("/", 1)[-1],
             checkpoint_type=parsed.checkpoint_type,
             training_run_id=parsed.training_run_id,
             path=checkpoint_path,
-            size_bytes=metadata.get("size_bytes", 0),
-            public=metadata.get("public", False),
-            created_at=(
-                datetime.fromisoformat(metadata.get("created_at"))
-                if "created_at" in metadata
-                else datetime.now(timezone.utc)
-            ),
-            owner_name=metadata.get("owner_name", "default"),
+            owner_name="",  # Will be filled from metadata later
+            size_bytes=0,  # Will be filled from metadata later
         )
+        metadata = record.metadata  # This may raise FileNotFoundError or JSONDecodeError
+        record.owner_name = metadata.owner_name
+        record.size_bytes = metadata.size_bytes
+        record.public = metadata.public
+        record.created_at = datetime.fromisoformat(metadata.created_at)
+        return record
 
     def delete(self) -> None:
         """Delete the checkpoint from disk."""
@@ -152,6 +161,7 @@ class CheckpointRecord:
         cls,
         training_run_id: str,
         checkpoint_name: str,
+        owner_name: str,
         checkpoint_type: types.CheckpointType,
         checkpoint_root_dir: Path,
         exist_ok: bool = True,
@@ -163,6 +173,7 @@ class CheckpointRecord:
         checkpoint_dir.mkdir(parents=True, exist_ok=exist_ok)
         return cls(
             checkpoint_id=checkpoint_name,
+            owner_name=owner_name,
             checkpoint_type=checkpoint_type,
             training_run_id=training_run_id,
             path=checkpoint_dir,
