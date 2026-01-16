@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import uuid
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Tuple
+
+from pydantic import BaseModel, Field
 
 from tinker import types
 
@@ -29,26 +31,38 @@ from .persistence import (
     save_record,
 )
 
+logger = logging.getLogger(__name__)
 
-@dataclass
-class SamplingSessionRecord:
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class SamplingHistoryEntry(BaseModel):
+    """Entry in the sampling history."""
+
+    seq_id: int
+    prompt_token_count: int
+    prompt_hash: str
+    created_at: datetime = Field(default_factory=_now)
+
+
+class SamplingSessionRecord(BaseModel):
+    """Sampling session record with persistence support.
+
+    Sessions are permanent records (no TTL) as they represent active
+    sampling sessions that users may access at any time.
+    """
+
     sampling_session_id: str
     session_id: str
     model_id: str
     base_model: str
     user_id: str
-    model_path: str | None
+    model_path: str | None = None
     session_seq_id: int
     last_seq_id: int = -1
-    history: list["SamplingHistoryEntry"] = field(default_factory=list)
-
-
-@dataclass
-class SamplingHistoryEntry:
-    seq_id: int
-    prompt_token_count: int
-    prompt_hash: str
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    history: list[SamplingHistoryEntry] = Field(default_factory=list)
 
 
 class SamplingController:
@@ -89,6 +103,7 @@ class SamplingController:
             store.delete(self._build_key(session_id))
 
     def _save_session(self, session_id: str) -> None:
+        """Save session to Redis (no TTL - permanent record)."""
         if not is_persistence_enabled():
             return
         record = self.sampling_sessions.get(session_id)
@@ -126,6 +141,9 @@ class SamplingController:
                         lora_id=record.sampling_session_id, adapter_path=adapter_path
                     )
                 except Exception:
+                    logger.exception(
+                        "Failed to rebuild adapter for sampling session %s", session_id
+                    )
                     invalid_sessions.append(session_id)
         for session_id in invalid_sessions:
             del self.sampling_sessions[session_id]

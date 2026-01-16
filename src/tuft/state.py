@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Dict, TypeVar
+
+from pydantic import BaseModel, Field
 
 from tinker import types
 
@@ -30,15 +31,20 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-@dataclass
-class SessionRecord:
+class SessionRecord(BaseModel):
+    """Session record with persistence support.
+
+    Sessions are permanent records (no TTL) as they represent user sessions
+    that may need to be accessed at any time.
+    """
+
     session_id: str
     tags: list[str]
-    user_metadata: dict[str, str] | None
+    user_metadata: dict[str, str] | None = None
     user_id: str
     sdk_version: str
-    created_at: datetime = field(default_factory=_now)
-    last_heartbeat: datetime = field(default_factory=_now)
+    created_at: datetime = Field(default_factory=_now)
+    last_heartbeat: datetime = Field(default_factory=_now)
 
 
 class SessionManager:
@@ -64,6 +70,7 @@ class SessionManager:
                 self._sessions[record.session_id] = record
 
     def _save_session(self, session_id: str) -> None:
+        """Save session to Redis (no TTL - permanent record)."""
         if not is_persistence_enabled():
             return
         record = self._sessions.get(session_id)

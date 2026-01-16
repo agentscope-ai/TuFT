@@ -15,17 +15,19 @@ Persistence Modes:
 
 from __future__ import annotations
 
-import asyncio
-import json
+import logging
 import os
 import threading
-from dataclasses import dataclass, fields, is_dataclass
-from datetime import datetime
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, TypeVar, get_args, get_origin
+from typing import Any, TypeVar
 
-T = TypeVar("T")
+from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
+
+T = TypeVar("T", bound=BaseModel)
 
 
 class PersistenceMode(str, Enum):
@@ -41,6 +43,10 @@ def _default_redislite_path() -> Path:
     return Path.home() / ".cache" / "tuft" / "redis.db"
 
 
+# Default TTL values in seconds
+DEFAULT_FUTURE_TTL_SECONDS = 24 * 3600  # 1 day for future records (short-lived)
+
+
 @dataclass
 class PersistenceConfig:
     """Configuration for Redis persistence.
@@ -50,12 +56,14 @@ class PersistenceConfig:
         redis_url: Redis server URL (only used when mode=redis_url)
         redislite_path: Path to redislite database file (only used when mode=redislite)
         namespace: Key namespace prefix
+        future_ttl_seconds: TTL for future records in seconds. None means no expiry.
     """
 
     mode: PersistenceMode = PersistenceMode.DISABLED
     redis_url: str = "redis://localhost:6379/0"
     redislite_path: Path | None = None
     namespace: str = "tuft"
+    future_ttl_seconds: int | None = DEFAULT_FUTURE_TTL_SECONDS  # Futures expire after 1 day
 
     @property
     def enabled(self) -> bool:
@@ -68,13 +76,26 @@ class PersistenceConfig:
         return cls(mode=PersistenceMode.DISABLED, namespace=namespace)
 
     @classmethod
-    def from_redis_url(cls, redis_url: str, namespace: str = "tuft") -> "PersistenceConfig":
+    def from_redis_url(
+        cls,
+        redis_url: str,
+        namespace: str = "tuft",
+        future_ttl_seconds: int | None = DEFAULT_FUTURE_TTL_SECONDS,
+    ) -> "PersistenceConfig":
         """Create a config using external Redis server."""
-        return cls(mode=PersistenceMode.REDIS_URL, redis_url=redis_url, namespace=namespace)
+        return cls(
+            mode=PersistenceMode.REDIS_URL,
+            redis_url=redis_url,
+            namespace=namespace,
+            future_ttl_seconds=future_ttl_seconds,
+        )
 
     @classmethod
     def from_redislite(
-        cls, path: Path | str | None = None, namespace: str = "tuft"
+        cls,
+        path: Path | str | None = None,
+        namespace: str = "tuft",
+        future_ttl_seconds: int | None = DEFAULT_FUTURE_TTL_SECONDS,
     ) -> "PersistenceConfig":
         """Create a config using lightweight embedded Redis (redislite).
 
@@ -82,12 +103,18 @@ class PersistenceConfig:
             path: Path to store the redislite database file.
                   If None, uses default path (~/.cache/tuft/redis.db)
             namespace: Key namespace prefix
+            future_ttl_seconds: TTL for future records in seconds.
         """
         if path is None:
             path = _default_redislite_path()
         elif isinstance(path, str):
             path = Path(path)
-        return cls(mode=PersistenceMode.REDISLITE, redislite_path=path, namespace=namespace)
+        return cls(
+            mode=PersistenceMode.REDISLITE,
+            redislite_path=path,
+            namespace=namespace,
+            future_ttl_seconds=future_ttl_seconds,
+        )
 
 
 class RedisStore:
@@ -127,14 +154,14 @@ class RedisStore:
             try:
                 self._redis.close()
             except Exception:
-                pass
+                logger.exception("Failed to close Redis connection")
             self._redis = None
 
         if self._redislite_instance is not None:
             try:
                 self._redislite_instance.close()
             except Exception:
-                pass
+                logger.exception("Failed to close redislite connection")
             self._redislite_instance = None
 
     def _get_redis(self) -> Any:
@@ -166,6 +193,7 @@ class RedisStore:
 
             return redis.Redis.from_url(self._config.redis_url, decode_responses=True)
         except ImportError:
+            logger.warning("redis package not installed, persistence will be disabled")
             return None
 
     def _create_redislite_client(self) -> Any:
@@ -185,6 +213,7 @@ class RedisStore:
             self._redislite_instance = redislite.Redis(str(db_path), decode_responses=True)
             return self._redislite_instance
         except ImportError:
+            logger.warning("redislite package not installed, persistence will be disabled")
             return None
 
     @property
@@ -194,6 +223,11 @@ class RedisStore:
     @property
     def namespace(self) -> str:
         return self._config.namespace if self._config else "tuft"
+
+    @property
+    def future_ttl(self) -> int | None:
+        """Get the TTL for future records in seconds."""
+        return self._config.future_ttl_seconds if self._config else DEFAULT_FUTURE_TTL_SECONDS
 
     def close(self) -> None:
         self._close_connections()
@@ -208,14 +242,18 @@ class RedisStore:
         escaped = [p.replace("::", "__SEP__") for p in parts]
         return "::".join([self.namespace] + escaped)
 
-    def set(self, key: str, value: str) -> bool:
+    def set(self, key: str, value: str, ttl_seconds: int | None = None) -> bool:
         redis = self._get_redis()
         if redis is None:
             return False
         try:
-            redis.set(key, value)
+            if ttl_seconds is not None:
+                redis.setex(key, ttl_seconds, value)
+            else:
+                redis.set(key, value)
             return True
         except Exception:
+            logger.exception("Failed to set key %s in Redis", key)
             return False
 
     def get(self, key: str) -> str | None:
@@ -225,6 +263,7 @@ class RedisStore:
         try:
             return redis.get(key)
         except Exception:
+            logger.exception("Failed to get key %s from Redis", key)
             return None
 
     def delete(self, key: str) -> bool:
@@ -235,15 +274,18 @@ class RedisStore:
             redis.delete(key)
             return True
         except Exception:
+            logger.exception("Failed to delete key %s from Redis", key)
             return False
 
     def keys(self, pattern: str) -> list[str]:
+        """Get all keys matching the pattern using SCAN for better performance."""
         redis = self._get_redis()
         if redis is None:
             return []
         try:
-            return list(redis.keys(pattern))
+            return list(redis.scan_iter(match=pattern))
         except Exception:
+            logger.exception("Failed to scan keys with pattern %s from Redis", pattern)
             return []
 
     def delete_pattern(self, pattern: str) -> int:
@@ -251,11 +293,12 @@ class RedisStore:
         if redis is None:
             return 0
         try:
-            keys = redis.keys(pattern)
+            keys = list(redis.scan_iter(match=pattern))
             if keys:
                 return redis.delete(*keys)
             return 0
         except Exception:
+            logger.exception("Failed to delete keys with pattern %s from Redis", pattern)
             return 0
 
     def exists(self, key: str) -> bool:
@@ -265,183 +308,116 @@ class RedisStore:
         try:
             return redis.exists(key) > 0
         except Exception:
+            logger.exception("Failed to check existence of key %s in Redis", key)
             return False
 
+    def pipeline(self) -> "RedisPipeline":
+        """Create a pipeline for atomic batch operations.
 
-# Fields that should not be serialized (runtime objects)
-NON_SERIALIZABLE_FIELDS = {
-    "_execution_lock",  # asyncio.Lock in TrainingRunRecord
-    "event",  # asyncio.Event in FutureRecord
-    "backend",  # BaseTrainingBackend reference
-}
-
-
-def _is_nested_dataclass_dict(field_type: Any) -> bool:
-    """Check if field type is Dict[str, SomeDataclass]."""
-    origin = get_origin(field_type)
-    if origin is dict:
-        args = get_args(field_type)
-        if len(args) == 2:
-            value_type = args[1]
-            if isinstance(value_type, type) and is_dataclass(value_type):
-                return True
-    return False
+        Usage:
+            with store.pipeline() as pipe:
+                pipe.set("key1", "value1")
+                pipe.set("key2", "value2")
+            # All operations are executed atomically on context exit
+        """
+        return RedisPipeline(self)
 
 
-def _is_nested_dataclass_list(field_type: Any) -> bool:
-    """Check if field type is list[SomeDataclass]."""
-    origin = get_origin(field_type)
-    if origin is list:
-        args = get_args(field_type)
-        if len(args) == 1:
-            item_type = args[0]
-            if isinstance(item_type, type) and is_dataclass(item_type):
-                return True
-    return False
+class RedisPipeline:
+    """Pipeline for atomic batch Redis operations using MULTI/EXEC transactions."""
+
+    def __init__(self, store: RedisStore) -> None:
+        self._store = store
+        self._redis = store._get_redis()
+        self._pipe: Any = None
+        if self._redis is not None:
+            self._pipe = self._redis.pipeline(transaction=True)
+
+    def __enter__(self) -> "RedisPipeline":
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        if exc_type is None and self._pipe is not None:
+            try:
+                self._pipe.execute()
+            except Exception:
+                logger.exception("Failed to execute Redis pipeline")
+
+    def set(self, key: str, value: str, ttl_seconds: int | None = None) -> "RedisPipeline":
+        """Add a SET operation to the pipeline."""
+        if self._pipe is not None:
+            if ttl_seconds is not None:
+                self._pipe.setex(key, ttl_seconds, value)
+            else:
+                self._pipe.set(key, value)
+        return self
+
+    def delete(self, key: str) -> "RedisPipeline":
+        """Add a DELETE operation to the pipeline."""
+        if self._pipe is not None:
+            self._pipe.delete(key)
+        return self
 
 
-def serialize_value(value: Any) -> Any:
-    """Serialize a single value to JSON-compatible format."""
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return {"__type__": "datetime", "value": value.isoformat()}
-    if isinstance(value, Path):
-        return {"__type__": "Path", "value": str(value)}
-    if isinstance(value, asyncio.Lock):
-        return None
-    if isinstance(value, asyncio.Event):
-        return None
-    if is_dataclass(value) and not isinstance(value, type):
-        return serialize_dataclass(value)
-    if isinstance(value, dict):
-        return {str(k): serialize_value(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [serialize_value(item) for item in value]
-    if isinstance(value, (set, frozenset)):
-        return {"__type__": "set", "value": [serialize_value(item) for item in value]}
-    if isinstance(value, (str, int, float, bool)):
-        return value
-    if hasattr(value, "model_dump"):
-        return value.model_dump(mode="python")  # type: ignore[attr-defined]
-
-    return str(value)
-
-
-def serialize_dataclass(obj: Any, skip_nested_refs: bool = False) -> dict[str, Any]:
-    """Serialize a dataclass to a dictionary.
+def save_record(key: str, record: BaseModel, ttl_seconds: int | None = None) -> bool:
+    """Save a Pydantic model record to Redis.
 
     Args:
-        obj: The dataclass instance to serialize.
-        skip_nested_refs: If True, skip fields that contain nested dataclass
-            dicts/lists (they should be stored separately).
+        key: Redis key to store the record under.
+        record: Pydantic BaseModel instance to serialize and store.
+        ttl_seconds: Optional TTL in seconds for the key. If None, no expiry is set.
+
+    Returns:
+        True if the record was saved successfully, False otherwise.
     """
-    if not is_dataclass(obj) or isinstance(obj, type):
-        raise TypeError(f"Expected dataclass instance, got {type(obj)}")
-
-    result: dict[str, Any] = {}
-    result["__class__"] = type(obj).__name__
-    result["__module__"] = type(obj).__module__
-
-    for field in fields(obj):
-        name = field.name
-        if name in NON_SERIALIZABLE_FIELDS:
-            continue
-
-        if skip_nested_refs:
-            # Auto-detect nested dataclass fields
-            if _is_nested_dataclass_dict(field.type):
-                result[f"__{name}_keys__"] = list(getattr(obj, name, {}).keys())
-                continue
-            if _is_nested_dataclass_list(field.type):
-                result[f"__{name}_count__"] = len(getattr(obj, name, []))
-                continue
-
-        value = getattr(obj, name)
-        result[name] = serialize_value(value)
-
-    return result
-
-
-def deserialize_value(value: Any, expected_type: type | None = None) -> Any:
-    """Deserialize a JSON value back to Python object."""
-    if value is None:
-        return None
-    if isinstance(value, dict):
-        if "__type__" in value:
-            type_name = value["__type__"]
-            if type_name == "datetime":
-                return datetime.fromisoformat(value["value"])
-            if type_name == "Path":
-                return Path(value["value"])
-            if type_name == "set":
-                return set(deserialize_value(item) for item in value["value"])
-        if "__class__" in value and "__module__" in value:
-            return deserialize_dataclass(value)
-        return {k: deserialize_value(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [deserialize_value(item) for item in value]
-    return value
-
-
-def deserialize_dataclass(data: dict[str, Any], target_class: type[T] | None = None) -> T:
-    """Deserialize a dictionary to a dataclass instance."""
-    if target_class is None:
-        class_name = data.get("__class__")
-        module_name = data.get("__module__")
-        if class_name and module_name:
-            import importlib
-
-            try:
-                module = importlib.import_module(module_name)
-                target_class = getattr(module, class_name, None)
-            except (ImportError, AttributeError):
-                pass
-
-    if target_class is None or not is_dataclass(target_class):
-        return data  # type: ignore
-
-    init_kwargs = {}
-    field_info = {f.name: f for f in fields(target_class)}
-
-    for name, field in field_info.items():
-        if not field.init:
-            continue
-        if name in NON_SERIALIZABLE_FIELDS:
-            if name == "_execution_lock":
-                init_kwargs[name] = asyncio.Lock()
-            elif name == "event":
-                init_kwargs[name] = asyncio.Event()
-            continue
-        if name in data:
-            init_kwargs[name] = deserialize_value(data[name])
-        elif f"__{name}_keys__" in data:
-            init_kwargs[name] = {}
-        elif f"__{name}_count__" in data:
-            init_kwargs[name] = []
-
-    try:
-        return target_class(**init_kwargs)
-    except TypeError:
-        filtered = {k: v for k, v in init_kwargs.items() if k in field_info and field_info[k].init}
-        return target_class(**filtered)
-
-
-def save_record(key: str, record: Any, skip_nested_refs: bool = False) -> bool:
-    """Save a dataclass record to Redis."""
     store = RedisStore.get_instance()
     if not store.is_enabled:
         return False
     try:
-        data = serialize_dataclass(record, skip_nested_refs=skip_nested_refs)
-        json_str = json.dumps(data, ensure_ascii=False)
-        return store.set(key, json_str)
+        # Use Pydantic's model_dump_json for serialization
+        json_str = record.model_dump_json()
+        return store.set(key, json_str, ttl_seconds=ttl_seconds)
     except Exception:
+        logger.exception("Failed to save record with key %s to Redis", key)
         return False
 
 
-def load_record(key: str, target_class: type[T] | None = None) -> T | None:
-    """Load a dataclass record from Redis."""
+def save_records_atomic(
+    records: list[tuple[str, BaseModel]], ttl_seconds: int | None = None
+) -> bool:
+    """Save multiple Pydantic model records to Redis atomically using a transaction.
+
+    Args:
+        records: List of (key, record) tuples.
+        ttl_seconds: Optional TTL in seconds for all keys. If None, no expiry is set.
+
+    Returns:
+        True if all records were saved successfully, False otherwise.
+    """
+    store = RedisStore.get_instance()
+    if not store.is_enabled:
+        return False
+    try:
+        with store.pipeline() as pipe:
+            for key, record in records:
+                json_str = record.model_dump_json()
+                pipe.set(key, json_str, ttl_seconds=ttl_seconds)
+        return True
+    except Exception:
+        logger.exception("Failed to save records atomically to Redis")
+        return False
+
+
+def load_record(key: str, target_class: type[T]) -> T | None:
+    """Load a Pydantic model record from Redis.
+
+    Args:
+        key: Redis key to load from.
+        target_class: The Pydantic model class to deserialize into.
+
+    Returns:
+        The deserialized record, or None if not found or on error.
+    """
     store = RedisStore.get_instance()
     if not store.is_enabled:
         return None
@@ -449,9 +425,9 @@ def load_record(key: str, target_class: type[T] | None = None) -> T | None:
         json_str = store.get(key)
         if json_str is None:
             return None
-        data = json.loads(json_str)
-        return deserialize_dataclass(data, target_class)
+        return target_class.model_validate_json(json_str)
     except Exception:
+        logger.exception("Failed to load record with key %s from Redis", key)
         return None
 
 

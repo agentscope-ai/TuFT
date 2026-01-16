@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from tinker import types
 from tinker.types.try_again_response import TryAgainResponse
@@ -36,19 +37,20 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-@dataclass
-class FutureRecord:
+class FutureRecord(BaseModel):
     """Future record with persistence support.
 
     Fields:
-        event: Not serialized (init=False) - created fresh on each instance.
+        event: Not serialized (excluded) - created fresh on each instance.
                After restore, if status is ready/failed, event is auto-set.
         operation_type: Type of operation for recovery purposes.
         operation_args: Serializable arguments for the operation.
         created_at: Timestamp when the future was created.
     """
 
-    request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    request_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     model_id: str | None = None
     user_id: str | None = None
     queue_state: QueueState = "active"
@@ -57,13 +59,16 @@ class FutureRecord:
     error: types.RequestFailedResponse | None = None
     operation_type: OperationType | None = None
     operation_args: dict[str, Any] | None = None
-    created_at: datetime = field(default_factory=_now)
-    event: asyncio.Event = field(init=False, repr=False)
+    created_at: datetime = Field(default_factory=_now)
+    # Runtime-only field, excluded from serialization
+    event: asyncio.Event = Field(default_factory=asyncio.Event, exclude=True)
 
-    def __post_init__(self) -> None:
-        self.event = asyncio.Event()
+    @model_validator(mode="after")
+    def _set_event_if_completed(self) -> "FutureRecord":
+        """Set the event if the future is already completed."""
         if self.status in ("ready", "failed"):
             self.event.set()
+        return self
 
 
 class FutureStore:
@@ -90,6 +95,8 @@ class FutureStore:
         for key in store.keys(pattern):
             record = load_record(key, FutureRecord)
             if record is None:
+                # Record may have expired (TTL) or failed to deserialize
+                # This is expected for expired futures, just skip them
                 continue
             if record.status == "pending":
                 has_pending = True
@@ -103,7 +110,10 @@ class FutureStore:
             return
         record = self._records.get(request_id)
         if record is not None:
-            save_record(self._build_key(request_id), record)
+            # Use TTL for futures to prevent Redis from growing indefinitely
+            # Futures are short-lived and can be safely expired
+            ttl = get_redis_store().future_ttl
+            save_record(self._build_key(request_id), record, ttl_seconds=ttl)
 
     def _delete_future(self, request_id: str) -> None:
         if not is_persistence_enabled():
@@ -300,7 +310,7 @@ class FutureStore:
             The payload if ready, or error response if failed
 
         Raises:
-            FutureNotFoundException: If request_id not found
+            FutureNotFoundException: If request_id not found (may have expired due to TTL)
             UserMismatchException: If user_id does not match the owner
             asyncio.TimeoutError: If timeout is exceeded
         """
@@ -309,6 +319,7 @@ class FutureStore:
             record = self._records.get(request_id)
 
         if record is None:
+            # Record not found - may have expired due to TTL or never existed
             raise FutureNotFoundException(request_id)
         if record.user_id != user_id:
             raise UserMismatchException()

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
-from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable, Dict, List, TypeVar
+
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from tinker import types
 
@@ -27,32 +29,46 @@ from .persistence import (
     is_persistence_enabled,
     load_record,
     save_record,
+    save_records_atomic,
 )
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
 
-@dataclass
-class TrainingRunRecord:
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class TrainingRunRecord(BaseModel):
+    """Training run record with persistence support.
+
+    Runtime-only fields (backend, _execution_lock) are excluded from serialization.
+    Checkpoints are stored separately with their own keys.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     training_run_id: str
     base_model: str
     lora_rank: int
     session_id: str
     model_owner: str
-    user_metadata: dict[str, str] | None
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    last_request_time: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    checkpoints: Dict[str, "CheckpointRecord"] = field(default_factory=dict)
-    sampler_checkpoints: Dict[str, "CheckpointRecord"] = field(default_factory=dict)
+    user_metadata: dict[str, str] | None = None
+    created_at: datetime = Field(default_factory=_now)
+    last_request_time: datetime = Field(default_factory=_now)
+    # Checkpoints are stored separately, excluded from serialization
+    checkpoints: Dict[str, CheckpointRecord] = Field(default_factory=dict, exclude=True)
+    sampler_checkpoints: Dict[str, CheckpointRecord] = Field(default_factory=dict, exclude=True)
     next_training_checkpoint: int = 1
     next_sampler_checkpoint: int = 1
     corrupted: bool = False
     next_seq_id: int = 1
-    backend: BaseTrainingBackend | None = field(default=None, repr=False)
-    _execution_lock: asyncio.Lock = field(init=False, repr=False)
-
-    def __post_init__(self) -> None:
-        self._execution_lock = asyncio.Lock()
+    # Runtime-only fields, excluded from serialization
+    backend: BaseTrainingBackend | None = Field(default=None, exclude=True)
+    # Private attribute for execution lock (not a model field)
+    _execution_lock: asyncio.Lock = PrivateAttr(default_factory=asyncio.Lock)
 
     def to_training_run(self) -> types.TrainingRun:
         training_checkpoint = self._latest_checkpoint(self.checkpoints)
@@ -70,7 +86,7 @@ class TrainingRunRecord:
             user_metadata=self.user_metadata,
         )
 
-    def _latest_checkpoint(self, items: Dict[str, "CheckpointRecord"]) -> types.Checkpoint | None:
+    def _latest_checkpoint(self, items: Dict[str, CheckpointRecord]) -> types.Checkpoint | None:
         if not items:
             return None
         latest = max(items.values(), key=lambda record: record.created_at)
@@ -123,7 +139,7 @@ class TrainingController:
             if record is None:
                 continue
             model_id = record.training_run_id
-            # Restore checkpoints
+            # Restore checkpoints (stored separately, not subject to TTL)
             self._restore_checkpoints(model_id, record)
             self._restore_sampler_checkpoints(model_id, record)
             # Restore backend reference
@@ -152,13 +168,15 @@ class TrainingController:
                 record.sampler_checkpoints[ckpt.checkpoint_id] = ckpt
 
     def _save_training_run(self, model_id: str) -> None:
+        """Save training run to Redis (no TTL - permanent record)."""
         if not is_persistence_enabled():
             return
         record = self.training_runs.get(model_id)
         if record is not None:
-            save_record(self._build_key(model_id), record, skip_nested_refs=True)
+            save_record(self._build_key(model_id), record)
 
     def _save_checkpoint(self, model_id: str, checkpoint_id: str) -> None:
+        """Save checkpoint to Redis (no TTL - permanent record)."""
         if not is_persistence_enabled():
             return
         record = self.training_runs.get(model_id)
@@ -168,6 +186,7 @@ class TrainingController:
                 save_record(self._build_checkpoint_key(model_id, checkpoint_id), ckpt)
 
     def _save_sampler_checkpoint(self, model_id: str, checkpoint_id: str) -> None:
+        """Save sampler checkpoint to Redis (no TTL - permanent record)."""
         if not is_persistence_enabled():
             return
         record = self.training_runs.get(model_id)
@@ -175,6 +194,40 @@ class TrainingController:
             ckpt = record.sampler_checkpoints.get(checkpoint_id)
             if ckpt is not None:
                 save_record(self._build_sampler_checkpoint_key(model_id, checkpoint_id), ckpt)
+
+    def _save_training_run_with_checkpoint(
+        self, model_id: str, checkpoint_id: str, checkpoint_type: types.CheckpointType
+    ) -> None:
+        """Save training run and checkpoint atomically using Redis transaction.
+
+        This ensures consistency if the server crashes between saves.
+        No TTL is used for these records as they are permanent.
+        """
+        if not is_persistence_enabled():
+            return
+        record = self.training_runs.get(model_id)
+        if record is None:
+            return
+
+        if checkpoint_type == "training":
+            ckpt = record.checkpoints.get(checkpoint_id)
+            ckpt_key = self._build_checkpoint_key(model_id, checkpoint_id)
+        else:
+            ckpt = record.sampler_checkpoints.get(checkpoint_id)
+            ckpt_key = self._build_sampler_checkpoint_key(model_id, checkpoint_id)
+
+        if ckpt is None:
+            # Fall back to just saving the training run
+            save_record(self._build_key(model_id), record)
+            return
+
+        # Save both atomically (no TTL for permanent records)
+        save_records_atomic(
+            [
+                (self._build_key(model_id), record),
+                (ckpt_key, ckpt),
+            ]
+        )
 
     def _delete_training_run(self, model_id: str) -> None:
         if not is_persistence_enabled():
@@ -396,11 +449,9 @@ class TrainingController:
         # save the checkpoint record in the training run
         target_map[checkpoint_name] = checkpoint
 
-        self._save_training_run(model_id)
-        if checkpoint_type == "training":
-            self._save_checkpoint(model_id, checkpoint_name)
-        else:
-            self._save_sampler_checkpoint(model_id, checkpoint_name)
+        # Save training run and checkpoint atomically to prevent inconsistency
+        # if server crashes between saves
+        self._save_training_run_with_checkpoint(model_id, checkpoint_name, checkpoint_type)
 
         return checkpoint
 
@@ -543,7 +594,7 @@ class TrainingController:
         try:
             await record.backend.create_adapter(model_id, types.LoraConfig(rank=record.lora_rank))
         except Exception:
-            pass
+            logger.exception("Failed to create adapter for model %s during restore", model_id)
         try:
             await record.backend.load_state(
                 lora_id=model_id,
