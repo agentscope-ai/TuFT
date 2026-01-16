@@ -14,6 +14,12 @@ from .checkpoints import CheckpointRecord
 from .config import AppConfig
 from .exceptions import SessionNotFoundException, UserMismatchException
 from .futures import FutureStore
+from .persistence import (
+    get_redis_store,
+    is_persistence_enabled,
+    load_record,
+    save_record,
+)
 from .sampling_controller import SamplingController
 from .training_controller import TrainingController, TrainingRunRecord
 
@@ -38,8 +44,36 @@ class SessionRecord:
 class SessionManager:
     """Maintains session metadata and heartbeats so other controllers can enforce ownership."""
 
+    REDIS_KEY_PREFIX = "session"
+
     def __init__(self) -> None:
         self._sessions: Dict[str, SessionRecord] = {}
+        self._restore_from_redis()
+
+    def _build_key(self, session_id: str) -> str:
+        return get_redis_store().build_key(self.REDIS_KEY_PREFIX, session_id)
+
+    def _restore_from_redis(self) -> None:
+        if not is_persistence_enabled():
+            return
+        store = get_redis_store()
+        pattern = store.build_key(self.REDIS_KEY_PREFIX, "*")
+        for key in store.keys(pattern):
+            record = load_record(key, SessionRecord)
+            if record is not None:
+                self._sessions[record.session_id] = record
+
+    def _save_session(self, session_id: str) -> None:
+        if not is_persistence_enabled():
+            return
+        record = self._sessions.get(session_id)
+        if record is not None:
+            save_record(self._build_key(session_id), record)
+
+    def _delete_session(self, session_id: str) -> None:
+        if not is_persistence_enabled():
+            return
+        get_redis_store().delete(self._build_key(session_id))
 
     def create_session(self, request: types.CreateSessionRequest, user: User) -> SessionRecord:
         """Create a new session for the given user and request."""
@@ -52,6 +86,7 @@ class SessionManager:
             sdk_version=request.sdk_version,
         )
         self._sessions[session_id] = record
+        self._save_session(session_id)
         return record
 
     def require(self, session_id: str) -> SessionRecord:
@@ -65,9 +100,9 @@ class SessionManager:
         if record.user_id != user_id:
             raise UserMismatchException()
         record.last_heartbeat = _now()
+        self._save_session(session_id)
 
     def list_sessions(self, user_id: str) -> list[str]:
-        """List all session IDs belonging to the given user."""
         return [k for k, v in self._sessions.items() if v.user_id == user_id]
 
 
@@ -89,6 +124,45 @@ class ServerState:
     async def async_init(self) -> None:
         """Put any async initialization logic here"""
         await self.sampling.async_init()
+        await self._restore_from_checkpoints()
+
+    async def _restore_from_checkpoints(self) -> None:
+        """Restore server state from checkpoints after Redis restore.
+
+        This method handles checkpoint-based recovery:
+        1. For each model_id with pending futures, find the latest checkpoint
+        2. Load the checkpoint to restore model state
+        3. Mark all futures created after the checkpoint as failed
+        4. For models without checkpoints, mark all pending futures as failed
+        """
+        if not self.future_store.needs_checkpoint_recovery:
+            return
+        pending_by_model = self.future_store.get_pending_futures_by_model()
+        for model_id, _ in pending_by_model.items():
+            if model_id is None:
+                self.future_store.mark_futures_failed_after_checkpoint(
+                    model_id=None,
+                    checkpoint_time=None,
+                    error_message="Server restarted. Please retry.",
+                )
+                continue
+            latest_ckpt = await self.training.restore_from_checkpoint(model_id)
+            if latest_ckpt is None:
+                self.future_store.mark_futures_failed_after_checkpoint(
+                    model_id=model_id,
+                    checkpoint_time=None,
+                    error_message=f"No checkpoint found for model {model_id}. Please retry.",
+                )
+            else:
+                self.future_store.mark_futures_failed_after_checkpoint(
+                    model_id=model_id,
+                    checkpoint_time=latest_ckpt.created_at,
+                    error_message=(
+                        f"Server restored from checkpoint {latest_ckpt.checkpoint_id}. "
+                        "Operations after this checkpoint need to be retried."
+                    ),
+                )
+        self.future_store.clear_recovery_flag()
 
     def create_session(self, request: types.CreateSessionRequest, user: User) -> SessionRecord:
         return self.sessions.create_session(request, user)

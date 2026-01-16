@@ -107,6 +107,87 @@ print("Sampler weights saved to:", sampler_weights.path)
 
 Adjust the fake token IDs with your own prompts once you have a tokenizer locally.
 
+## Persistence
+
+TuFT supports optional Redis-based persistence for server state. When enabled,
+the server can recover sessions, training runs, and pending futures after a restart.
+
+### Persistence Modes
+
+TuFT provides three persistence modes:
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| `disabled` | No persistence, data in-memory only | Development, testing without state recovery |
+| `redis_url` | External Redis server | Production, multi-instance deployments |
+| `redislite` | Lightweight embedded Redis | Single-instance, local development with persistence |
+
+### Configuration
+
+#### Mode 1: Disabled (Default)
+
+No configuration needed. All data is stored in memory and lost on restart.
+
+```yaml
+persistence:
+  mode: disabled
+```
+
+#### Mode 2: External Redis Server
+
+Use an external Redis server for production deployments:
+
+```yaml
+persistence:
+  mode: redis_url
+  redis_url: "redis://localhost:6379/0"
+  namespace: "tuft"
+```
+
+You can start a local Redis instance using Docker:
+
+```bash
+docker run -d --name TuFT-redis -p 6379:6379 redis:7-alpine
+```
+
+#### Mode 3: Lightweight Embedded Redis (redislite)
+
+Use embedded Redis for single-instance deployments without external dependencies:
+
+```yaml
+persistence:
+  mode: redislite
+  redislite_path: "/path/to/tuft/redis.db"
+  namespace: "tuft"
+```
+
+If `redislite_path` is not specified, defaults to `~/.cache/tuft/redis.db`.
+
+To use redislite, install the optional dependency:
+
+```bash
+uv pip install tuft[redislite]
+# or
+uv pip install redislite
+```
+
+### Python API
+
+You can also configure persistence programmatically:
+
+```python
+from tuft.persistence import PersistenceConfig
+
+# Disabled (no persistence)
+config = PersistenceConfig.disabled()
+
+# External Redis server
+config = PersistenceConfig.from_redis_url("redis://localhost:6379/0")
+
+# Lightweight embedded Redis (redislite)
+config = PersistenceConfig.from_redislite("/path/to/redis.db")
+```
+
 ## Development
 
 - Design docs are located in [`docs`](./docs/).

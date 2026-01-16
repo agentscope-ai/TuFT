@@ -22,6 +22,12 @@ from .exceptions import (
     UnknownModelException,
     UserMismatchException,
 )
+from .persistence import (
+    get_redis_store,
+    is_persistence_enabled,
+    load_record,
+    save_record,
+)
 
 
 @dataclass
@@ -48,20 +54,82 @@ class SamplingHistoryEntry:
 class SamplingController:
     """Manages sampling sessions and connects them to the correct training or base-model backend."""
 
-    def __init__(
-        self,
-        config: AppConfig,
-    ) -> None:
+    REDIS_KEY_PREFIX = "sampling_session"
+
+    def __init__(self, config: AppConfig) -> None:
         self.config = config
         self.sampling_sessions: Dict[str, SamplingSessionRecord] = {}
         self._base_backends: Dict[str, BaseSamplingBackend] = self._create_backends(
             config.supported_models
         )
+        self._restore_from_redis()
+
+    def _build_key(self, session_id: str) -> str:
+        return get_redis_store().build_key(self.REDIS_KEY_PREFIX, session_id)
+
+    def _restore_from_redis(self) -> None:
+        """Restore sampling sessions from Redis on startup."""
+        if not is_persistence_enabled():
+            return
+        store = get_redis_store()
+        pattern = store.build_key(self.REDIS_KEY_PREFIX, "*")
+        invalid_sessions = []
+        for key in store.keys(pattern):
+            # Match only top-level sessions (3 parts)
+            if len(key.split("::")) != 3:
+                continue
+            record = load_record(key, SamplingSessionRecord)
+            if record is None:
+                continue
+            if record.base_model and record.base_model not in self._base_backends:
+                invalid_sessions.append(record.sampling_session_id)
+                continue
+            self.sampling_sessions[record.sampling_session_id] = record
+        for session_id in invalid_sessions:
+            store.delete(self._build_key(session_id))
+
+    def _save_session(self, session_id: str) -> None:
+        if not is_persistence_enabled():
+            return
+        record = self.sampling_sessions.get(session_id)
+        if record is not None:
+            save_record(self._build_key(session_id), record)
+
+    def _delete_session(self, session_id: str) -> None:
+        if not is_persistence_enabled():
+            return
+        get_redis_store().delete(self._build_key(session_id))
 
     async def async_init(self) -> None:
-        """Perform any async initialization here."""
+        """Perform any async initialization here, including adapter reloading."""
         init_tasks = [backend.async_init() for backend in self._base_backends.values()]
         await asyncio.gather(*init_tasks)
+
+        # Re-add adapters for restored sessions
+        await self._rebuild_sampling_backends()
+
+    async def _rebuild_sampling_backends(self) -> None:
+        """Rebuild sampling backends for restored sessions."""
+        invalid_sessions = []
+        for session_id, record in list(self.sampling_sessions.items()):
+            if record.model_path and record.base_model:
+                adapter_path = Path(record.model_path)
+                if not adapter_path.exists():
+                    invalid_sessions.append(session_id)
+                    continue
+                if record.base_model not in self._base_backends:
+                    invalid_sessions.append(session_id)
+                    continue
+                try:
+                    backend = self._base_backends[record.base_model]
+                    await backend.add_adapter(
+                        lora_id=record.sampling_session_id, adapter_path=adapter_path
+                    )
+                except Exception:
+                    invalid_sessions.append(session_id)
+        for session_id in invalid_sessions:
+            del self.sampling_sessions[session_id]
+            self._delete_session(session_id)
 
     def _create_backends(self, model_configs: List[ModelConfig]) -> Dict[str, BaseSamplingBackend]:
         backends: Dict[str, BaseSamplingBackend] = {}
@@ -89,10 +157,7 @@ class SamplingController:
                     model_path, self.config.checkpoint_dir
                 )
             except FileNotFoundError as exc:
-                raise CheckpointNotFoundException(
-                    checkpoint_id=model_path,
-                ) from exc
-
+                raise CheckpointNotFoundException(checkpoint_id=model_path) from exc
             if not parsed_checkpoint.path.exists():
                 raise CheckpointNotFoundException(
                     checkpoint_id=parsed_checkpoint.checkpoint_id,
@@ -128,6 +193,7 @@ class SamplingController:
             model_path=str(adapter_path) if adapter_path else None,
             session_seq_id=session_seq_id,
         )
+        self._save_session(sampling_session_id)
         return sampling_session_id
 
     def _hash_prompt(self, prompt: types.ModelInput) -> str:
@@ -146,6 +212,7 @@ class SamplingController:
             prompt_hash=self._hash_prompt(prompt),
         )
         record.history.append(entry)
+        self._save_session(record.sampling_session_id)
 
     def _resolve_backend(
         self, request: types.SampleRequest, user_id: str
@@ -200,6 +267,7 @@ class SamplingController:
         for sampling_id, record in list(self.sampling_sessions.items()):
             if record.model_id == model_id and record.user_id == user_id:
                 del self.sampling_sessions[sampling_id]
+                self._delete_session(sampling_id)
 
     def get_sampler_info(
         self, sampler_id: str, user_id: str, default_base_model: str
