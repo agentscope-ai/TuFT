@@ -1,4 +1,4 @@
-from src.llm_rpc.checkpoints import CheckpointRecord
+from src.tuft.checkpoints import CheckpointRecord
 
 
 def test_checkpoint_record(tmp_path):

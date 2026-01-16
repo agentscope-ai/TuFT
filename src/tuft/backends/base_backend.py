@@ -47,7 +47,7 @@ class BaseSamplingBackend(BaseBackend):
     @classmethod
     def create_backend(cls, config: ModelConfig) -> "BaseSamplingBackend":
         """Factory method to create a sampling backend instance."""
-        if os.getenv("LLM_RPC_CPU_TEST", "0") == "1":
+        if os.getenv("TUFT_CPU_TEST", "0") == "1":
             from ..backends.sampling_backend import DummySamplingBackend
 
             return DummySamplingBackend(config)
@@ -102,7 +102,7 @@ class BaseTrainingBackend(BaseBackend):
     @classmethod
     def create_backend(cls, config: ModelConfig) -> "BaseTrainingBackend":
         """Factory method to create a training backend instance."""
-        if os.getenv("LLM_RPC_CPU_TEST", "0") == "1":
+        if os.getenv("TUFT_CPU_TEST", "0") == "1":
             from ..backends.training_backend import DummyTrainingBackend
 
             return DummyTrainingBackend(config)

@@ -14,7 +14,7 @@ def pytest_configure(config):
 @pytest.fixture(autouse=True, scope="session")
 def set_cpu_env(request):
     if not request.config.getoption("--gpu"):
-        os.environ["LLM_RPC_CPU_TEST"] = "1"
+        os.environ["TUFT_CPU_TEST"] = "1"
 
 
 def pytest_collection_modifyitems(config, items):

@@ -1,4 +1,4 @@
-"""Configuration helpers for the LLM-RPC service."""
+"""Configuration helpers for the TuFT service."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import Dict, Iterable, List
 
 
 def _default_checkpoint_dir() -> Path:
-    return Path.home() / ".cache" / "llm-rpc" / "checkpoints"
+    return Path.home() / ".cache" / "tuft" / "checkpoints"
 
 
 @dataclass

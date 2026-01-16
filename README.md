@@ -1,6 +1,6 @@
-# LLM-RPC
+# TuFT
 
-LLM-RPC simplifies large language models (LLMs) finetuning by providing
+TuFT simplifies large language models (LLMs) finetuning by providing
 users with a minimal remote procedure call (RPC) API that can be accessed via
 compatible clients such as [Tinker](https://github.com/thinking-machine-lab/tinker).
 
@@ -30,7 +30,7 @@ source .venv/bin/activate
 The CLI starts a FastAPI server:
 
 ```bash
-llm-rpc --port 8080 --checkpoint-dir ~/.cache/llm-rpc/checkpoints --model-config models.yaml
+tuft --port 8080 --checkpoint-dir ~/.cache/tuft/checkpoints --model-config models.yaml
 ```
 
 ## End-to-end example
@@ -43,7 +43,7 @@ fake token IDs to drive the toy backend.
 import tinker
 from tinker import types
 
-# Connect to the running llm-rpc server via the bundled SDK
+# Connect to the running tuft server via the bundled SDK
 client = tinker.ServiceClient(base_url="http://localhost:8080", api_key="local-dev-key")
 
 # Discover available base models before launching a training run
@@ -58,7 +58,7 @@ for model in capabilities.supported_models:
 training = client.create_lora_training_client(base_model=base_model, rank=8)
 
 # tokenizer = training.get_tokenizer()
-# prompt_tokens = tokenizer.encode("Hello from LLM-RPC")
+# prompt_tokens = tokenizer.encode("Hello from TuFT")
 # target_tokens = tokenizer.encode(" Generalizing beyond the prompt")
 prompt_tokens = [101, 42, 37, 102]
 target_tokens = [101, 99, 73, 102]

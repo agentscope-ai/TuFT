@@ -1,4 +1,4 @@
-"""Authentication utilities for LLM-RPC server.
+"""Authentication utilities for TuFT server.
 
 The current implementation is only for demonstration purposes and
 should be replaced with a proper authentication system in the future.

@@ -1,6 +1,6 @@
 # How to Write and Run Unit Tests
 
-LLM-RPC supports running unit tests on both CPU and GPU devices. Below are the instructions for each setup.
+TuFT supports running unit tests on both CPU and GPU devices. Below are the instructions for each setup.
 
 ## On CPU devices
 
@@ -10,7 +10,7 @@ To write and run unit tests on CPU devices, you do not need any special configur
 pytest tests -v -s
 ```
 
-The `conftest.py` will automatically set the environment variable `LLM_RPC_CPU_TEST=1`, which will configure the backends to use CPU-compatible implementations during testing. And the tests marked with `@pytest.mark.gpu` will be skipped automatically.
+The `conftest.py` will automatically set the environment variable `TUFT_CPU_TEST=1`, which will configure the backends to use CPU-compatible implementations during testing. And the tests marked with `@pytest.mark.gpu` will be skipped automatically.
 
 ## On GPU devices
 
@@ -25,10 +25,10 @@ def test_gpu_functionality():
     pass
 ```
 
-To run the GPU tests, you need set a model path via the environment variable `LLM_RPC_TEST_MODEL`, start a Ray cluster, and then execute pytest with the `--gpu` option:
+To run the GPU tests, you need set a model path via the environment variable `TUFT_TEST_MODEL`, start a Ray cluster, and then execute pytest with the `--gpu` option:
 
 ```bash
-export LLM_RPC_TEST_MODEL=/path/to/your/model
+export TUFT_TEST_MODEL=/path/to/your/model
 ray start --head
 pytest tests -v -s --gpu
 ```

@@ -11,8 +11,8 @@ import pytest
 import ray
 import uvicorn
 
-from llm_rpc.config import AppConfig, ModelConfig
-from llm_rpc.server import create_root_app
+from tuft.config import AppConfig, ModelConfig
+from tuft.server import create_root_app
 from tinker import types
 from tinker.lib.public_interfaces.service_client import ServiceClient
 
@@ -31,9 +31,9 @@ def server_endpoint(tmp_path_factory: pytest.TempPathFactory, request):
     ray.init(ignore_reinit_error=True)
     if request.config.getoption("--gpu"):
         assert (
-            "LLM_RPC_TEST_MODEL" in os.environ
-        ), "Environment variable LLM_RPC_TEST_MODEL must be set for this test."
-        model_path = Path(os.environ.get("LLM_RPC_TEST_MODEL", "Qwen/Qwen3-0.6B"))
+            "TUFT_TEST_MODEL" in os.environ
+        ), "Environment variable TUFT_TEST_MODEL must be set for this test."
+        model_path = Path(os.environ.get("TUFT_TEST_MODEL", "Qwen/Qwen3-0.6B"))
     else:
         model_path = Path("/dummy/model")
     checkpoint_dir = tmp_path_factory.mktemp("checkpoints")

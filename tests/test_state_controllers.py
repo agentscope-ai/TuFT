@@ -5,15 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from llm_rpc.auth import User
-from llm_rpc.config import AppConfig, ModelConfig
-from llm_rpc.exceptions import (
+from tuft.auth import User
+from tuft.config import AppConfig, ModelConfig
+from tuft.exceptions import (
     CheckpointAccessDeniedException,
     MissingSequenceIDException,
     SequenceConflictException,
     UserMismatchException,
 )
-from llm_rpc.state import ServerState
+from tuft.state import ServerState
 from tinker import types
 
 
@@ -32,9 +32,9 @@ def ray_cluster(request):
 def _build_state(tmp_path, use_gpu: bool = False) -> ServerState:
     if use_gpu:
         assert (
-            "LLM_RPC_TEST_MODEL" in os.environ
-        ), "Environment variable LLM_RPC_TEST_MODEL must be set for this test."
-        model_path = Path(os.environ.get("LLM_RPC_TEST_MODEL", "Qwen/Qwen3-0.6B"))
+            "TUFT_TEST_MODEL" in os.environ
+        ), "Environment variable TUFT_TEST_MODEL must be set for this test."
+        model_path = Path(os.environ.get("TUFT_TEST_MODEL", "Qwen/Qwen3-0.6B"))
     else:
         model_path = Path("/path/to/model")
 

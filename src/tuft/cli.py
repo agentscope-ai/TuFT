@@ -1,4 +1,4 @@
-"""Command line utilities for the local LLM-RPC server."""
+"""Command line utilities for the local TuFT server."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import uvicorn
 from .config import AppConfig, load_yaml_config
 from .server import create_root_app
 
-app = typer.Typer(help="Start the local LLM-RPC server.")
+app = typer.Typer(help="Start the local TuFT server.")
 
 _HOST_OPTION = typer.Option("127.0.0.1", "--host", help="Interface to bind")
 _PORT_OPTION = typer.Option(8000, "--port", "-p", help="Port to bind")
@@ -19,7 +19,7 @@ _RELOAD_OPTION = typer.Option(False, "--reload", help="Enable auto-reload (devel
 _CHECKPOINT_DIR_OPTION = typer.Option(
     None,
     "--checkpoint-dir",
-    help="Directory for storing checkpoints. Defaults to ~/.cache/llm-rpc/checkpoints.",
+    help="Directory for storing checkpoints. Defaults to ~/.cache/tuft/checkpoints.",
 )
 _MODEL_CONFIG_OPTION = typer.Option(
     None,
