@@ -4,9 +4,9 @@ from typing import Sequence
 
 import numpy as np
 
-from llm_rpc.backends.base_backend import BaseTrainingBackend
-from llm_rpc.checkpoints import CheckpointRecord
-from llm_rpc.config import ModelConfig
+from tuft.backends.base_backend import BaseTrainingBackend
+from tuft.checkpoints import CheckpointRecord
+from tuft.config import ModelConfig
 from tinker import types
 
 

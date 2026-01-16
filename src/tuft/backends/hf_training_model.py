@@ -9,9 +9,9 @@ from ray.actor import ActorProxy
 from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoModelForCausalLM
 
-from llm_rpc.checkpoints import CheckpointRecord
-from llm_rpc.config import ModelConfig
-from llm_rpc.loss_fn import get_loss_fn
+from tuft.checkpoints import CheckpointRecord
+from tuft.config import ModelConfig
+from tuft.loss_fn import get_loss_fn
 from tinker import types
 from tinker.types import LoraConfig as TinkerLoraConfig
 

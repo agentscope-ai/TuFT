@@ -5,8 +5,8 @@ import time
 
 import pytest
 
-from llm_rpc.exceptions import UnknownModelException, UserMismatchException
-from llm_rpc.futures import FutureStore
+from tuft.exceptions import UnknownModelException, UserMismatchException
+from tuft.futures import FutureStore
 from tinker import types
 from tinker.types.try_again_response import TryAgainResponse
 

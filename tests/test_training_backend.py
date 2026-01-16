@@ -7,18 +7,18 @@ import numpy as np
 import pytest
 import transformers
 
-from llm_rpc.backends.training_backend import HFTrainingBackend
-from llm_rpc.checkpoints import CheckpointRecord
-from llm_rpc.config import ModelConfig
+from tuft.backends.training_backend import HFTrainingBackend
+from tuft.checkpoints import CheckpointRecord
+from tuft.config import ModelConfig
 from tinker import types
 
 
 def _construct_data() -> List[types.Datum]:
     assert (
-        "LLM_RPC_TEST_MODEL" in os.environ
-    ), "Environment variable LLM_RPC_TEST_MODEL must be set for this test."
+        "TUFT_TEST_MODEL" in os.environ
+    ), "Environment variable TUFT_TEST_MODEL must be set for this test."
 
-    model_path = Path(os.environ.get("LLM_RPC_TEST_MODEL", "Qwen/Qwen3-0.6B"))
+    model_path = Path(os.environ.get("TUFT_TEST_MODEL", "Qwen/Qwen3-0.6B"))
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_path)
     examples = [
         {"input": "banana split", "output": "anana-bay plit-say"},
@@ -63,10 +63,10 @@ def _construct_data() -> List[types.Datum]:
 @pytest.mark.asyncio
 async def test_training_backend():
     assert (
-        "LLM_RPC_TEST_MODEL" in os.environ
-    ), "Environment variable LLM_RPC_TEST_MODEL must be set for this test."
+        "TUFT_TEST_MODEL" in os.environ
+    ), "Environment variable TUFT_TEST_MODEL must be set for this test."
 
-    model_path = Path(os.environ.get("LLM_RPC_TEST_MODEL", "Qwen/Qwen3-8B"))
+    model_path = Path(os.environ.get("TUFT_TEST_MODEL", "Qwen/Qwen3-8B"))
     model_config = ModelConfig(
         model_name="Qwen/Qwen3-8B",
         model_path=model_path,

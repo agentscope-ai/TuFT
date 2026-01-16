@@ -2,7 +2,7 @@
 
 
 class LLMRPCException(Exception):
-    """Base exception for LLM-RPC errors."""
+    """Base exception for TuFT errors."""
 
     def __init__(self, detail: str = ""):
         super().__init__(detail)

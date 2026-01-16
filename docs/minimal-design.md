@@ -1,4 +1,4 @@
-# Minimal LLM-RPC Implementation Design
+# Minimal TuFT Implementation Design
 
 ## 1. Objectives and Constraints
 - **Purpose**: expose a local RPC surface that the stock Tinker SDK can call for fine-tuning and sampling workflows without modifying the client.
@@ -41,13 +41,13 @@ flowchart TD
   training --> storage
   checkpoints --> storage
   futures --> storage
-  storage --> filesystem["Storage<br/>(~/.cache/llm-rpc/checkpoints)"]
+  storage --> filesystem["Storage<br/>(~/.cache/tuft/checkpoints)"]
 ```
 
 ### 3.1 FastAPI Application Layer
 - Exposes the Stainless-compatible `/api/v1/...` surface through FastAPI so the stock Tinker SDK can talk to this server without any client changes.
 - Uses dependency injection to hand each handler the shared `ServerState`, keeping the HTTP layer focused on validation and response marshaling while the controllers do the real work.
-- The CLI command (`llm-rpc start`) is a thin wrapper that builds an `AppConfig`, spins up the FastAPI app, and therefore belongs to the same box in the diagram as the request routers.
+- The CLI command (`tuft start`) is a thin wrapper that builds an `AppConfig`, spins up the FastAPI app, and therefore belongs to the same box in the diagram as the request routers.
 
 ### 3.2 ServerState Container
 - Acts as the dependency hub shown in the diagram: one instance is created at startup and holds references to every controller and store.

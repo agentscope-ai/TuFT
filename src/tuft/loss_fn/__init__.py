@@ -8,8 +8,8 @@ LossFnType: TypeAlias = Callable[
 ]
 
 LOSS_FN = {
-    "cross_entropy": "llm_rpc.loss_fn.cross_entropy.cross_entropy_loss",
-    "ppo": "llm_rpc.loss_fn.ppo.ppo_loss",
+    "cross_entropy": "tuft.loss_fn.cross_entropy.cross_entropy_loss",
+    "ppo": "tuft.loss_fn.ppo.ppo_loss",
 }
 
 

@@ -1,4 +1,4 @@
-"""LLM-RPC service package."""
+"""TuFT service package."""
 
 from .server import create_root_app
 

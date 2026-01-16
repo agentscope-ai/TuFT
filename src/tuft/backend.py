@@ -1,4 +1,4 @@
-"""Toy backend implementations used by the local LLM-RPC server."""
+"""Toy backend implementations used by the local TuFT server."""
 
 from __future__ import annotations
 

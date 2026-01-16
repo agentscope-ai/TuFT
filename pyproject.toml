@@ -1,5 +1,5 @@
 [project]
-name = "llm-rpc"
+name = "tuft"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.scripts]
-"llm-rpc" = "llm_rpc.cli:main"
+"tuft" = "tuft.cli:main"
 
 [dependency-groups]
 dev = [
@@ -39,7 +39,7 @@ exclude = [
 
 [tool.ruff.lint]
 select = ["E", "F", "B", "I"]
-per-file-ignores = {"src/llm_rpc/server.py" = ["B008"]}
+per-file-ignores = {"src/tuft/server.py" = ["B008"]}
 
 [tool.ruff.format]
 docstring-code-format = true

@@ -21,14 +21,14 @@ def ray_cluster():
 @pytest.mark.gpu
 @pytest.mark.asyncio
 async def test_sampling_backend():
-    from llm_rpc.backends.sampling_backend import VLLMSamplingBackend
-    from llm_rpc.config import ModelConfig
+    from tuft.backends.sampling_backend import VLLMSamplingBackend
+    from tuft.config import ModelConfig
 
     assert (
-        "LLM_RPC_TEST_MODEL" in os.environ
-    ), "Environment variable LLM_RPC_TEST_MODEL must be set for this test."
+        "TUFT_TEST_MODEL" in os.environ
+    ), "Environment variable TUFT_TEST_MODEL must be set for this test."
 
-    model_path = Path(os.environ.get("LLM_RPC_TEST_MODEL", "Qwen/Qwen3-0.6B"))
+    model_path = Path(os.environ.get("TUFT_TEST_MODEL", "Qwen/Qwen3-0.6B"))
     model_config = ModelConfig(
         model_name="Qwen/Qwen3-0.6B",
         model_path=model_path,

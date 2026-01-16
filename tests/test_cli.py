@@ -6,8 +6,8 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from llm_rpc import cli
-from llm_rpc.config import AppConfig, ModelConfig
+from tuft import cli
+from tuft.config import AppConfig, ModelConfig
 
 
 def test_start_passes_config(monkeypatch, tmp_path) -> None:

@@ -75,7 +75,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         return route
 
     app = FastAPI(
-        title="LLM-RPC",
+        title="TuFT",
         version="0.1.0",
         lifespan=lifespan,
     )
