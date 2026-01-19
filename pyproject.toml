@@ -9,7 +9,6 @@ dependencies = [
     "fastapi>=0.125.0",
     "httpx>=0.28.1",
     "numpy<2.0.0",
-    "redis>=5.0.0",
     "tinker>=0.7.0",
     "typer>=0.20.1",
     "uvicorn[standard]>=0.38.0",
@@ -23,8 +22,8 @@ dependencies = [
 "tuft" = "tuft.cli:main"
 
 [project.optional-dependencies]
-redislite = [
-    "redislite>=6.0.0",
+persistence = [
+    "redis>=5.0.0",
 ]
 
 [dependency-groups]
@@ -33,7 +32,6 @@ dev = [
     "pyright>=1.1.407",
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
-    "redislite>=6.0.0",
     "ruff>=0.14.10",
 ]
 

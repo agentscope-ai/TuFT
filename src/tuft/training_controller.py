@@ -217,7 +217,11 @@ class TrainingController:
             ckpt_key = self._build_sampler_checkpoint_key(model_id, checkpoint_id)
 
         if ckpt is None:
-            # Fall back to just saving the training run
+            # Defensive fallback: checkpoint should exist at this point since
+            # _save_training_run_with_checkpoint is called after adding the checkpoint
+            # to the target_map. This branch handles unexpected edge cases (e.g., code
+            # refactoring that changes call order) to ensure the training run is still
+            # persisted even if the checkpoint lookup fails.
             save_record(self._build_key(model_id), record)
             return
 

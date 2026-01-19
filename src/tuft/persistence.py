@@ -10,7 +10,6 @@ Key Design:
 Persistence Modes:
 - disabled: No persistence, all data is in-memory only
 - redis_url: Use external Redis server via URL
-- redislite: Use lightweight embedded Redis (redislite) with local file storage
 """
 
 from __future__ import annotations
@@ -20,7 +19,6 @@ import os
 import threading
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
 from typing import Any, TypeVar
 
 from pydantic import BaseModel
@@ -35,12 +33,6 @@ class PersistenceMode(str, Enum):
 
     DISABLED = "disabled"  # No persistence
     REDIS_URL = "redis_url"  # Use external Redis server
-    REDISLITE = "redislite"  # Use lightweight embedded Redis
-
-
-def _default_redislite_path() -> Path:
-    """Return default path for redislite database file."""
-    return Path.home() / ".cache" / "tuft" / "redis.db"
 
 
 # Default TTL values in seconds
@@ -52,16 +44,14 @@ class PersistenceConfig:
     """Configuration for Redis persistence.
 
     Attributes:
-        mode: Persistence mode - disabled, redis_url, or redislite
+        mode: Persistence mode - disabled or redis_url
         redis_url: Redis server URL (only used when mode=redis_url)
-        redislite_path: Path to redislite database file (only used when mode=redislite)
         namespace: Key namespace prefix
         future_ttl_seconds: TTL for future records in seconds. None means no expiry.
     """
 
     mode: PersistenceMode = PersistenceMode.DISABLED
     redis_url: str = "redis://localhost:6379/0"
-    redislite_path: Path | None = None
     namespace: str = "tuft"
     future_ttl_seconds: int | None = DEFAULT_FUTURE_TTL_SECONDS  # Futures expire after 1 day
 
@@ -90,39 +80,12 @@ class PersistenceConfig:
             future_ttl_seconds=future_ttl_seconds,
         )
 
-    @classmethod
-    def from_redislite(
-        cls,
-        path: Path | str | None = None,
-        namespace: str = "tuft",
-        future_ttl_seconds: int | None = DEFAULT_FUTURE_TTL_SECONDS,
-    ) -> "PersistenceConfig":
-        """Create a config using lightweight embedded Redis (redislite).
-
-        Args:
-            path: Path to store the redislite database file.
-                  If None, uses default path (~/.cache/tuft/redis.db)
-            namespace: Key namespace prefix
-            future_ttl_seconds: TTL for future records in seconds.
-        """
-        if path is None:
-            path = _default_redislite_path()
-        elif isinstance(path, str):
-            path = Path(path)
-        return cls(
-            mode=PersistenceMode.REDISLITE,
-            redislite_path=path,
-            namespace=namespace,
-            future_ttl_seconds=future_ttl_seconds,
-        )
-
 
 class RedisStore:
     """Global Redis connection and operation manager.
 
-    Supports three backends:
+    Supports two modes:
     - External Redis server (via redis-py)
-    - Embedded Redis (via redislite)
     - No persistence (disabled mode)
     """
 
@@ -131,7 +94,6 @@ class RedisStore:
 
     def __init__(self) -> None:
         self._redis: Any = None
-        self._redislite_instance: Any = None  # Keep reference to redislite.Redis
         self._config: PersistenceConfig | None = None
         self._pid: int | None = None
 
@@ -157,13 +119,6 @@ class RedisStore:
                 logger.exception("Failed to close Redis connection")
             self._redis = None
 
-        if self._redislite_instance is not None:
-            try:
-                self._redislite_instance.close()
-            except Exception:
-                logger.exception("Failed to close redislite connection")
-            self._redislite_instance = None
-
     def _get_redis(self) -> Any:
         if self._config is None or not self._config.enabled:
             return None
@@ -176,8 +131,6 @@ class RedisStore:
 
                     if self._config.mode == PersistenceMode.REDIS_URL:
                         self._redis = self._create_redis_client()
-                    elif self._config.mode == PersistenceMode.REDISLITE:
-                        self._redis = self._create_redislite_client()
 
                     if self._redis is not None:
                         self._pid = current_pid
@@ -194,26 +147,6 @@ class RedisStore:
             return redis.Redis.from_url(self._config.redis_url, decode_responses=True)
         except ImportError:
             logger.warning("redis package not installed, persistence will be disabled")
-            return None
-
-    def _create_redislite_client(self) -> Any:
-        """Create a redislite client for embedded Redis."""
-        try:
-            import redislite
-
-            if self._config is None or self._config.redislite_path is None:
-                db_path = _default_redislite_path()
-            else:
-                db_path = self._config.redislite_path
-
-            # Ensure parent directory exists
-            db_path.parent.mkdir(parents=True, exist_ok=True)
-
-            # Create redislite instance
-            self._redislite_instance = redislite.Redis(str(db_path), decode_responses=True)
-            return self._redislite_instance
-        except ImportError:
-            logger.warning("redislite package not installed, persistence will be disabled")
             return None
 
     @property

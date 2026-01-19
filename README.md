@@ -112,15 +112,22 @@ Adjust the fake token IDs with your own prompts once you have a tokenizer locall
 TuFT supports optional Redis-based persistence for server state. When enabled,
 the server can recover sessions, training runs, and pending futures after a restart.
 
+To use persistence, install the optional dependency:
+
+```bash
+uv pip install tuft[persistence]
+# or
+uv pip install redis
+```
+
 ### Persistence Modes
 
-TuFT provides three persistence modes:
+TuFT provides two persistence modes:
 
 | Mode | Description | Use Case |
 |------|-------------|----------|
 | `disabled` | No persistence, data in-memory only | Development, testing without state recovery |
 | `redis_url` | External Redis server | Production, multi-instance deployments |
-| `redislite` | Lightweight embedded Redis | Single-instance, local development with persistence |
 
 ### Configuration
 
@@ -150,27 +157,6 @@ You can start a local Redis instance using Docker:
 docker run -d --name TuFT-redis -p 6379:6379 redis:7-alpine
 ```
 
-#### Mode 3: Lightweight Embedded Redis (redislite)
-
-Use embedded Redis for single-instance deployments without external dependencies:
-
-```yaml
-persistence:
-  mode: redislite
-  redislite_path: "/path/to/tuft/redis.db"
-  namespace: "tuft"
-```
-
-If `redislite_path` is not specified, defaults to `~/.cache/tuft/redis.db`.
-
-To use redislite, install the optional dependency:
-
-```bash
-uv pip install tuft[redislite]
-# or
-uv pip install redislite
-```
-
 ### Python API
 
 You can also configure persistence programmatically:
@@ -183,9 +169,6 @@ config = PersistenceConfig.disabled()
 
 # External Redis server
 config = PersistenceConfig.from_redis_url("redis://localhost:6379/0")
-
-# Lightweight embedded Redis (redislite)
-config = PersistenceConfig.from_redislite("/path/to/redis.db")
 ```
 
 ## Development
