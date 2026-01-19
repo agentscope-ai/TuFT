@@ -6,9 +6,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, List
 
+from .persistence import PersistenceConfig
+
 
 def _default_checkpoint_dir() -> Path:
     return Path.home() / ".cache" / "tuft" / "checkpoints"
+
+
+def _default_persistence_config() -> PersistenceConfig:
+    return PersistenceConfig()
 
 
 @dataclass
@@ -22,6 +28,7 @@ class AppConfig:
     # TODO: Temporary implementation for user authorization,
     # replace with proper auth system later
     authorized_users: Dict[str, str] = field(default_factory=dict)
+    persistence: PersistenceConfig = field(default_factory=_default_persistence_config)
 
     def ensure_directories(self) -> None:
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)

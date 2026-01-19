@@ -2,11 +2,10 @@
 
 import contextlib
 import shutil
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_serializer
 
 from tinker import types
 
@@ -29,18 +28,24 @@ class CheckpointMetadata(BaseModel):
     public: bool = False
 
 
-@dataclass
-class CheckpointRecord:
+class CheckpointRecord(BaseModel):
     """A record representing a checkpoint on disk."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     checkpoint_id: str
     owner_name: str
     checkpoint_type: types.CheckpointType
     training_run_id: str
     path: Path
-    size_bytes: int
+    size_bytes: int = 0
     public: bool = False
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @field_serializer("path")
+    def serialize_path(self, path: Path) -> str:
+        """Serialize Path to string for JSON."""
+        return str(path)
 
     @property
     def tinker_checkpoint(self) -> types.Checkpoint:

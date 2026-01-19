@@ -16,7 +16,8 @@ from tinker import types
 
 from .auth import User
 from .config import AppConfig
-from .exceptions import LLMRPCException
+from .exceptions import TuFTException
+from .persistence import get_redis_store
 from .state import ServerState
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
@@ -66,20 +67,31 @@ def _get_state(request: Request) -> ServerState:
 def create_root_app(config: AppConfig | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        await app.state.server_state.async_init()
-        yield
+        try:
+            await app.state.server_state.async_init()
+            yield
+        finally:
+            await app.state.server_state.future_store.shutdown()
+            store = get_redis_store()
+            if store.is_enabled:
+                store.close()
 
     def require_user_dependency(route):
         if not any(dep.dependency == _get_user for dep in getattr(route, "dependencies", [])):
             route.dependencies = getattr(route, "dependencies", []) + [Depends(_get_user)]
         return route
 
+    resolved_config = config or AppConfig()
+    if resolved_config.persistence.enabled:
+        store = get_redis_store()
+        store.configure(resolved_config.persistence)
+
     app = FastAPI(
         title="TuFT",
         version="0.1.0",
         lifespan=lifespan,
     )
-    app.state.server_state = ServerState(config)
+    app.state.server_state = ServerState(resolved_config)
 
     @app.get("/api/v1/healthz", response_model=types.HealthResponse)
     async def healthz() -> types.HealthResponse:
@@ -137,7 +149,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
                 model_path=request.model_path,
                 session_seq_id=request.sampling_session_seq_id,
             )
-        except LLMRPCException as exc:
+        except TuFTException as exc:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to create sampling session: {exc.detail}",
@@ -171,7 +183,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
                 model_owner=user.user_id,
                 user_metadata=request.user_metadata,
             )
-        except LLMRPCException as exc:
+        except TuFTException as exc:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to create model: {exc.detail}",
@@ -211,7 +223,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
     ) -> types.UntypedAPIFuture:
         try:
             await state.unload_model(request.model_id, user_id=user.user_id)
-        except LLMRPCException as exc:
+        except TuFTException as exc:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to unload model: {exc.detail}",
@@ -232,8 +244,16 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         user_id: str,
         *,
         model_id: str | None = None,
+        operation_type: str | None = None,
+        operation_args: dict[str, Any] | None = None,
     ) -> types.UntypedAPIFuture:
-        return await state.future_store.enqueue(operation, model_id=model_id, user_id=user_id)
+        return await state.future_store.enqueue(
+            operation,
+            model_id=model_id,
+            user_id=user_id,
+            operation_type=operation_type,  # type: ignore[arg-type]
+            operation_args=operation_args,
+        )
 
     @app.post(
         "/api/v1/forward",
@@ -263,6 +283,16 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
             state,
             model_id=request.model_id,
             user_id=user.user_id,
+            operation_type="forward",
+            operation_args={
+                "model_id": request.model_id,
+                "user_id": user.user_id,
+                "data": inp.data,
+                "loss_fn": inp.loss_fn,
+                "loss_fn_config": inp.loss_fn_config,
+                "seq_id": request.seq_id,
+                "backward": False,
+            },
         )
 
     @app.post(
@@ -289,7 +319,20 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
             )
 
         return await _queue_future(
-            _operation, state, model_id=request.model_id, user_id=user.user_id
+            _operation,
+            state,
+            model_id=request.model_id,
+            user_id=user.user_id,
+            operation_type="forward_backward",
+            operation_args={
+                "model_id": request.model_id,
+                "user_id": user.user_id,
+                "data": inp.data,
+                "loss_fn": inp.loss_fn,
+                "loss_fn_config": inp.loss_fn_config,
+                "seq_id": request.seq_id,
+                "backward": True,
+            },
         )
 
     @app.post(
@@ -315,6 +358,13 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
             state,
             model_id=request.model_id,
             user_id=user.user_id,
+            operation_type="optim_step",
+            operation_args={
+                "model_id": request.model_id,
+                "user_id": user.user_id,
+                "params": request.adam_params,
+                "seq_id": request.seq_id,
+            },
         )
 
     @app.post(
@@ -337,7 +387,17 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
             return types.SaveWeightsResponse(path=checkpoint.tinker_checkpoint.tinker_path)
 
         return await _queue_future(
-            _operation, state, model_id=request.model_id, user_id=user.user_id
+            _operation,
+            state,
+            model_id=request.model_id,
+            user_id=user.user_id,
+            operation_type="save_weights",
+            operation_args={
+                "model_id": request.model_id,
+                "user_id": user.user_id,
+                "name": request.path,
+                "checkpoint_type": "training",
+            },
         )
 
     @app.post(
@@ -362,7 +422,17 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
             )
 
         return await _queue_future(
-            _operation, state, model_id=request.model_id, user_id=user.user_id
+            _operation,
+            state,
+            model_id=request.model_id,
+            user_id=user.user_id,
+            operation_type="save_weights_for_sampler",
+            operation_args={
+                "model_id": request.model_id,
+                "user_id": user.user_id,
+                "name": request.path,
+                "checkpoint_type": "sampler",
+            },
         )
 
     @app.post(
@@ -389,6 +459,13 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
             state,
             model_id=request.model_id,
             user_id=user.user_id,
+            operation_type="load_weights",
+            operation_args={
+                "model_id": request.model_id,
+                "user_id": user.user_id,
+                "path": request.path,
+                "optimizer": request.optimizer,
+            },
         )
 
     @app.post(
@@ -405,6 +482,11 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
             partial(state.run_sample, request=request, user_id=user.user_id),
             state=state,
             user_id=user.user_id,
+            operation_type="sample",
+            operation_args={
+                "request": request,
+                "user_id": user.user_id,
+            },
         )
 
     @app.post("/api/v1/retrieve_future")

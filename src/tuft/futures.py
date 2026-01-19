@@ -4,43 +4,188 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Callable, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from tinker import types
 from tinker.types.try_again_response import TryAgainResponse
 
-from .exceptions import FutureNotFoundException, LLMRPCException, UserMismatchException
+from .exceptions import FutureNotFoundException, TuFTException, UserMismatchException
+from .persistence import (
+    get_redis_store,
+    is_persistence_enabled,
+    load_record,
+    save_record,
+)
 
 QueueState = Literal["active", "paused_capacity", "paused_rate_limit"]
 
+OperationType = Literal[
+    "forward",
+    "forward_backward",
+    "optim_step",
+    "save_weights",
+    "save_weights_for_sampler",
+    "load_weights",
+    "sample",
+]
 
-@dataclass
-class FutureRecord:
-    payload: Any | None = None
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class FutureRecord(BaseModel):
+    """Future record with persistence support.
+
+    Fields:
+        event: Not serialized (excluded) - created fresh on each instance.
+               After restore, if status is ready/failed, event is auto-set.
+        operation_type: Type of operation for recovery purposes.
+        operation_args: Serializable arguments for the operation.
+        created_at: Timestamp when the future was created.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    request_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     model_id: str | None = None
     user_id: str | None = None
     queue_state: QueueState = "active"
     status: Literal["pending", "ready", "failed"] = "pending"
+    payload: Any | None = None
     error: types.RequestFailedResponse | None = None
-    request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    event: asyncio.Event = field(default_factory=asyncio.Event)
+    operation_type: OperationType | None = None
+    operation_args: dict[str, Any] | None = None
+    created_at: datetime = Field(default_factory=_now)
+    # Runtime-only field, excluded from serialization
+    event: asyncio.Event = Field(default_factory=asyncio.Event, exclude=True)
+
+    @model_validator(mode="after")
+    def _set_event_if_completed(self) -> "FutureRecord":
+        """Set the event if the future is already completed."""
+        if self.status in ("ready", "failed"):
+            self.event.set()
+        return self
 
 
 class FutureStore:
-    """Runs controller work asynchronously and tracks each request's lifecycle.
+    """Runs controller work asynchronously and tracks each request's lifecycle."""
 
-    Used for retrieve_future polling.
-    """
+    REDIS_KEY_PREFIX = "future"
 
     def __init__(self) -> None:
         self._records: dict[str, FutureRecord] = {}
         self._lock = asyncio.Lock()
-        self._tasks: set[asyncio.Task] = set()
+        self._tasks: set[asyncio.Task[None]] = set()
+        self._needs_checkpoint_recovery = False
+        self._restore_from_redis()
+
+    def _build_key(self, request_id: str) -> str:
+        return get_redis_store().build_key(self.REDIS_KEY_PREFIX, request_id)
+
+    def _restore_from_redis(self) -> None:
+        if not is_persistence_enabled():
+            return
+        store = get_redis_store()
+        pattern = store.build_key(self.REDIS_KEY_PREFIX, "*")
+        has_pending = False
+        for key in store.keys(pattern):
+            record = load_record(key, FutureRecord)
+            if record is None:
+                # Record may have expired (TTL) or failed to deserialize
+                # This is expected for expired futures, just skip them
+                continue
+            if record.status == "pending":
+                has_pending = True
+            else:
+                record.event.set()
+            self._records[record.request_id] = record
+        self._needs_checkpoint_recovery = has_pending
+
+    def _save_future(self, request_id: str) -> None:
+        if not is_persistence_enabled():
+            return
+        record = self._records.get(request_id)
+        if record is not None:
+            # Use TTL for futures to prevent Redis from growing indefinitely
+            # Futures are short-lived and can be safely expired
+            ttl = get_redis_store().future_ttl
+            save_record(self._build_key(request_id), record, ttl_seconds=ttl)
+
+    def _delete_future(self, request_id: str) -> None:
+        if not is_persistence_enabled():
+            return
+        get_redis_store().delete(self._build_key(request_id))
+
+    @property
+    def needs_checkpoint_recovery(self) -> bool:
+        return self._needs_checkpoint_recovery
+
+    def clear_recovery_flag(self) -> None:
+        self._needs_checkpoint_recovery = False
+
+    def get_pending_futures_by_model(self) -> dict[str | None, list[FutureRecord]]:
+        """Group all pending futures by model_id."""
+        by_model: dict[str | None, list[FutureRecord]] = {}
+        for record in self._records.values():
+            if record.status == "pending":
+                if record.model_id not in by_model:
+                    by_model[record.model_id] = []
+                by_model[record.model_id].append(record)
+
+        for model_id in by_model:
+            by_model[model_id].sort(key=lambda r: r.created_at)
+
+        return by_model
+
+    def mark_futures_failed_after_checkpoint(
+        self,
+        model_id: str | None,
+        checkpoint_time: datetime | None,
+        error_message: str = "Server restored from checkpoint. Please retry.",
+    ) -> int:
+        """Mark all pending futures for a model after a checkpoint time as failed."""
+        count = 0
+        for record in self._records.values():
+            if record.status != "pending":
+                continue
+            if record.model_id != model_id:
+                continue
+            if checkpoint_time is None or record.created_at > checkpoint_time:
+                record.status = "failed"
+                record.error = types.RequestFailedResponse(
+                    error=error_message,
+                    category=types.RequestErrorCategory.Server,
+                )
+                record.event.set()
+                self._save_future(record.request_id)
+                count += 1
+        return count
+
+    def mark_all_pending_failed(
+        self,
+        error_message: str = "Server restarted while task was pending. Please retry.",
+    ) -> int:
+        """Mark all pending futures as failed."""
+        count = 0
+        for record in self._records.values():
+            if record.status == "pending":
+                record.status = "failed"
+                record.error = types.RequestFailedResponse(
+                    error=error_message,
+                    category=types.RequestErrorCategory.Server,
+                )
+                record.event.set()
+                self._save_future(record.request_id)
+                count += 1
+        return count
 
     def _store_record(self, record: FutureRecord) -> None:
-        """Synchronous method to store record (call within lock context)."""
         self._records[record.request_id] = record
+        self._save_future(record.request_id)
 
     async def enqueue(
         self,
@@ -49,12 +194,25 @@ class FutureStore:
         *,
         model_id: str | None = None,
         queue_state: QueueState = "active",
+        operation_type: OperationType | None = None,
+        operation_args: dict[str, Any] | None = None,
     ) -> types.UntypedAPIFuture:
-        """Enqueue a task (sync or async) and return a future immediately."""
+        """Enqueue a task (sync or async) and return a future immediately.
+
+        Args:
+            operation: The callable to execute.
+            user_id: The user ID making the request.
+            model_id: Optional model ID associated with this operation.
+            queue_state: State of the queue.
+            operation_type: Type of operation for recovery purposes.
+            operation_args: Serializable arguments for recovery.
+        """
         record = FutureRecord(
             model_id=model_id,
             user_id=user_id,
             queue_state=queue_state,
+            operation_type=operation_type,
+            operation_args=operation_args,
         )
 
         async with self._lock:
@@ -68,7 +226,7 @@ class FutureStore:
                     # Run sync operation in thread pool to avoid blocking
                     loop = asyncio.get_running_loop()
                     payload = await loop.run_in_executor(None, operation)
-            except LLMRPCException as exc:
+            except TuFTException as exc:
                 message = exc.detail
                 failure = types.RequestFailedResponse(
                     error=message,
@@ -120,6 +278,7 @@ class FutureStore:
             record.status = "ready"
             record.error = None
             record.event.set()
+            self._save_future(request_id)
 
     async def _mark_failed(self, request_id: str, failure: types.RequestFailedResponse) -> None:
         """Mark a future as failed with the given error."""
@@ -130,6 +289,7 @@ class FutureStore:
             record.status = "failed"
             record.error = failure
             record.event.set()
+            self._save_future(request_id)
 
     async def retrieve(
         self,
@@ -150,7 +310,7 @@ class FutureStore:
             The payload if ready, or error response if failed
 
         Raises:
-            FutureNotFoundException: If request_id not found
+            FutureNotFoundException: If request_id not found (may have expired due to TTL)
             UserMismatchException: If user_id does not match the owner
             asyncio.TimeoutError: If timeout is exceeded
         """
@@ -159,6 +319,7 @@ class FutureStore:
             record = self._records.get(request_id)
 
         if record is None:
+            # Record not found - may have expired due to TTL or never existed
             raise FutureNotFoundException(request_id)
         if record.user_id != user_id:
             raise UserMismatchException()
@@ -180,6 +341,7 @@ class FutureStore:
         """Remove a completed request from the store to free memory."""
         async with self._lock:
             self._records.pop(request_id, None)
+            self._delete_future(request_id)
 
     async def shutdown(self) -> None:
         """Cancel all pending tasks and clean up."""

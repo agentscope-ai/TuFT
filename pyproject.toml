@@ -21,6 +21,11 @@ dependencies = [
 [project.scripts]
 "tuft" = "tuft.cli:main"
 
+[project.optional-dependencies]
+persistence = [
+    "redis>=5.0.0",
+]
+
 [dependency-groups]
 dev = [
     "pre-commit>=4.5.1",
