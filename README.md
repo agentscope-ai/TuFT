@@ -116,8 +116,6 @@ To use persistence, install the optional dependency:
 
 ```bash
 uv pip install tuft[persistence]
-# or
-uv pip install redis
 ```
 
 ### Persistence Modes

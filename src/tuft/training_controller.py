@@ -222,6 +222,12 @@ class TrainingController:
             # to the target_map. This branch handles unexpected edge cases (e.g., code
             # refactoring that changes call order) to ensure the training run is still
             # persisted even if the checkpoint lookup fails.
+            logger.warning(
+                "Checkpoint %s not found for model %s during persistence, "
+                "saving training run without checkpoint",
+                checkpoint_id,
+                model_id,
+            )
             save_record(self._build_key(model_id), record)
             return
 
