@@ -120,12 +120,13 @@ uv pip install tuft[persistence]
 
 ### Persistence Modes
 
-TuFT provides two persistence modes:
+TuFT provides three persistence modes:
 
 | Mode | Description | Use Case |
 |------|-------------|----------|
 | `disabled` | No persistence, data in-memory only | Development, testing without state recovery |
 | `redis_url` | External Redis server | Production, multi-instance deployments |
+| `file_redis` | File-backed store | Demos, small-scale testing |
 
 ### Configuration
 
@@ -155,6 +156,17 @@ You can start a local Redis instance using Docker:
 docker run -d --name TuFT-redis -p 6379:6379 redis:7-alpine
 ```
 
+#### Mode 3: File-backed Store
+
+Use the file-backed store for demos or small-scale testing:
+
+```yaml
+persistence:
+  mode: file_redis
+  file_path: "~/.cache/tuft/file_redis.json"
+  namespace: "tuft"
+```
+
 ### Python API
 
 You can also configure persistence programmatically:
@@ -167,6 +179,9 @@ config = PersistenceConfig.disabled()
 
 # External Redis server
 config = PersistenceConfig.from_redis_url("redis://localhost:6379/0")
+
+# File-backed store
+config = PersistenceConfig.from_file_redis("~/.cache/tuft/file_redis.json")
 ```
 
 ## Development
