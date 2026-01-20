@@ -157,6 +157,68 @@ print("Sampler weights saved to:", sampler_weights.path)
 
 Adjust the fake token IDs with your own prompts once you have a tokenizer locally.
 
+## Persistence
+
+TuFT supports optional Redis-based persistence for server state. When enabled,
+the server can recover sessions, training runs, and pending futures after a restart.
+
+To use persistence, install the optional dependency:
+
+```bash
+uv pip install tuft[persistence]
+```
+
+### Persistence Modes
+
+TuFT provides two persistence modes:
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| `disabled` | No persistence, data in-memory only | Development, testing without state recovery |
+| `redis_url` | External Redis server | Production, multi-instance deployments |
+
+### Configuration
+
+#### Mode 1: Disabled (Default)
+
+No configuration needed. All data is stored in memory and lost on restart.
+
+```yaml
+persistence:
+  mode: disabled
+```
+
+#### Mode 2: External Redis Server
+
+Use an external Redis server for production deployments:
+
+```yaml
+persistence:
+  mode: redis_url
+  redis_url: "redis://localhost:6379/0"
+  namespace: "tuft"
+```
+
+You can start a local Redis instance using Docker:
+
+```bash
+docker run -d --name TuFT-redis -p 6379:6379 redis:7-alpine
+```
+
+### Python API
+
+You can also configure persistence programmatically:
+
+```python
+from tuft.persistence import PersistenceConfig
+
+# Disabled (no persistence)
+config = PersistenceConfig.disabled()
+
+# External Redis server
+config = PersistenceConfig.from_redis_url("redis://localhost:6379/0")
+```
+
 ## Development
 
 - Design docs are located in [`docs`](./docs/).

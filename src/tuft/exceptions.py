@@ -1,7 +1,7 @@
 """Some custom exceptions."""
 
 
-class LLMRPCException(Exception):
+class TuFTException(Exception):
     """Base exception for TuFT errors."""
 
     def __init__(self, detail: str = ""):
@@ -9,23 +9,23 @@ class LLMRPCException(Exception):
         self.detail = detail
 
 
-class ModelException(LLMRPCException):
+class ModelException(TuFTException):
     """Base exception for Model related errors."""
 
 
-class CheckpointException(LLMRPCException):
+class CheckpointException(TuFTException):
     """Base exception for Checkpoint related errors."""
 
 
-class FutureException(LLMRPCException):
+class FutureException(TuFTException):
     """Base exception for Future related errors."""
 
 
-class SessionException(LLMRPCException):
+class SessionException(TuFTException):
     """Base exception for Session related errors."""
 
 
-class AuthenticationException(LLMRPCException):
+class AuthenticationException(TuFTException):
     """Base exception for Authentication related errors."""
 
 
