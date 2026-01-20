@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """File-backed Redis-like store for small demos and tests.
 
 This module implements a minimal subset of redis-py behaviors with a JSON
@@ -18,6 +16,8 @@ Example:
     for key in store.scan_iter(match="a*"):
         print(key)
 """
+
+from __future__ import annotations
 
 import json
 import logging
