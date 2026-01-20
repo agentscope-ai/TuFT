@@ -137,23 +137,16 @@ class ServerState:
         """Restore server state from checkpoints after Redis restore.
 
         This method handles checkpoint-based recovery:
-        1. For each model_id with pending futures, find the latest checkpoint
-        2. Load the checkpoint to restore model state
-        3. Mark all futures created after the checkpoint as failed
-        4. For models without checkpoints, mark all pending futures as failed
+        1. For each training run restored from Redis, create adapter and load latest checkpoint
+        2. Mark ALL futures created after checkpoint time as failed
+        3. For training runs without checkpoints, mark all futures as failed
         """
-        if not self.future_store.needs_checkpoint_recovery:
-            return
-        pending_by_model = self.future_store.get_pending_futures_by_model()
-        for model_id, _ in pending_by_model.items():
-            if model_id is None:
-                self.future_store.mark_futures_failed_after_checkpoint(
-                    model_id=None,
-                    checkpoint_time=None,
-                    error_message="Server restarted. Please retry.",
-                )
+        # Restore training runs (adapter + checkpoint)
+        for model_id, record in self.training.training_runs.items():
+            if record.backend is None or record.corrupted:
                 continue
             latest_ckpt = await self.training.restore_from_checkpoint(model_id)
+
             if latest_ckpt is None:
                 self.future_store.mark_futures_failed_after_checkpoint(
                     model_id=model_id,
@@ -169,7 +162,6 @@ class ServerState:
                         "Operations after this checkpoint need to be retried."
                     ),
                 )
-        self.future_store.clear_recovery_flag()
 
     def create_session(self, request: types.CreateSessionRequest, user: User) -> SessionRecord:
         return self.sessions.create_session(request, user)

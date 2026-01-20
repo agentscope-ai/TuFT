@@ -1,9 +1,14 @@
 import os
+import warnings
+from pathlib import Path
 
 import pytest
 
 TEST_REDIS_DB = 15
 TEST_REDIS_URL = os.getenv("TEST_REDIS_URL", f"redis://localhost:6379/{TEST_REDIS_DB}")
+
+# Default file path for FileRedis fallback
+DEFAULT_FILE_REDIS_PATH = Path.home() / ".cache" / "tuft" / "test_file_redis.json"
 
 
 def _redis_available() -> bool:
@@ -31,19 +36,31 @@ def _clear_redis_db(redis_url: str) -> None:
         pass
 
 
+def _clear_file_redis(file_path: Path | None = None) -> None:
+    """Clear the FileRedis JSON file.
+
+    Args:
+        file_path: Path to the FileRedis JSON file. Uses default if None.
+    """
+    path = file_path or DEFAULT_FILE_REDIS_PATH
+    try:
+        if path.exists():
+            path.unlink()
+        # Also remove temp file if exists
+        tmp_path = path.with_suffix(path.suffix + ".tmp")
+        if tmp_path.exists():
+            tmp_path.unlink()
+    except Exception:
+        pass
+
+
 def pytest_addoption(parser):
     parser.addoption("--gpu", action="store_true", default=False, help="run tests that require GPU")
     parser.addoption(
-        "--persistence",
+        "--no-persistence",
         action="store_true",
         default=False,
-        help="enable persistence for tests (requires external Redis)",
-    )
-    parser.addoption(
-        "--no-redis-clean",
-        action="store_true",
-        default=False,
-        help="skip Redis database cleanup before/after tests",
+        help="disable persistence tests (uses FileRedis fallback if Redis unavailable)",
     )
 
 
@@ -62,55 +79,83 @@ def set_cpu_env(request):
 def configure_persistence(request):
     """Configure persistence settings for all tests.
 
-    Uses external Redis server for persistence tests.
+    Persistence is ALWAYS enabled by default unless --no-persistence is specified.
+    - If Redis is available, uses external Redis server (DB 15 for tests)
+    - If Redis is not available, falls back to FileRedis (file-backed storage)
+
+    Storage is ALWAYS cleared before and after each test to ensure test isolation.
+    Use --no-persistence to disable persistence entirely.
     """
     from tuft.persistence import PersistenceConfig, get_redis_store
 
     store = get_redis_store()
     store.reset()
 
-    enable_persistence = request.config.getoption("--persistence", default=False)
+    # Check if persistence should be disabled
+    no_persistence = request.config.getoption("--no-persistence", default=False)
 
-    if "persistence" in [marker.name for marker in request.node.iter_markers()]:
-        enable_persistence = True
-
-    if enable_persistence:
-        if _redis_available():
-            # Use external Redis server
-            redis_url = os.getenv("REDIS_URL", TEST_REDIS_URL)
-
-            if not request.config.getoption("--no-redis-clean"):
-                _clear_redis_db(redis_url)
-
-            store.configure(PersistenceConfig.from_redis_url(redis_url, namespace="tuft_test"))
-        else:
-            # No persistence available
-            store.configure(PersistenceConfig.disabled(namespace="tuft_test"))
-    else:
+    if no_persistence:
         store.configure(PersistenceConfig.disabled(namespace="tuft_test"))
+    else:
+        # Persistence enabled - use Redis if available, otherwise FileRedis
+        if _redis_available():
+            # Use external Redis server (always use TEST_REDIS_URL which points to DB 15)
+            # Clear test DB before test
+            _clear_redis_db(TEST_REDIS_URL)
+            store.configure(PersistenceConfig.from_redis_url(TEST_REDIS_URL, namespace="tuft_test"))
+        else:
+            # Redis not available - fall back to FileRedis
+            # Clear test file before test
+            warnings.warn(
+                (
+                    "[tuft tests] Redis unavailable; falling back to FileRedis at "
+                    f"{DEFAULT_FILE_REDIS_PATH}"
+                ),
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            _clear_file_redis(DEFAULT_FILE_REDIS_PATH)
+            store.configure(
+                PersistenceConfig.from_file_redis(
+                    file_path=DEFAULT_FILE_REDIS_PATH,
+                    namespace="tuft_test",
+                )
+            )
 
     yield
 
     if store.is_enabled:
         store.close()
+
+    # Always clear storage after test for isolation
+    if not no_persistence:
+        if _redis_available():
+            _clear_redis_db(TEST_REDIS_URL)
+        else:
+            _clear_file_redis(DEFAULT_FILE_REDIS_PATH)
+
     store.reset()
 
 
 @pytest.fixture(scope="function")
 def clean_redis():
-    """Explicit fixture for tests that need guaranteed clean Redis state."""
+    """Explicit fixture for tests that need guaranteed clean Redis/FileRedis state."""
     if _redis_available():
         _clear_redis_db(TEST_REDIS_URL)
+    else:
+        _clear_file_redis(DEFAULT_FILE_REDIS_PATH)
     yield
     if _redis_available():
         _clear_redis_db(TEST_REDIS_URL)
+    else:
+        _clear_file_redis(DEFAULT_FILE_REDIS_PATH)
 
 
 @pytest.fixture(scope="function")
 def enable_persistence():
     """Fixture to enable persistence for a specific test.
 
-    Uses external Redis server.
+    Uses Redis if available, otherwise falls back to FileRedis.
     """
     from tuft.persistence import PersistenceConfig, get_redis_store
 
@@ -121,13 +166,25 @@ def enable_persistence():
         _clear_redis_db(TEST_REDIS_URL)
         store.configure(PersistenceConfig.from_redis_url(TEST_REDIS_URL, namespace="tuft_test"))
     else:
-        pytest.skip("Redis not available")
+        # Fall back to FileRedis
+        _clear_file_redis(DEFAULT_FILE_REDIS_PATH)
+        store.configure(
+            PersistenceConfig.from_file_redis(
+                file_path=DEFAULT_FILE_REDIS_PATH,
+                namespace="tuft_test",
+            )
+        )
 
     yield
 
     store.close()
+
+    # Cleanup
     if _redis_available():
         _clear_redis_db(TEST_REDIS_URL)
+    else:
+        _clear_file_redis(DEFAULT_FILE_REDIS_PATH)
+
     store.reset()
 
 
@@ -137,13 +194,3 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "gpu" in item.keywords:
                 item.add_marker(skip_gpu)
-
-    # Persistence tests require external Redis
-    has_persistence_backend = _redis_available()
-    if not config.getoption("--persistence") and not has_persistence_backend:
-        skip_persistence = pytest.mark.skip(
-            reason="need --persistence option and Redis to run persistence tests"
-        )
-        for item in items:
-            if "persistence" in item.keywords:
-                item.add_marker(skip_persistence)

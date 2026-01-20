@@ -64,3 +64,6 @@ pyrightconfig.json
 
 # Ignore uv lockfile
 uv.lock
+
+# Ignore rdb files
+*.rdb

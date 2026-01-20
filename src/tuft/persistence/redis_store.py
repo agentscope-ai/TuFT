@@ -149,7 +149,7 @@ class RedisStore:
                 if self._redis is None or self._pid != current_pid:
                     self._close_connections()
 
-                    if self._config.mode == PersistenceMode.REDIS_URL:
+                    if self._config.mode in (PersistenceMode.REDIS_URL, PersistenceMode.FILE_REDIS):
                         self._redis = self._create_redis_client()
 
                     if self._redis is not None:
@@ -407,4 +407,3 @@ def is_persistence_enabled() -> bool:
 def get_redis_store() -> RedisStore:
     """Get the global Redis store instance."""
     return RedisStore.get_instance()
-

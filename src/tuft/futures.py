@@ -80,7 +80,6 @@ class FutureStore:
         self._records: dict[str, FutureRecord] = {}
         self._lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[None]] = set()
-        self._needs_checkpoint_recovery = False
         self._restore_from_redis()
 
     def _build_key(self, request_id: str) -> str:
@@ -91,19 +90,15 @@ class FutureStore:
             return
         store = get_redis_store()
         pattern = store.build_key(self.REDIS_KEY_PREFIX, "*")
-        has_pending = False
         for key in store.keys(pattern):
             record = load_record(key, FutureRecord)
             if record is None:
                 # Record may have expired (TTL) or failed to deserialize
                 # This is expected for expired futures, just skip them
                 continue
-            if record.status == "pending":
-                has_pending = True
-            else:
+            if record.status != "pending":
                 record.event.set()
             self._records[record.request_id] = record
-        self._needs_checkpoint_recovery = has_pending
 
     def _save_future(self, request_id: str) -> None:
         if not is_persistence_enabled():
@@ -119,13 +114,6 @@ class FutureStore:
         if not is_persistence_enabled():
             return
         get_redis_store().delete(self._build_key(request_id))
-
-    @property
-    def needs_checkpoint_recovery(self) -> bool:
-        return self._needs_checkpoint_recovery
-
-    def clear_recovery_flag(self) -> None:
-        self._needs_checkpoint_recovery = False
 
     def get_pending_futures_by_model(self) -> dict[str | None, list[FutureRecord]]:
         """Group all pending futures by model_id."""
@@ -147,11 +135,9 @@ class FutureStore:
         checkpoint_time: datetime | None,
         error_message: str = "Server restored from checkpoint. Please retry.",
     ) -> int:
-        """Mark all pending futures for a model after a checkpoint time as failed."""
+        """Mark all futures for a model after a checkpoint time as failed."""
         count = 0
         for record in self._records.values():
-            if record.status != "pending":
-                continue
             if record.model_id != model_id:
                 continue
             if checkpoint_time is None or record.created_at > checkpoint_time:
