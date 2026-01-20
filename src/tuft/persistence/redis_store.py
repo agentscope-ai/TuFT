@@ -10,6 +10,7 @@ Key Design:
 Persistence Modes:
 - disabled: No persistence, all data is in-memory only
 - redis_url: Use external Redis server via URL
+- file_redis: Use file-backed storage for tests and demos
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import os
 import threading
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Any, TypeVar
 
 from pydantic import BaseModel
@@ -33,6 +35,7 @@ class PersistenceMode(str, Enum):
 
     DISABLED = "disabled"  # No persistence
     REDIS_URL = "redis_url"  # Use external Redis server
+    FILE_REDIS = "file_redis"  # Use file-backed storage for tests/demos
 
 
 # Default TTL values in seconds
@@ -44,14 +47,16 @@ class PersistenceConfig:
     """Configuration for Redis persistence.
 
     Attributes:
-        mode: Persistence mode - disabled or redis_url
+        mode: Persistence mode - disabled, redis_url, or file_redis
         redis_url: Redis server URL (only used when mode=redis_url)
+        file_path: JSON file path (only used when mode=file_redis)
         namespace: Key namespace prefix
         future_ttl_seconds: TTL for future records in seconds. None means no expiry.
     """
 
     mode: PersistenceMode = PersistenceMode.DISABLED
     redis_url: str = "redis://localhost:6379/0"
+    file_path: Path | None = None
     namespace: str = "tuft"
     future_ttl_seconds: int | None = DEFAULT_FUTURE_TTL_SECONDS  # Futures expire after 1 day
 
@@ -76,6 +81,21 @@ class PersistenceConfig:
         return cls(
             mode=PersistenceMode.REDIS_URL,
             redis_url=redis_url,
+            namespace=namespace,
+            future_ttl_seconds=future_ttl_seconds,
+        )
+
+    @classmethod
+    def from_file_redis(
+        cls,
+        file_path: Path | None = None,
+        namespace: str = "tuft",
+        future_ttl_seconds: int | None = DEFAULT_FUTURE_TTL_SECONDS,
+    ) -> "PersistenceConfig":
+        """Create a config using file-backed storage."""
+        return cls(
+            mode=PersistenceMode.FILE_REDIS,
+            file_path=file_path,
             namespace=namespace,
             future_ttl_seconds=future_ttl_seconds,
         )
@@ -138,10 +158,17 @@ class RedisStore:
         return self._redis
 
     def _create_redis_client(self) -> Any:
-        """Create a redis-py client for external Redis server."""
+        """Create a client for the configured persistence backend."""
         if self._config is None:
             return None
         try:
+            if self._config.mode == PersistenceMode.FILE_REDIS:
+                from .file_redis import FileRedis
+
+                file_path = self._config.file_path or (
+                    Path.home() / ".cache" / "tuft" / "file_redis.json"
+                )
+                return FileRedis(file_path=file_path)
             import redis
 
             return redis.Redis.from_url(self._config.redis_url, decode_responses=True)
@@ -380,3 +407,4 @@ def is_persistence_enabled() -> bool:
 def get_redis_store() -> RedisStore:
     """Get the global Redis store instance."""
     return RedisStore.get_instance()
+
