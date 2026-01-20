@@ -13,10 +13,10 @@ pytest.importorskip("h2")
 import ray
 import uvicorn
 
-from tuft.config import AppConfig, ModelConfig
-from tuft.server import create_root_app
 from tinker import types
 from tinker.lib.public_interfaces.service_client import ServiceClient
+from tuft.config import AppConfig, ModelConfig
+from tuft.server import create_root_app
 
 
 def _find_free_port() -> int:
