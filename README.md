@@ -2,7 +2,7 @@
 
 TuFT( **T**enant-**u**nified **F**ine**T**uning) is a framework that provides a unified
 API for finetuning large language models (LLMs) across multiple tenants.
-Users can access TuFT via compatible SDKs such as [Tinker](https://github.com/thinking-machine-lab/tinker).
+Users can access TuFT via compatible clients such as [Tinker](https://github.com/thinking-machine-lab/tinker).
 
 ## Installation
 
@@ -10,57 +10,55 @@ Users can access TuFT via compatible SDKs such as [Tinker](https://github.com/th
 
 We recommend using [uv](https://github.com/astral-sh/uv) for dependency management.
 
-Clone the repository:
+1. Clone the repository:
 
-```bash
-git clone https://github.com/agentscope-ai/TuFT
-```
+    ```bash
+    git clone https://github.com/agentscope-ai/TuFT
+    ```
 
-Create a virtual environment:
+2. Create a virtual environment:
 
-```bash
-cd TuFT
-uv venv --python 3.12
-```
+    ```bash
+    cd TuFT
+    uv venv --python 3.12
+    ```
 
-Install dependencies:
+3. Install dependencies:
 
-```bash
-uv sync full
-# install flash-attn after other dependencies to avoid build issues
-uv pip install flash-attn --no-build-isolation
-```
+    ```bash
+    uv sync --extras dev,default
+    # install flash-attn after other dependencies to avoid build issues
+    uv pip install flash-attn --no-build-isolation
+    ```
 
-Activate environment:
+4. Activate environment:
 
-```bash
-source .venv/bin/activate
-```
+    ```bash
+    source .venv/bin/activate
+    ```
 
 ### Using Pre-built Docker Image
 
 If you face issues with local installation or want to get started quickly,
 you can use the pre-built Docker image.
 
-Pull the latest image from GitHub Container Registry:
+1. Pull the latest image from GitHub Container Registry:
 
-```bash
-docker pull ghcr.io/agentscope-ai/trinity-rft:latest
-```
+    ```bash
+    docker pull ghcr.io/agentscope-ai/tuft:latest
+    ```
 
-Run the Docker container with GPU support and necessary volume mounts:
+2. Run the Docker container with GPU support and necessary volume mounts:
 
-```bash
-docker run -it \
-    --gpus all \
-    --shm-size="128g" \
-    --rm \
-    -p 8080:8080 \
-    -v /path/to/your/checkpoint_dir:/checkpoints \
-    -v /path/to/your/models:/models \
-    ghcr.io/agentscope-ai/trinity-rft:latest
-# Replace `/path/to/your/checkpoint_dir` and `/path/to/your/models` with actual paths on your host machine
-```
+    ```bash
+    docker run -it \
+        --gpus all \
+        --shm-size="128g" \
+        --rm \
+        -p 8080:8080 \
+        -v <host_dir>:/data \
+        ghcr.io/agentscope-ai/tuft:latest
+    ```
 
 ## Run the server
 
