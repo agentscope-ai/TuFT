@@ -32,8 +32,12 @@ def _clear_redis_db(redis_url: str) -> None:
         r = redis.Redis.from_url(redis_url, decode_responses=True)
         r.flushdb()
         r.close()
-    except Exception:
-        pass
+    except Exception as e:
+        warnings.warn(
+            f"[tuft tests] Failed to clear Redis database: {e}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
 
 def _clear_file_redis(file_path: Path | None = None) -> None:
@@ -50,8 +54,12 @@ def _clear_file_redis(file_path: Path | None = None) -> None:
         tmp_path = path.with_suffix(path.suffix + ".tmp")
         if tmp_path.exists():
             tmp_path.unlink()
-    except Exception:
-        pass
+    except OSError as e:
+        warnings.warn(
+            f"[tuft tests] Failed to clear FileRedis storage: {e}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
 
 def pytest_addoption(parser):
