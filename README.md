@@ -6,9 +6,9 @@ Users can access TuFT via compatible clients such as [Tinker](https://github.com
 
 ## Installation
 
-### Install from Source
-
 We recommend using [uv](https://github.com/astral-sh/uv) for dependency management.
+
+### Install from Source Code
 
 1. Clone the repository:
 
@@ -26,8 +26,15 @@ We recommend using [uv](https://github.com/astral-sh/uv) for dependency manageme
 3. Install dependencies:
 
     ```bash
+    # Install minimal dependencies for non-development installs
+    uv sync
+
+    # If you need to develop or run tests, install dev dependencies
+    uv sync --extra dev
+
+    # If you want to run the full feature set (e.g., model serving, persistence),
+    # please install all dependencies
     uv sync --all-extras
-    # install flash-attn after other dependencies to avoid build issues
     uv pip install flash-attn --no-build-isolation
     ```
 
@@ -37,32 +44,18 @@ We recommend using [uv](https://github.com/astral-sh/uv) for dependency manageme
     source .venv/bin/activate
     ```
 
-### Use the Pre-built Docker Image
+### Install via PyPI
 
-If you face issues with local installation or want to get started quickly,
-you can use the pre-built Docker image.
+You can also install TuFT directly from PyPI:
 
-1. Pull the latest image from GitHub Container Registry:
+```bash
+uv pip install tuft
 
-    ```bash
-    docker pull ghcr.io/agentscope-ai/tuft:latest
-    ```
+# Install optional dependencies as needed
+uv pip install "tuft[dev,backend,persistence]"
+```
 
-2. Run the Docker container with GPU support and necessary volume mounts:
-
-    ```bash
-    docker run -it \
-        --gpus all \
-        --shm-size="128g" \
-        --rm \
-        -p 8080:8080 \
-        -v <host_dir>:/data \
-        ghcr.io/agentscope-ai/tuft:latest
-    ```
-
-    > Replace `<host_dir>` with a directory on your host machine where you want to store model checkpoints and other data.
-
-## Run the server
+### Run the server
 
 The CLI starts a FastAPI server:
 
@@ -83,6 +76,54 @@ supported_models:
     max_model_len: 32768
     tensor_parallel_size: 2
 ```
+
+## Use the Pre-built Docker Image
+
+If you face issues with local installation or want to get started quickly,
+you can use the pre-built Docker image.
+
+1. Pull the latest image from GitHub Container Registry:
+
+    ```bash
+    docker pull ghcr.io/agentscope-ai/tuft:latest
+    ```
+
+2. Run the Docker container with GPU support and necessary volume mounts:
+
+    ```bash
+    docker run -it \
+        --gpus all \
+        --shm-size="128g" \
+        --rm \
+        -p 8080:8080 \
+        -v <host_dir>:/data \
+        ghcr.io/agentscope-ai/tuft:latest \
+        tuft --port 8080 --checkpoint-dir /data/checkpoints --model-config /data/models.yaml
+    ```
+
+    Replace `<host_dir>` with a directory on your host machine where you want to store model checkpoints and other data.
+    Suppose you have the following structure on your host machine:
+
+    ```plaintext
+    <host_dir>/
+        ├── checkpoints/
+        ├── Qwen3-8B/
+        ├── Qwen3-32B/
+        └── models.yaml
+    ```
+
+    The `models.yaml` file should define the models available to TuFT, for example:
+    ```yaml
+    supported_models:
+      - model_name: Qwen/Qwen3-8B
+        model_path: /data/Qwen3-8B
+        max_model_len: 32768
+        tensor_parallel_size: 1
+      - model_name: Qwen/Qwen3-32B
+        model_path: /data/Qwen3-32B
+        max_model_len: 32768
+        tensor_parallel_size: 2
+    ```
 
 
 ## End-to-end example
