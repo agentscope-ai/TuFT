@@ -88,5 +88,5 @@ markers = [
 flash-attn = ["torch", "numpy"]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "setuptools>=65", "wheel"]
 build-backend = "hatchling.build"

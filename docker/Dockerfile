@@ -38,7 +38,7 @@ COPY . .
 RUN pip install uv && uv venv ${VIRTUAL_ENV} --python=python3.12
 
 # Install minimal TuFT
-RUN . ${VIRTUAL_ENV}/bin/activate && uv sync --all-extras
+RUN . ${VIRTUAL_ENV}/bin/activate && uv pip install -e .[dev,backend,persistence]
 
 # Install flash_attn
 RUN . ${VIRTUAL_ENV}/bin/activate && uv pip install flash_attn==2.8.1 --no-build-isolation
