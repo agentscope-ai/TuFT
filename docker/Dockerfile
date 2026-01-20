@@ -28,20 +28,20 @@ ENV VIRTUAL_ENV=/opt/venv
 # copy the TuFT dir into the workspace
 COPY . .
 
-# For Aliyun users: update pip mirror to aliyun to speed up pip install
+#  Uncomment the following line if you want to use AliCloud Mirror to speed up pip install
 # ENV UV_DEFAULT_INDEX=http://mirrors.cloud.aliyuncs.com/pypi/simple/
 
-# For China users: uncomment the following line to use a Hugging Face mirror
+# Uncomment the following line to use a Hugging Face mirror if you have network connection problem with Hugging Face
 # ENV HF_ENDPOINT=https://hf-mirror.com
 
 # Install uv
-RUN pip install uv && uv venv /opt/venv --python=python3.12
+RUN pip install uv && uv venv ${VIRTUAL_ENV} --python=python3.12
 
 # Install minimal TuFT
-RUN . /opt/venv/bin/activate && uv sync --all-extras
+RUN . ${VIRTUAL_ENV}/bin/activate && uv sync --all-extras
 
 # Install flash_attn
-RUN . /opt/venv/bin/activate && uv pip install flash_attn==2.8.1 --no-build-isolation
+RUN . ${VIRTUAL_ENV}/bin/activate && uv pip install flash_attn==2.8.1 --no-build-isolation
 
-ENTRYPOINT ["/bin/bash", "-c", "source /opt/venv/bin/activate && exec \"$@\"", "--"]
+ENTRYPOINT ["/bin/bash", "-c", "source ${VIRTUAL_ENV}/bin/activate && exec \"$@\"", "--"]
 CMD ["bash"]

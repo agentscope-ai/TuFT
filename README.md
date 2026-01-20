@@ -60,7 +60,7 @@ uv pip install "tuft[dev,backend,persistence]"
 The CLI starts a FastAPI server:
 
 ```bash
-tuft --port 8080 --checkpoint-dir ~/.cache/tuft/checkpoints --model-config models.yaml
+tuft --port 8080 --checkpoint-dir /path/to/checkpoint/dir --model-config models.yaml
 ```
 
 The config file `models.yaml` specifies available base models. Below is an example.
