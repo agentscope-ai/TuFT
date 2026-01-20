@@ -8,6 +8,8 @@ from pathlib import Path
 
 import httpx
 import pytest
+
+pytest.importorskip("h2")
 import ray
 import uvicorn
 
