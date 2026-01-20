@@ -1,22 +1,9 @@
 from __future__ import annotations
 
-import importlib.util
-import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-FILE_REDIS_PATH = ROOT / "src" / "tuft" / "persistence" / "file_redis.py"
-
-spec = importlib.util.spec_from_file_location(
-    "tuft.persistence.file_redis", FILE_REDIS_PATH
-)
-if spec is None or spec.loader is None:
-    raise RuntimeError("Failed to load file_redis module spec")
-module = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = module
-spec.loader.exec_module(module)
-FileRedis = module.FileRedis
+from tuft.persistence.file_redis import FileRedis
 
 
 def test_file_redis_persists_between_instances(tmp_path: Path) -> None:

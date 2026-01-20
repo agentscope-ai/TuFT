@@ -71,7 +71,7 @@ class FileRedis:
                     value=str(payload.get("value", "")),
                     expires_at=payload.get("expires_at"),
                 )
-        except Exception:
+        except (json.JSONDecodeError, OSError):
             logger.exception("Failed to load FileRedis data from %s", self._file_path)
 
     def _dump(self) -> None:
@@ -240,9 +240,9 @@ class FileRedisPipeline:
         self._ops.append(("setex", (key, ttl_seconds, value)))
         return self
 
-    def delete(self, key: str) -> "FileRedisPipeline":
+    def delete(self, *keys: str) -> "FileRedisPipeline":
         """Queue a DELETE operation."""
-        self._ops.append(("delete", (key,)))
+        self._ops.append(("delete", keys))
         return self
 
     def _execute(self) -> None:
@@ -257,8 +257,8 @@ class FileRedisPipeline:
                     expires_at = time.time() + float(ttl_seconds)
                     self._store._data[key] = _FileRedisValue(value=value, expires_at=expires_at)
                 elif op == "delete":
-                    (key,) = args
-                    self._store._data.pop(key, None)
+                    for key in args:
+                        self._store._data.pop(key, None)
             if self._ops:
                 self._store._dump()
 
