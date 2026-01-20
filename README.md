@@ -26,7 +26,7 @@ We recommend using [uv](https://github.com/astral-sh/uv) for dependency manageme
 3. Install dependencies:
 
     ```bash
-    uv sync --extras dev,default
+    uv sync --all-extras
     # install flash-attn after other dependencies to avoid build issues
     uv pip install flash-attn --no-build-isolation
     ```
@@ -68,7 +68,7 @@ The CLI starts a FastAPI server:
 tuft --port 8080 --checkpoint-dir ~/.cache/tuft/checkpoints --model-config models.yaml
 ```
 
-The config file `models.yaml` specifies available base models. Below is an example, see [configuration] for details.
+The config file `models.yaml` specifies available base models. Below is an example.
 
 ```yaml
 supported_models:

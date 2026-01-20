@@ -30,7 +30,7 @@ dev = [
     "ruff>=0.14.10",
 ]
 default = [
-    "trinity-rft>=0.4.1",
+    "trinity-rft[vllm]>=0.4.1",
 ]
 
 [tool.ruff]

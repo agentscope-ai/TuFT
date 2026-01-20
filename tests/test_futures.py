@@ -5,10 +5,10 @@ import time
 
 import pytest
 
-from tuft.exceptions import UnknownModelException, UserMismatchException
-from tuft.futures import FutureStore
 from tinker import types
 from tinker.types.try_again_response import TryAgainResponse
+from tuft.exceptions import UnknownModelException, UserMismatchException
+from tuft.futures import FutureStore
 
 
 async def _wait_for_result(store: FutureStore, request_id: str, user_id: str, timeout: float = 1.0):
