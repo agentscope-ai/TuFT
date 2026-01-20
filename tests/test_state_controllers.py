@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from tinker import types
 from tuft.auth import User
 from tuft.config import AppConfig, ModelConfig
 from tuft.exceptions import (
@@ -14,7 +15,6 @@ from tuft.exceptions import (
     UserMismatchException,
 )
 from tuft.state import ServerState
-from tinker import types
 
 
 @pytest.fixture(scope="function", autouse=True)

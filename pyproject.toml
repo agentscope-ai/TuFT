@@ -15,13 +15,23 @@ dependencies = [
     "omegaconf>=2.3.0",
     "ray>=2.50.0",
     "transformers>=4.57.3",
-    "peft>=0.18.0",
 ]
 
 [project.scripts]
 "tuft" = "tuft.cli:main"
 
 [project.optional-dependencies]
+dev = [
+    "pre-commit>=4.5.1",
+    "pyright>=1.1.407",
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+    "ruff>=0.14.10",
+]
+backend = [
+    "trinity-rft[vllm]>=0.4.1",
+    "peft>=0.18.0",
+]
 persistence = [
     "redis>=5.0.0",
 ]
@@ -74,6 +84,9 @@ markers = [
     "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
 ]
 
+[tool.uv.extra-build-dependencies]
+flash-attn = ["torch", "numpy"]
+
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "setuptools>=65", "wheel"]
 build-backend = "hatchling.build"

@@ -7,10 +7,10 @@ import numpy as np
 import pytest
 import transformers
 
+from tinker import types
 from tuft.backends.training_backend import HFTrainingBackend
 from tuft.checkpoints import CheckpointRecord
 from tuft.config import ModelConfig
-from tinker import types
 
 
 def _construct_data() -> List[types.Datum]:
