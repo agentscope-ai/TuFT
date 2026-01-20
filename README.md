@@ -37,7 +37,7 @@ We recommend using [uv](https://github.com/astral-sh/uv) for dependency manageme
     source .venv/bin/activate
     ```
 
-### Using Pre-built Docker Image
+### Use the Pre-built Docker Image
 
 If you face issues with local installation or want to get started quickly,
 you can use the pre-built Docker image.
