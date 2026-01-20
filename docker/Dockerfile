@@ -14,7 +14,7 @@ FROM nvcr.io/nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
 
 WORKDIR /workspace
 
-RUN chmod 1777 /tmp && apt update && apt install -y \
+RUN chmod 1777 /tmp && apt update && apt install -y --no-install-recommends \
     build-essential \
     curl git wget vim tmux net-tools \
     python3 python3-pip python3-dev python3-packaging python3-venv \
@@ -38,7 +38,7 @@ COPY . .
 RUN pip install uv && uv venv /opt/venv --python=python3.12
 
 # Install minimal TuFT
-RUN . /opt/venv/bin/activate && uv sync
+RUN . /opt/venv/bin/activate && uv sync --all-extras
 
 # Install flash_attn
 RUN . /opt/venv/bin/activate && uv pip install flash_attn==2.8.1 --no-build-isolation
