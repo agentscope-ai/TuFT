@@ -84,6 +84,9 @@ markers = [
     "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
 ]
 
+[tool.uv.extra-build-dependencies]
+flash-attn = ["torch", "numpy"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

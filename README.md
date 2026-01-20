@@ -88,7 +88,7 @@ you can use the pre-built Docker image.
     docker pull ghcr.io/agentscope-ai/tuft:latest
     ```
 
-2. Run the Docker container with GPU support and necessary volume mounts:
+2. Run the Docker container and start the TuFT server on port 8080:
 
     ```bash
     docker run -it \
@@ -101,7 +101,7 @@ you can use the pre-built Docker image.
         tuft --port 8080 --checkpoint-dir /data/checkpoints --model-config /data/models.yaml
     ```
 
-    Replace `<host_dir>` with a directory on your host machine where you want to store model checkpoints and other data.
+    Please replace `<host_dir>` with a directory on your host machine where you want to store model checkpoints and other data.
     Suppose you have the following structure on your host machine:
 
     ```plaintext
