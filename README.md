@@ -60,6 +60,8 @@ you can use the pre-built Docker image.
         ghcr.io/agentscope-ai/tuft:latest
     ```
 
+    > Replace `<host_dir>` with a directory on your host machine where you want to store model checkpoints and other data.
+
 ## Run the server
 
 The CLI starts a FastAPI server:

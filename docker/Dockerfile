@@ -3,7 +3,7 @@
 #
 # cd <TuFT root dir>
 # docker build -f docker/Dockerfile -t tuft:latest .
-# docker run -it --gpus all --shm-size="64g" --rm -v $PWD:/workspace -v <host_dir>:/data tuft:latest
+# docker run -it --gpus all --shm-size="128g" --rm -v $PWD:/workspace -v <host_dir>:/data tuft:latest
 #
 # Note:
 # This Dockerfile uses 'uv' to create a virtual environment for better package management.
