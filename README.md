@@ -1,28 +1,65 @@
 # TuFT
 
-TuFT simplifies large language models (LLMs) finetuning by providing
-users with a minimal remote procedure call (RPC) API that can be accessed via
-compatible clients such as [Tinker](https://github.com/thinking-machine-lab/tinker).
+TuFT( **T**enant-**u**nified **F**ine**T**uning) is a framework that provides a unified
+API for finetuning large language models (LLMs) across multiple tenants.
+Users can access TuFT via compatible SDKs such as [Tinker](https://github.com/thinking-machine-lab/tinker).
 
-## Setup
+## Installation
 
-Install [uv](https://github.com/astral-sh/uv) for dependency management and
-then create a virtual environment:
+### Install from Source
+
+We recommend using [uv](https://github.com/astral-sh/uv) for dependency management.
+
+Clone the repository:
 
 ```bash
+git clone https://github.com/agentscope-ai/TuFT
+```
+
+Create a virtual environment:
+
+```bash
+cd TuFT
 uv venv --python 3.12
 ```
 
 Install dependencies:
 
 ```bash
-uv sync
+uv sync full
+# install flash-attn after other dependencies to avoid build issues
+uv pip install flash-attn --no-build-isolation
 ```
 
 Activate environment:
 
 ```bash
 source .venv/bin/activate
+```
+
+### Using Pre-built Docker Image
+
+If you face issues with local installation or want to get started quickly,
+you can use the pre-built Docker image.
+
+Pull the latest image from GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/agentscope-ai/trinity-rft:latest
+```
+
+Run the Docker container with GPU support and necessary volume mounts:
+
+```bash
+docker run -it \
+    --gpus all \
+    --shm-size="128g" \
+    --rm \
+    -p 8080:8080 \
+    -v /path/to/your/checkpoint_dir:/checkpoints \
+    -v /path/to/your/models:/models \
+    ghcr.io/agentscope-ai/trinity-rft:latest
+# Replace `/path/to/your/checkpoint_dir` and `/path/to/your/models` with actual paths on your host machine
 ```
 
 ## Run the server
@@ -32,6 +69,21 @@ The CLI starts a FastAPI server:
 ```bash
 tuft --port 8080 --checkpoint-dir ~/.cache/tuft/checkpoints --model-config models.yaml
 ```
+
+The config file `models.yaml` specifies available base models. Below is an example, see [configuration] for details.
+
+```yaml
+supported_models:
+  - model_name: Qwen/Qwen3-8B
+    model_path: Qwen/Qwen3-8B
+    max_model_len: 32768
+    tensor_parallel_size: 1
+  - model_name: Qwen/Qwen3-32B
+    model_path: Qwen/Qwen3-32B
+    max_model_len: 32768
+    tensor_parallel_size: 2
+```
+
 
 ## End-to-end example
 

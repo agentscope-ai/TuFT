@@ -29,6 +29,9 @@ dev = [
     "pytest-asyncio>=1.3.0",
     "ruff>=0.14.10",
 ]
+full = [
+    "trinity[vllm]>=0.4.1",
+]
 
 [tool.ruff]
 line-length = 100
