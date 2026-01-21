@@ -259,7 +259,9 @@ class FileRedisPipeline:
                         self._store._data.pop(key, None)
             if self._ops:
                 self._store._dump()
+            self._ops.clear()
 
-    def execute(self) -> None:
-        """Public alias for _execute() to match Redis pipeline interface."""
+    def execute(self) -> list[object]:
+        """Execute queued operations (redis-py compatibility)."""
         self._execute()
+        return []

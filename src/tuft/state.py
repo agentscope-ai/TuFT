@@ -247,6 +247,7 @@ class ServerState:
         user_id: str,
         name: str | None,
         checkpoint_type: types.CheckpointType,
+        seq_id: int | None = None,
     ) -> CheckpointRecord:
         current_future_id = self.future_store.get_current_future_id()
         return await self.training.save_checkpoint(
@@ -255,16 +256,18 @@ class ServerState:
             name=name,
             checkpoint_type=checkpoint_type,
             future_id=current_future_id,
+            seq_id=seq_id,
         )
 
     async def load_checkpoint(
-        self, model_id: str, user_id: str, path: str, optimizer: bool
+        self, model_id: str, user_id: str, path: str, optimizer: bool, seq_id: int | None = None
     ) -> None:
         return await self.training.load_checkpoint(
             model_id=model_id,
             user_id=user_id,
             path=path,
             optimizer=optimizer,
+            seq_id=seq_id,
         )
 
     def delete_checkpoint(self, model_id: str, user_id: str, checkpoint_id: str) -> None:
