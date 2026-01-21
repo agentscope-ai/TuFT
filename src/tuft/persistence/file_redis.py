@@ -88,9 +88,7 @@ class FileRedis:
         """Remove expired keys and persist the updated store."""
         now = time.time()
         expired = [
-            key
-            for key, entry in self._data.items()
-            if entry.expires_at and entry.expires_at <= now
+            key for key, entry in self._data.items() if entry.expires_at and entry.expires_at <= now
         ]
         if expired:
             for key in expired:
@@ -262,3 +260,6 @@ class FileRedisPipeline:
             if self._ops:
                 self._store._dump()
 
+    def execute(self) -> None:
+        """Public alias for _execute() to match Redis pipeline interface."""
+        self._execute()

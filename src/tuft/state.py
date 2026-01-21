@@ -138,7 +138,7 @@ class ServerState:
 
         This method handles checkpoint-based recovery:
         1. For each training run restored from Redis, create adapter and load latest checkpoint
-        2. Mark ALL futures created after checkpoint time as failed
+        2. Mark ALL futures created after checkpoint's future_id as failed
         3. For training runs without checkpoints, mark all futures as failed
         """
         # Restore training runs (adapter + checkpoint)
@@ -150,13 +150,13 @@ class ServerState:
             if latest_ckpt is None:
                 self.future_store.mark_futures_failed_after_checkpoint(
                     model_id=model_id,
-                    checkpoint_time=None,
+                    checkpoint_future_id=None,
                     error_message=f"No checkpoint found for model {model_id}. Please retry.",
                 )
             else:
                 self.future_store.mark_futures_failed_after_checkpoint(
                     model_id=model_id,
-                    checkpoint_time=latest_ckpt.created_at,
+                    checkpoint_future_id=latest_ckpt.future_id,
                     error_message=(
                         f"Server restored from checkpoint {latest_ckpt.checkpoint_id}. "
                         "Operations after this checkpoint need to be retried."
@@ -248,11 +248,13 @@ class ServerState:
         name: str | None,
         checkpoint_type: types.CheckpointType,
     ) -> CheckpointRecord:
+        current_future_id = self.future_store.get_current_future_id()
         return await self.training.save_checkpoint(
             model_id=model_id,
             user_id=user_id,
             name=name,
             checkpoint_type=checkpoint_type,
+            future_id=current_future_id,
         )
 
     async def load_checkpoint(

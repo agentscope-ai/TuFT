@@ -26,6 +26,7 @@ class CheckpointMetadata(BaseModel):
     size_bytes: int = 0
     lora_rank: int | None = None
     public: bool = False
+    future_id: int = 0
 
 
 class CheckpointRecord(BaseModel):
@@ -41,6 +42,7 @@ class CheckpointRecord(BaseModel):
     size_bytes: int = 0
     public: bool = False
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    future_id: int = 0
 
     @field_serializer("path")
     def serialize_path(self, path: Path) -> str:
@@ -124,6 +126,7 @@ class CheckpointRecord(BaseModel):
                 lora_rank=lora_rank,
                 public=self.public,
                 size_bytes=self.size_bytes,
+                future_id=self.future_id,
             )
         except Exception as e:
             raise ValueError(f"Invalid checkpoint metadata: {e}") from e
@@ -154,6 +157,7 @@ class CheckpointRecord(BaseModel):
         record.size_bytes = metadata.size_bytes
         record.public = metadata.public
         record.created_at = datetime.fromisoformat(metadata.created_at)
+        record.future_id = metadata.future_id
         return record
 
     def delete(self) -> None:

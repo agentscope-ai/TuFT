@@ -420,6 +420,7 @@ class TrainingController:
         user_id: str,
         name: str | None,
         checkpoint_type: types.CheckpointType,
+        future_id: int = 0,
     ) -> CheckpointRecord:
         """Save a checkpoint for the given training run."""
         training_run = self.get_run_record(model_id=model_id, user_id=user_id)
@@ -439,6 +440,7 @@ class TrainingController:
             checkpoint_root_dir=self.config.checkpoint_dir,
             exist_ok=True,
         )
+        checkpoint.future_id = future_id
         target_map = (
             training_run.checkpoints
             if checkpoint_type == "training"

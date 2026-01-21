@@ -1,18 +1,28 @@
 import os
+import tempfile
 import warnings
 from pathlib import Path
 
 import pytest
 
 TEST_REDIS_DB = 15
-TEST_REDIS_URL = os.getenv("TEST_REDIS_URL", f"redis://localhost:6379/{TEST_REDIS_DB}")
+TEST_REDIS_URL = os.getenv("TEST_REDIS_URL")
 
-# Default file path for FileRedis fallback
-DEFAULT_FILE_REDIS_PATH = Path.home() / ".cache" / "tuft" / "test_file_redis.json"
+_test_temp_dir: Path | None = None
+
+
+def _get_file_redis_path(test_name: str) -> Path:
+    """Get a unique FileRedis path for a specific test in a session-scoped temp directory."""
+    global _test_temp_dir
+    if _test_temp_dir is None:
+        _test_temp_dir = Path(tempfile.mkdtemp(prefix="tuft_test_"))
+    return _test_temp_dir / f"{test_name}.json"
 
 
 def _redis_available() -> bool:
     """Check if external Redis is available for testing."""
+    if TEST_REDIS_URL is None:
+        return False
     try:
         import redis
 
@@ -35,28 +45,6 @@ def _clear_redis_db(redis_url: str) -> None:
     except Exception as e:
         warnings.warn(
             f"[tuft tests] Failed to clear Redis database: {e}",
-            RuntimeWarning,
-            stacklevel=2,
-        )
-
-
-def _clear_file_redis(file_path: Path | None = None) -> None:
-    """Clear the FileRedis JSON file.
-
-    Args:
-        file_path: Path to the FileRedis JSON file. Uses default if None.
-    """
-    path = file_path or DEFAULT_FILE_REDIS_PATH
-    try:
-        if path.exists():
-            path.unlink()
-        # Also remove temp file if exists
-        tmp_path = path.with_suffix(path.suffix + ".tmp")
-        if tmp_path.exists():
-            tmp_path.unlink()
-    except OSError as e:
-        warnings.warn(
-            f"[tuft tests] Failed to clear FileRedis storage: {e}",
             RuntimeWarning,
             stacklevel=2,
         )
@@ -88,10 +76,10 @@ def configure_persistence(request):
     """Configure persistence settings for all tests.
 
     Persistence is ALWAYS enabled by default unless --no-persistence is specified.
-    - If Redis is available, uses external Redis server (DB 15 for tests)
+    - If Redis is available (TEST_REDIS_URL is set), uses external Redis server
     - If Redis is not available, falls back to FileRedis (file-backed storage)
 
-    Storage is ALWAYS cleared before and after each test to ensure test isolation.
+    Each test uses a unique temporary file for FileRedis to ensure test isolation.
     Use --no-persistence to disable persistence entirely.
     """
     from tuft.persistence import PersistenceConfig, get_redis_store
@@ -106,26 +94,23 @@ def configure_persistence(request):
         store.configure(PersistenceConfig.disabled(namespace="tuft_test"))
     else:
         # Persistence enabled - use Redis if available, otherwise FileRedis
-        if _redis_available():
-            # Use external Redis server (always use TEST_REDIS_URL which points to DB 15)
+        if _redis_available() and TEST_REDIS_URL is not None:
+            # Use external Redis server
             # Clear test DB before test
             _clear_redis_db(TEST_REDIS_URL)
             store.configure(PersistenceConfig.from_redis_url(TEST_REDIS_URL, namespace="tuft_test"))
         else:
-            # Redis not available - fall back to FileRedis
-            # Clear test file before test
+            # Redis not available - fall back to FileRedis with unique temp file per test
+            test_name = request.node.name
+            file_path = _get_file_redis_path(test_name)
             warnings.warn(
-                (
-                    "[tuft tests] Redis unavailable; falling back to FileRedis at "
-                    f"{DEFAULT_FILE_REDIS_PATH}"
-                ),
+                f"[tuft tests] Redis unavailable; falling back to FileRedis at {file_path}",
                 RuntimeWarning,
                 stacklevel=2,
             )
-            _clear_file_redis(DEFAULT_FILE_REDIS_PATH)
             store.configure(
                 PersistenceConfig.from_file_redis(
-                    file_path=DEFAULT_FILE_REDIS_PATH,
+                    file_path=file_path,
                     namespace="tuft_test",
                 )
             )
@@ -137,48 +122,46 @@ def configure_persistence(request):
 
     # Always clear storage after test for isolation
     if not no_persistence:
-        if _redis_available():
+        if _redis_available() and TEST_REDIS_URL is not None:
             _clear_redis_db(TEST_REDIS_URL)
-        else:
-            _clear_file_redis(DEFAULT_FILE_REDIS_PATH)
 
     store.reset()
 
 
 @pytest.fixture(scope="function")
 def clean_redis():
-    """Explicit fixture for tests that need guaranteed clean Redis/FileRedis state."""
-    if _redis_available():
+    """Explicit fixture for tests that need guaranteed clean Redis state.
+
+    Note: For FileRedis, each test already uses a unique temp file, so no explicit
+    cleanup is needed.
+    """
+    if _redis_available() and TEST_REDIS_URL is not None:
         _clear_redis_db(TEST_REDIS_URL)
-    else:
-        _clear_file_redis(DEFAULT_FILE_REDIS_PATH)
     yield
-    if _redis_available():
+    if _redis_available() and TEST_REDIS_URL is not None:
         _clear_redis_db(TEST_REDIS_URL)
-    else:
-        _clear_file_redis(DEFAULT_FILE_REDIS_PATH)
 
 
 @pytest.fixture(scope="function")
-def enable_persistence():
+def enable_persistence(request):
     """Fixture to enable persistence for a specific test.
 
-    Uses Redis if available, otherwise falls back to FileRedis.
+    Uses Redis if available, otherwise falls back to FileRedis with unique temp file.
     """
     from tuft.persistence import PersistenceConfig, get_redis_store
 
     store = get_redis_store()
     store.reset()
 
-    if _redis_available():
+    if _redis_available() and TEST_REDIS_URL is not None:
         _clear_redis_db(TEST_REDIS_URL)
         store.configure(PersistenceConfig.from_redis_url(TEST_REDIS_URL, namespace="tuft_test"))
     else:
-        # Fall back to FileRedis
-        _clear_file_redis(DEFAULT_FILE_REDIS_PATH)
+        test_name = request.node.name
+        file_path = _get_file_redis_path(f"enable_persistence_{test_name}")
         store.configure(
             PersistenceConfig.from_file_redis(
-                file_path=DEFAULT_FILE_REDIS_PATH,
+                file_path=file_path,
                 namespace="tuft_test",
             )
         )
@@ -188,10 +171,9 @@ def enable_persistence():
     store.close()
 
     # Cleanup
-    if _redis_available():
+    if _redis_available() and TEST_REDIS_URL is not None:
         _clear_redis_db(TEST_REDIS_URL)
-    else:
-        _clear_file_redis(DEFAULT_FILE_REDIS_PATH)
+    # FileRedis temp files are automatically cleaned up by the OS
 
     store.reset()
 
