@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import socket
 import threading
 import time
@@ -13,7 +14,9 @@ import ray
 import uvicorn
 
 from tuft.config import AppConfig, ModelConfig
+from tuft.persistence import PersistenceConfig
 from tuft.server import create_root_app
+from tinker._exceptions import RequestFailedError
 import tinker.types as types
 from tinker.lib.public_interfaces.service_client import ServiceClient
 from transformers import AutoTokenizer
@@ -69,6 +72,52 @@ def _normalize_text(text: str) -> str:
 
 def _log(message: str) -> None:
     print(message, flush=True)
+
+
+def _run_with_seq_sync(training_client, action):
+    while True:
+        try:
+            return action()
+        except RequestFailedError as exc:
+            match = re.search(r"Sequence conflict: expected (\d+), got (\d+)\.", str(exc))
+            if not match:
+                raise
+            expected = int(match.group(1))
+            training_client._request_id_counter = expected - 1
+
+
+def _start_server(config: AppConfig, port: int) -> tuple[uvicorn.Server, threading.Thread, str, httpx.Client]:
+    app = create_root_app(config)
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+
+    base_url = f"http://127.0.0.1:{port}"
+    client = httpx.Client()
+    healthy = False
+    for attempt in range(1, 121):
+        try:
+            response = client.get(f"{base_url}/api/v1/healthz", timeout=1)
+            response.raise_for_status()
+            healthy = True
+            break
+        except httpx.HTTPError:
+            time.sleep(2)
+        if attempt % 5 == 0:
+            _log(f"Waiting for server healthz... attempt {attempt}/120")
+    if not healthy:
+        server.should_exit = True
+        thread.join(timeout=5)
+        client.close()
+        raise RuntimeError("Server failed to start")
+    _log("Server is healthy")
+    return server, thread, base_url, client
+
+
+def _stop_server(server: uvicorn.Server, thread: threading.Thread, client: httpx.Client) -> None:
+    server.should_exit = True
+    thread.join(timeout=5)
+    client.close()
 
 
 def _create_training_data(tokenizer) -> list[types.Datum]:
@@ -137,7 +186,6 @@ def _create_reverse_training_data(tokenizer) -> list[types.Datum]:
 
 @pytest.fixture(scope="module")
 def server_endpoint(tmp_path_factory: pytest.TempPathFactory):
-    saved_api_key = os.environ.pop("TINKER_API_KEY", None)
     os.environ.setdefault("MASTER_ADDR", "localhost")
     os.environ.setdefault("MASTER_PORT", "29500")
     os.environ.setdefault("WORLD_SIZE", "1")
@@ -186,9 +234,9 @@ def server_endpoint(tmp_path_factory: pytest.TempPathFactory):
     for attempt in range(1, 121):
         try:
             response = client.get(f"{base_url}/api/v1/healthz", timeout=1)
-            if response.status_code == 200:
-                healthy = True
-                break
+            response.raise_for_status()
+            healthy = True
+            break
         except httpx.HTTPError:
             time.sleep(2)
         if attempt % 5 == 0:
@@ -206,8 +254,6 @@ def server_endpoint(tmp_path_factory: pytest.TempPathFactory):
     thread.join(timeout=5)
     client.close()
     ray.shutdown()
-    if saved_api_key is not None:
-        os.environ["TINKER_API_KEY"] = saved_api_key
 
 
 @pytest.mark.integration
@@ -217,13 +263,6 @@ def test_auth_and_pig_latin_training_flow(server_endpoint: str) -> None:
 
     if not torch.cuda.is_available():
         pytest.skip("CUDA is not available, skipping GPU integration test")
-    model_env = os.environ.get("TUFT_TEST_MODEL")
-    if not model_env:
-        warnings.warn(
-            "Skipping GPU integration test because TUFT_TEST_MODEL is not set.",
-            RuntimeWarning,
-        )
-        pytest.skip("TUFT_TEST_MODEL is not set, skipping GPU integration test")
     http_client = httpx.Client()
     try:
         _log(f"Server endpoint: {server_endpoint}")
@@ -244,7 +283,7 @@ def test_auth_and_pig_latin_training_flow(server_endpoint: str) -> None:
         base_url=server_endpoint,
         timeout=120,
     )
-    tokenizer = AutoTokenizer.from_pretrained(model_env)
+    tokenizer = AutoTokenizer.from_pretrained(os.environ["TUFT_TEST_MODEL"])
     try:
         capabilities = service_client.get_server_capabilities()
         assert capabilities.supported_models, "server did not report supported models"
@@ -256,13 +295,11 @@ def test_auth_and_pig_latin_training_flow(server_endpoint: str) -> None:
         train_data = _create_training_data(tokenizer)
         _log(f"Training samples: {len(train_data)}")
 
-        seq_id = 1
         for epoch in range(1, 21):
             if epoch == 1:
                 _log("Running training loop...")
             training_client.forward_backward(train_data, "cross_entropy").result(timeout=60)
             training_client.optim_step(types.AdamParams(learning_rate=1e-4)).result(timeout=60)
-            seq_id += 2
             if epoch % 5 == 0:
                 _log(f"Training progress: epoch {epoch}/20")
         _log("Training complete")
@@ -305,20 +342,12 @@ def test_multi_lora_adapters(server_endpoint: str) -> None:
 
     if not torch.cuda.is_available():
         pytest.skip("CUDA is not available, skipping GPU integration test")
-    model_env = os.environ.get("TUFT_TEST_MODEL")
-    if not model_env:
-        warnings.warn(
-            "Skipping GPU integration test because TUFT_TEST_MODEL is not set.",
-            RuntimeWarning,
-        )
-        pytest.skip("TUFT_TEST_MODEL is not set, skipping GPU integration test")
-
     service_client = ServiceClient(
         api_key="tml-test-key",
         base_url=server_endpoint,
         timeout=120,
     )
-    tokenizer = AutoTokenizer.from_pretrained(model_env)
+    tokenizer = AutoTokenizer.from_pretrained(os.environ["TUFT_TEST_MODEL"])
     try:
         capabilities = service_client.get_server_capabilities()
         assert capabilities.supported_models, "server did not report supported models"
@@ -412,4 +441,163 @@ def test_multi_lora_adapters(server_endpoint: str) -> None:
         assert _normalize_text(cross_text_a) != _normalize_text("olleh dlrow")
     finally:
         service_client.holder.close()
+
+
+@pytest.mark.integration
+@pytest.mark.gpu
+@pytest.mark.persistence
+def test_checkpoint_resume_persistence(tmp_path: Path) -> None:
+    import torch
+
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is not available, skipping GPU integration test")
+
+    model_env = os.environ.get("TUFT_TEST_MODEL")
+    if not model_env:
+        warnings.warn(
+            "Skipping GPU integration test because TUFT_TEST_MODEL is not set.",
+            RuntimeWarning,
+        )
+        pytest.skip("TUFT_TEST_MODEL is not set, skipping GPU integration test")
+
+    file_redis_path = tmp_path / "file_redis.json"
+    if file_redis_path.exists():
+        file_redis_path.unlink()
+    _log(f"FileRedis path: {file_redis_path}")
+
+    os.environ.setdefault("MASTER_ADDR", "localhost")
+    os.environ.setdefault("MASTER_PORT", "29500")
+    os.environ.setdefault("WORLD_SIZE", "1")
+    os.environ.setdefault("RANK", "0")
+
+    ray.init(
+        ignore_reinit_error=True,
+        runtime_env={"env_vars": {"TRANSFORMERS_NO_TORCHVISION": "1"}},
+    )
+    checkpoint_dir = tmp_path / "checkpoints"
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    config = AppConfig(checkpoint_dir=checkpoint_dir)
+    config.supported_models = [
+        ModelConfig(
+            model_name="Qwen/Qwen3-0.6B",
+            model_path=Path(model_env),
+            max_model_len=4096,
+            tensor_parallel_size=1,
+        )
+    ]
+    config.authorized_users = {
+        "tml-test-key": "default",
+    }
+    config.persistence = PersistenceConfig.from_file_redis(
+        file_path=file_redis_path,
+        namespace="tuft_test",
+    )
+
+    port = _find_free_port()
+    server = thread = client = None
+    service_client = None
+    try:
+        _log("Starting server...")
+        server, thread, base_url, client = _start_server(config, port)
+
+        service_client = ServiceClient(api_key="tml-test-key", base_url=base_url, timeout=120)
+        tokenizer = AutoTokenizer.from_pretrained(model_env)
+
+        capabilities = service_client.get_server_capabilities()
+        assert capabilities.supported_models, "server did not report supported models"
+        base_model = capabilities.supported_models[0].model_name or "Qwen/Qwen3-0.6B"
+        _log(f"Base model: {base_model}")
+
+        training_client = service_client.create_lora_training_client(base_model=base_model, rank=2)
+        train_data = _create_training_data(tokenizer)
+        _log("Running training loop...")
+        training_client.forward_backward(train_data, "cross_entropy").result(timeout=60)
+        training_client.optim_step(types.AdamParams(learning_rate=5e-4)).result(timeout=60)
+        _log("Training complete")
+
+        checkpoint_name = "persistence-ckpt"
+        checkpoint = training_client.save_state(checkpoint_name).result(timeout=60)
+        checkpoint_path = checkpoint.path
+        assert checkpoint_path.startswith("tinker://")
+        _log(f"Checkpoint path: {checkpoint_path}")
+
+        sampler_response = training_client.save_weights_for_sampler("persistence-sampler").result(
+            timeout=60
+        )
+        sampler_path = sampler_response.path
+        assert sampler_path.startswith("tinker://")
+        _log(f"Sampler path: {sampler_path}")
+        sampling_client = service_client.create_sampling_client(model_path=sampler_path)
+        sample_res = sampling_client.sample(
+            prompt=types.ModelInput.from_ints(tokenizer.encode(TEST_PROMPTS[0], add_special_tokens=True)),
+            num_samples=1,
+            sampling_params=types.SamplingParams(max_tokens=4, temperature=0.1, top_p=1.0),
+        ).result(timeout=60)
+        assert sample_res.sequences and sample_res.sequences[0].tokens
+        _log(f"Checkpoint dir contents: {list(checkpoint_dir.rglob('*'))}")
+        _log(
+            f"FileRedis exists after save: {file_redis_path.exists()} size="
+            f"{file_redis_path.stat().st_size if file_redis_path.exists() else 'n/a'}"
+        )
+
+        session_id = service_client.holder.get_session_id()
+        rest_client = service_client.create_rest_client()
+        session_before = rest_client.get_session(session_id).result(timeout=30)
+        checkpoints_before = rest_client.list_checkpoints(training_client.model_id).result(timeout=30)
+        checkpoint_ids_before = [c.checkpoint_id for c in checkpoints_before.checkpoints]
+        assert checkpoint_name in checkpoint_ids_before
+
+        _log("Restarting server...")
+        _stop_server(server, thread, client)
+        ray.shutdown()
+        ray.init(
+            ignore_reinit_error=True,
+            runtime_env={"env_vars": {"TRANSFORMERS_NO_TORCHVISION": "1"}},
+        )
+        server, thread, base_url, client = _start_server(config, port)
+
+        # Update service_client to use new server URL
+        service_client.holder._base_url = base_url
+        rest_client = service_client.create_rest_client()
+        sessions = rest_client.list_sessions().result(timeout=30)
+        assert session_id in sessions.sessions
+
+        session_after = rest_client.get_session(session_id).result(timeout=30)
+        assert session_after.training_run_ids == session_before.training_run_ids
+        assert session_after.sampler_ids == session_before.sampler_ids
+
+        checkpoints_after = rest_client.list_checkpoints(training_client.model_id).result(timeout=30)
+        checkpoint_ids_after = [c.checkpoint_id for c in checkpoints_after.checkpoints]
+        assert checkpoint_name in checkpoint_ids_after
+
+        # Use existing training_client to load state from checkpoint
+        _log("Loading checkpoint into existing training client...")
+        training_client.load_state_with_optimizer(checkpoint_path).result(timeout=60)
+        _log(
+            "Training client state loaded from checkpoint. "
+            f"turn={training_client._turn_counter} "
+            f"next_request={training_client._request_id_counter}"
+        )
+        training_client.forward_backward(train_data, "cross_entropy").result(timeout=60)
+        training_client.optim_step(types.AdamParams(learning_rate=1e-4)).result(timeout=60)
+        resumed_weights = training_client.save_weights_for_sampler(
+            "resume-sampler"
+        ).result(timeout=60)
+        assert resumed_weights.path.startswith("tinker://")
+        resumed_sampling = service_client.create_sampling_client(model_path=resumed_weights.path)
+        resumed_res = resumed_sampling.sample(
+            prompt=types.ModelInput.from_ints(tokenizer.encode(TEST_PROMPTS[1], add_special_tokens=True)),
+            num_samples=1,
+            sampling_params=types.SamplingParams(max_tokens=4, temperature=0.1, top_p=1.0),
+        ).result(timeout=60)
+        assert resumed_res.sequences and resumed_res.sequences[0].tokens
+    finally:
+        if service_client is not None:
+            service_client.holder.close()
+        if server and thread and client:
+            _stop_server(server, thread, client)
+        ray.shutdown()
+        if file_redis_path.exists():
+            file_redis_path.unlink()
 

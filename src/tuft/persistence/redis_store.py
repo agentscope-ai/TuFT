@@ -148,10 +148,7 @@ class RedisStore:
             with self._lock:
                 if self._redis is None or self._pid != current_pid:
                     self._close_connections()
-
-                    if self._config.mode == PersistenceMode.REDIS_URL:
-                        self._redis = self._create_redis_client()
-
+                    self._redis = self._create_redis_client()
                     if self._redis is not None:
                         self._pid = current_pid
 
