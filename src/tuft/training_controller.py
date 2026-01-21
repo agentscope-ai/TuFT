@@ -420,50 +420,55 @@ class TrainingController:
         user_id: str,
         name: str | None,
         checkpoint_type: types.CheckpointType,
+        seq_id: int | None = None,
     ) -> CheckpointRecord:
         """Save a checkpoint for the given training run."""
         training_run = self.get_run_record(model_id=model_id, user_id=user_id)
-        counter_attr = (
-            "next_training_checkpoint"
-            if checkpoint_type == "training"
-            else "next_sampler_checkpoint"
-        )
-        counter = getattr(training_run, counter_attr)
-        checkpoint_name = name or f"checkpoint-{counter:04d}"
-        setattr(training_run, counter_attr, counter + 1)
-        checkpoint = CheckpointRecord.from_training_run(
-            training_run_id=training_run.training_run_id,
-            checkpoint_name=checkpoint_name,
-            owner_name=training_run.model_owner,
-            checkpoint_type=checkpoint_type,
-            checkpoint_root_dir=self.config.checkpoint_dir,
-            exist_ok=True,
-        )
-        target_map = (
-            training_run.checkpoints
-            if checkpoint_type == "training"
-            else training_run.sampler_checkpoints
-        )
-        if training_run.backend is not None:
-            await training_run.backend.save_state(
-                lora_id=training_run.training_run_id,
-                checkpoint_record=checkpoint,
-                optimizer=(checkpoint_type == "training"),
+
+        async def _operation() -> CheckpointRecord:
+            counter_attr = (
+                "next_training_checkpoint"
+                if checkpoint_type == "training"
+                else "next_sampler_checkpoint"
             )
-        checkpoint.size_bytes = checkpoint.path.stat().st_size
-        checkpoint.save_metadata(
-            base_model=training_run.base_model,
-            session_id=training_run.session_id,
-            lora_rank=training_run.lora_rank,
-        )
-        # save the checkpoint record in the training run
-        target_map[checkpoint_name] = checkpoint
+            counter = getattr(training_run, counter_attr)
+            checkpoint_name = name or f"checkpoint-{counter:04d}"
+            setattr(training_run, counter_attr, counter + 1)
+            checkpoint = CheckpointRecord.from_training_run(
+                training_run_id=training_run.training_run_id,
+                checkpoint_name=checkpoint_name,
+                owner_name=training_run.model_owner,
+                checkpoint_type=checkpoint_type,
+                checkpoint_root_dir=self.config.checkpoint_dir,
+                exist_ok=True,
+            )
+            target_map = (
+                training_run.checkpoints
+                if checkpoint_type == "training"
+                else training_run.sampler_checkpoints
+            )
+            if training_run.backend is not None:
+                await training_run.backend.save_state(
+                    lora_id=training_run.training_run_id,
+                    checkpoint_record=checkpoint,
+                    optimizer=(checkpoint_type == "training"),
+                )
+            checkpoint.size_bytes = checkpoint.path.stat().st_size
+            checkpoint.save_metadata(
+                base_model=training_run.base_model,
+                session_id=training_run.session_id,
+                lora_rank=training_run.lora_rank,
+            )
+            # save the checkpoint record in the training run
+            target_map[checkpoint_name] = checkpoint
 
-        # Save training run and checkpoint atomically to prevent inconsistency
-        # if server crashes between saves
-        self._save_training_run_with_checkpoint(model_id, checkpoint_name, checkpoint_type)
+            # Save training run and checkpoint atomically to prevent inconsistency
+            # if server crashes between saves
+            self._save_training_run_with_checkpoint(model_id, checkpoint_name, checkpoint_type)
 
-        return checkpoint
+            return checkpoint
+
+        return await self._with_sequence_guard(training_run, seq_id, _operation)
 
     async def load_checkpoint(
         self,
@@ -471,13 +476,17 @@ class TrainingController:
         user_id: str,
         path: str,
         optimizer: bool,
+        seq_id: int | None = None,
     ) -> None:
         """Load a checkpoint."""
-        training_run = self.get_run_record(model_id, user_id, enforce_user_match=False)
         try:
             parsed_checkpoint = CheckpointRecord.from_tinker_path(path, self.config.checkpoint_dir)
         except FileNotFoundError as exc:
             raise CheckpointNotFoundException(checkpoint_id=model_id) from exc
+        source_model_id = parsed_checkpoint.training_run_id or model_id
+        training_run = self.get_run_record(
+            source_model_id, user_id, enforce_user_match=False
+        )
 
         collection = (
             training_run.checkpoints
@@ -497,11 +506,15 @@ class TrainingController:
         if metadata.public or (metadata.owner_name == user_id):
             if training_run.backend is None:
                 raise UnknownModelException(model_name=model_id)
-            await training_run.backend.load_state(
-                lora_id=training_run.training_run_id,
-                checkpoint_record=checkpoint,
-                optimizer=optimizer,
-            )
+
+            async def _operation() -> None:
+                await training_run.backend.load_state(
+                    lora_id=training_run.training_run_id,
+                    checkpoint_record=checkpoint,
+                    optimizer=optimizer,
+                )
+
+            await self._with_sequence_guard(training_run, seq_id, _operation)
         else:
             raise CheckpointAccessDeniedException(checkpoint_id=parsed_checkpoint.checkpoint_id)
 

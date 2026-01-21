@@ -245,6 +245,11 @@ class FileRedisPipeline:
         self._ops.append(("delete", keys))
         return self
 
+    def execute(self) -> list[object]:
+        """Execute queued operations (redis-py compatibility)."""
+        self._execute()
+        return []
+
     def _execute(self) -> None:
         """Apply queued operations and flush to disk."""
         with self._store._lock:
@@ -261,4 +266,5 @@ class FileRedisPipeline:
                         self._store._data.pop(key, None)
             if self._ops:
                 self._store._dump()
+            self._ops.clear()
 

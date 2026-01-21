@@ -383,6 +383,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
                 user.user_id,
                 request.path,
                 "training",
+                seq_id=request.seq_id,
             )
             return types.SaveWeightsResponse(path=checkpoint.tinker_checkpoint.tinker_path)
 
@@ -416,6 +417,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
                 user.user_id,
                 request.path,
                 "sampler",
+                seq_id=request.seq_id,
             )
             return types.SaveWeightsForSamplerResponse(
                 path=checkpoint.tinker_checkpoint.tinker_path
@@ -451,6 +453,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
                 user_id=user.user_id,
                 path=request.path,
                 optimizer=request.optimizer,
+                seq_id=request.seq_id,
             )
             return types.LoadWeightsResponse(path=request.path)
 
