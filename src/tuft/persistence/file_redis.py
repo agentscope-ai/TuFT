@@ -88,9 +88,7 @@ class FileRedis:
         """Remove expired keys and persist the updated store."""
         now = time.time()
         expired = [
-            key
-            for key, entry in self._data.items()
-            if entry.expires_at and entry.expires_at <= now
+            key for key, entry in self._data.items() if entry.expires_at and entry.expires_at <= now
         ]
         if expired:
             for key in expired:
@@ -245,11 +243,6 @@ class FileRedisPipeline:
         self._ops.append(("delete", keys))
         return self
 
-    def execute(self) -> list[object]:
-        """Execute queued operations (redis-py compatibility)."""
-        self._execute()
-        return []
-
     def _execute(self) -> None:
         """Apply queued operations and flush to disk."""
         with self._store._lock:
@@ -268,3 +261,7 @@ class FileRedisPipeline:
                 self._store._dump()
             self._ops.clear()
 
+    def execute(self) -> list[object]:
+        """Execute queued operations (redis-py compatibility)."""
+        self._execute()
+        return []

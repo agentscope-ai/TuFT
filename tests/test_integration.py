@@ -12,14 +12,14 @@ import httpx
 import pytest
 import ray
 import uvicorn
+from transformers import AutoTokenizer
 
+import tinker.types as types
+from tinker._exceptions import RequestFailedError
+from tinker.lib.public_interfaces.service_client import ServiceClient
 from tuft.config import AppConfig, ModelConfig
 from tuft.persistence import PersistenceConfig
 from tuft.server import create_root_app
-from tinker._exceptions import RequestFailedError
-import tinker.types as types
-from tinker.lib.public_interfaces.service_client import ServiceClient
-from transformers import AutoTokenizer
 
 """
 How to run this test (GPU required):
@@ -60,6 +60,7 @@ REVERSE_PROMPTS = [
     "Reverse each word.\nEnglish: paper plane\nReversed:",
 ]
 
+
 def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
@@ -86,7 +87,9 @@ def _run_with_seq_sync(training_client, action):
             training_client._request_id_counter = expected - 1
 
 
-def _start_server(config: AppConfig, port: int) -> tuple[uvicorn.Server, threading.Thread, str, httpx.Client]:
+def _start_server(
+    config: AppConfig, port: int
+) -> tuple[uvicorn.Server, threading.Thread, str, httpx.Client]:
     app = create_root_app(config)
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
     thread = threading.Thread(target=server.run, daemon=True)
@@ -196,6 +199,7 @@ def server_endpoint(tmp_path_factory: pytest.TempPathFactory):
         warnings.warn(
             "Skipping GPU integration test because TUFT_TEST_MODEL is not set.",
             RuntimeWarning,
+            stacklevel=2,
         )
         pytest.skip("TUFT_TEST_MODEL is not set, skipping GPU integration test")
     model_path = Path(model_env)
@@ -279,7 +283,7 @@ def test_auth_and_pig_latin_training_flow(server_endpoint: str) -> None:
         http_client.close()
 
     service_client = ServiceClient(
-        api_key="tml-test-key",
+        api_key="tml-test-key",  # pragma: allowlist secret
         base_url=server_endpoint,
         timeout=120,
     )
@@ -343,7 +347,7 @@ def test_multi_lora_adapters(server_endpoint: str) -> None:
     if not torch.cuda.is_available():
         pytest.skip("CUDA is not available, skipping GPU integration test")
     service_client = ServiceClient(
-        api_key="tml-test-key",
+        api_key="tml-test-key",  # pragma: allowlist secret
         base_url=server_endpoint,
         timeout=120,
     )
@@ -355,10 +359,14 @@ def test_multi_lora_adapters(server_endpoint: str) -> None:
         _log(f"Base model: {base_model}")
 
         _log("Training LoRA A (Pig Latin)...")
-        training_client_a = service_client.create_lora_training_client(base_model=base_model, rank=8)
+        training_client_a = service_client.create_lora_training_client(
+            base_model=base_model, rank=8
+        )
         pig_latin_data = _create_training_data(tokenizer)
         _log("Training LoRA B (Reverse Words)...")
-        training_client_b = service_client.create_lora_training_client(base_model=base_model, rank=8)
+        training_client_b = service_client.create_lora_training_client(
+            base_model=base_model, rank=8
+        )
         reverse_data = _create_reverse_training_data(tokenizer)
 
         _log("Running interleaved training loop...")
@@ -377,7 +385,9 @@ def test_multi_lora_adapters(server_endpoint: str) -> None:
         assert sampler_a.path.startswith("tinker://")
         _log(f"Sampler A path: {sampler_a.path}")
 
-        sampler_b = training_client_b.save_weights_for_sampler("sampler-reverse-b").result(timeout=60)
+        sampler_b = training_client_b.save_weights_for_sampler("sampler-reverse-b").result(
+            timeout=60
+        )
         assert sampler_b.path.startswith("tinker://")
         _log(f"Sampler B path: {sampler_b.path}")
 
@@ -457,6 +467,7 @@ def test_checkpoint_resume_persistence(tmp_path: Path) -> None:
         warnings.warn(
             "Skipping GPU integration test because TUFT_TEST_MODEL is not set.",
             RuntimeWarning,
+            stacklevel=2,
         )
         pytest.skip("TUFT_TEST_MODEL is not set, skipping GPU integration test")
 
@@ -530,7 +541,9 @@ def test_checkpoint_resume_persistence(tmp_path: Path) -> None:
         _log(f"Sampler path: {sampler_path}")
         sampling_client = service_client.create_sampling_client(model_path=sampler_path)
         sample_res = sampling_client.sample(
-            prompt=types.ModelInput.from_ints(tokenizer.encode(TEST_PROMPTS[0], add_special_tokens=True)),
+            prompt=types.ModelInput.from_ints(
+                tokenizer.encode(TEST_PROMPTS[0], add_special_tokens=True)
+            ),
             num_samples=1,
             sampling_params=types.SamplingParams(max_tokens=4, temperature=0.1, top_p=1.0),
         ).result(timeout=60)
@@ -544,7 +557,9 @@ def test_checkpoint_resume_persistence(tmp_path: Path) -> None:
         session_id = service_client.holder.get_session_id()
         rest_client = service_client.create_rest_client()
         session_before = rest_client.get_session(session_id).result(timeout=30)
-        checkpoints_before = rest_client.list_checkpoints(training_client.model_id).result(timeout=30)
+        checkpoints_before = rest_client.list_checkpoints(training_client.model_id).result(
+            timeout=30
+        )
         checkpoint_ids_before = [c.checkpoint_id for c in checkpoints_before.checkpoints]
         assert checkpoint_name in checkpoint_ids_before
 
@@ -557,8 +572,12 @@ def test_checkpoint_resume_persistence(tmp_path: Path) -> None:
         )
         server, thread, base_url, client = _start_server(config, port)
 
-        # Update service_client to use new server URL
-        service_client.holder._base_url = base_url
+        # Create a new service_client with the new server URL
+        service_client = ServiceClient(
+            api_key="tml-test-key",  # pragma: allowlist secret
+            base_url=base_url,
+            timeout=120,
+        )
         rest_client = service_client.create_rest_client()
         sessions = rest_client.list_sessions().result(timeout=30)
         assert session_id in sessions.sessions
@@ -567,7 +586,9 @@ def test_checkpoint_resume_persistence(tmp_path: Path) -> None:
         assert session_after.training_run_ids == session_before.training_run_ids
         assert session_after.sampler_ids == session_before.sampler_ids
 
-        checkpoints_after = rest_client.list_checkpoints(training_client.model_id).result(timeout=30)
+        checkpoints_after = rest_client.list_checkpoints(training_client.model_id).result(
+            timeout=30
+        )
         checkpoint_ids_after = [c.checkpoint_id for c in checkpoints_after.checkpoints]
         assert checkpoint_name in checkpoint_ids_after
 
@@ -581,13 +602,15 @@ def test_checkpoint_resume_persistence(tmp_path: Path) -> None:
         )
         training_client.forward_backward(train_data, "cross_entropy").result(timeout=60)
         training_client.optim_step(types.AdamParams(learning_rate=1e-4)).result(timeout=60)
-        resumed_weights = training_client.save_weights_for_sampler(
-            "resume-sampler"
-        ).result(timeout=60)
+        resumed_weights = training_client.save_weights_for_sampler("resume-sampler").result(
+            timeout=60
+        )
         assert resumed_weights.path.startswith("tinker://")
         resumed_sampling = service_client.create_sampling_client(model_path=resumed_weights.path)
         resumed_res = resumed_sampling.sample(
-            prompt=types.ModelInput.from_ints(tokenizer.encode(TEST_PROMPTS[1], add_special_tokens=True)),
+            prompt=types.ModelInput.from_ints(
+                tokenizer.encode(TEST_PROMPTS[1], add_special_tokens=True)
+            ),
             num_samples=1,
             sampling_params=types.SamplingParams(max_tokens=4, temperature=0.1, top_p=1.0),
         ).result(timeout=60)
@@ -600,4 +623,3 @@ def test_checkpoint_resume_persistence(tmp_path: Path) -> None:
         ray.shutdown()
         if file_redis_path.exists():
             file_redis_path.unlink()
-

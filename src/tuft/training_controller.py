@@ -420,6 +420,7 @@ class TrainingController:
         user_id: str,
         name: str | None,
         checkpoint_type: types.CheckpointType,
+        future_id: int = 0,
         seq_id: int | None = None,
     ) -> CheckpointRecord:
         """Save a checkpoint for the given training run."""
@@ -442,6 +443,8 @@ class TrainingController:
                 checkpoint_root_dir=self.config.checkpoint_dir,
                 exist_ok=True,
             )
+            checkpoint.future_id = future_id
+            checkpoint.seq_id = seq_id
             target_map = (
                 training_run.checkpoints
                 if checkpoint_type == "training"
@@ -484,9 +487,7 @@ class TrainingController:
         except FileNotFoundError as exc:
             raise CheckpointNotFoundException(checkpoint_id=model_id) from exc
         source_model_id = parsed_checkpoint.training_run_id or model_id
-        training_run = self.get_run_record(
-            source_model_id, user_id, enforce_user_match=False
-        )
+        training_run = self.get_run_record(source_model_id, user_id, enforce_user_match=False)
 
         collection = (
             training_run.checkpoints
@@ -508,6 +509,7 @@ class TrainingController:
                 raise UnknownModelException(model_name=model_id)
 
             async def _operation() -> None:
+                assert training_run.backend is not None
                 await training_run.backend.load_state(
                     lora_id=training_run.training_run_id,
                     checkpoint_record=checkpoint,

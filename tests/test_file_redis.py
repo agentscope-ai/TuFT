@@ -47,4 +47,3 @@ def test_file_redis_pipeline_and_scan(tmp_path: Path) -> None:
     assert keys == ["key:1"]
     assert store.get("key:1") == "a"
     assert store.get("key:2") is None
-

@@ -45,12 +45,15 @@ class FutureRecord(BaseModel):
                After restore, if status is ready/failed, event is auto-set.
         operation_type: Type of operation for recovery purposes.
         operation_args: Serializable arguments for the operation.
-        created_at: Timestamp when the future was created.
+        future_id: Globally incrementing sequence number for ordering futures.
+                   Used instead of timestamps to avoid timezone/clock issues.
+        created_at: Timestamp when the future was created (for logging only).
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     request_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    future_id: int = 0
     model_id: str | None = None
     user_id: str | None = None
     queue_state: QueueState = "active"
@@ -80,7 +83,7 @@ class FutureStore:
         self._records: dict[str, FutureRecord] = {}
         self._lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[None]] = set()
-        self._needs_checkpoint_recovery = False
+        self._next_future_id: int = 1
         self._restore_from_redis()
 
     def _build_key(self, request_id: str) -> str:
@@ -91,19 +94,17 @@ class FutureStore:
             return
         store = get_redis_store()
         pattern = store.build_key(self.REDIS_KEY_PREFIX, "*")
-        has_pending = False
         for key in store.keys(pattern):
             record = load_record(key, FutureRecord)
             if record is None:
                 # Record may have expired (TTL) or failed to deserialize
                 # This is expected for expired futures, just skip them
                 continue
-            if record.status == "pending":
-                has_pending = True
-            else:
+            if record.status != "pending":
                 record.event.set()
             self._records[record.request_id] = record
-        self._needs_checkpoint_recovery = has_pending
+            if record.future_id >= self._next_future_id:
+                self._next_future_id = record.future_id + 1
 
     def _save_future(self, request_id: str) -> None:
         if not is_persistence_enabled():
@@ -115,17 +116,20 @@ class FutureStore:
             ttl = get_redis_store().future_ttl
             save_record(self._build_key(request_id), record, ttl_seconds=ttl)
 
+    def _allocate_future_id(self) -> int:
+        """Allocate and return a new globally unique future_id."""
+        future_id = self._next_future_id
+        self._next_future_id += 1
+        return future_id
+
+    def get_current_future_id(self) -> int:
+        """Get the current (latest allocated) future_id, or 0 if none allocated."""
+        return self._next_future_id - 1 if self._next_future_id > 1 else 0
+
     def _delete_future(self, request_id: str) -> None:
         if not is_persistence_enabled():
             return
         get_redis_store().delete(self._build_key(request_id))
-
-    @property
-    def needs_checkpoint_recovery(self) -> bool:
-        return self._needs_checkpoint_recovery
-
-    def clear_recovery_flag(self) -> None:
-        self._needs_checkpoint_recovery = False
 
     def get_pending_futures_by_model(self) -> dict[str | None, list[FutureRecord]]:
         """Group all pending futures by model_id."""
@@ -137,24 +141,22 @@ class FutureStore:
                 by_model[record.model_id].append(record)
 
         for model_id in by_model:
-            by_model[model_id].sort(key=lambda r: r.created_at)
+            by_model[model_id].sort(key=lambda r: r.future_id)
 
         return by_model
 
     def mark_futures_failed_after_checkpoint(
         self,
         model_id: str | None,
-        checkpoint_time: datetime | None,
+        checkpoint_future_id: int | None,
         error_message: str = "Server restored from checkpoint. Please retry.",
     ) -> int:
-        """Mark all pending futures for a model after a checkpoint time as failed."""
+        """Mark all futures for a model after a checkpoint as failed."""
         count = 0
         for record in self._records.values():
-            if record.status != "pending":
-                continue
             if record.model_id != model_id:
                 continue
-            if checkpoint_time is None or record.created_at > checkpoint_time:
+            if checkpoint_future_id is None or record.future_id > checkpoint_future_id:
                 record.status = "failed"
                 record.error = types.RequestFailedResponse(
                     error=error_message,
@@ -207,15 +209,16 @@ class FutureStore:
             operation_type: Type of operation for recovery purposes.
             operation_args: Serializable arguments for recovery.
         """
-        record = FutureRecord(
-            model_id=model_id,
-            user_id=user_id,
-            queue_state=queue_state,
-            operation_type=operation_type,
-            operation_args=operation_args,
-        )
-
         async with self._lock:
+            future_id = self._allocate_future_id()
+            record = FutureRecord(
+                future_id=future_id,
+                model_id=model_id,
+                user_id=user_id,
+                queue_state=queue_state,
+                operation_type=operation_type,
+                operation_args=operation_args,
+            )
             self._store_record(record)
 
         async def _runner() -> None:
@@ -260,10 +263,16 @@ class FutureStore:
         model_id: str | None = None,
     ) -> types.UntypedAPIFuture:
         """Create a future that's already completed."""
-        record = FutureRecord(payload=payload, model_id=model_id, user_id=user_id, status="ready")
-        record.event.set()
-
         async with self._lock:
+            future_id = self._allocate_future_id()
+            record = FutureRecord(
+                future_id=future_id,
+                payload=payload,
+                model_id=model_id,
+                user_id=user_id,
+                status="ready",
+            )
+            record.event.set()
             self._store_record(record)
 
         return types.UntypedAPIFuture(request_id=record.request_id, model_id=model_id)
