@@ -1,0 +1,62 @@
+services:
+  # use 2 nodes to simulate a cluster environment
+  tuft-node-1:
+    image: tuft-unittest:20260122
+    pull_policy: never
+    command: bash -c "source /opt/venv/bin/activate && uv pip install -e .[dev,backend,persistence] && ray start --head --dashboard-host 0.0.0.0 --include-dashboard true --block"
+    environment:
+      - HF_ENDPOINT=https://hf-mirror.com
+      - RAY_ADDRESS=auto
+      - TUFT_CHECKPOINT_DIR=/mnt/checkpoints
+      - TUFT_MODEL1_PATH=/mnt/models/Qwen3-0.6B
+      - TUFT_MODEL2_PATH=/mnt/models/Qwen3-1.7B
+      - VIRTUAL_ENV=/opt/venv
+    working_dir: /workspace
+    networks:
+      - tuft-network
+    volumes:
+      - tuft-volume:/mnt
+      - ../../..:/workspace
+    shm_size: "64G"
+    deploy:
+      resources:
+        reservations:
+          devices:
+          - driver: nvidia
+            device_ids: ['0', '1']
+            capabilities: [gpu]
+
+  tuft-node-2:
+    image: tuft-unittest:20260122
+    pull_policy: never
+    command: bash -c "source /opt/venv/bin/activate && uv pip install -e .[dev] && ray start --address=tuft-node-1:6379 --block"
+    environment:
+      - HF_ENDPOINT=https://hf-mirror.com
+      - TUFT_CHECKPOINT_DIR=/mnt/checkpoints
+      - TUFT_MODEL1_PATH=/mnt/models/Qwen3-0.6B
+      - TUFT_MODEL2_PATH=/mnt/models/Qwen3-1.7B
+      - VIRTUAL_ENV=/opt/venv
+    working_dir: /workspace
+    volumes:
+      - tuft-volume:/mnt
+      - ../../..:/workspace
+    depends_on:
+      - tuft-node-1
+    networks:
+      - tuft-network
+    shm_size: "64G"
+    deploy:
+      resources:
+        reservations:
+          devices:
+          - driver: nvidia
+            device_ids: ['2', '3']
+            capabilities: [gpu]
+
+networks:
+  tuft-network:
+    driver: bridge
+
+volumes:
+  tuft-volume:
+    external: true

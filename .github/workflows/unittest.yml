@@ -1,0 +1,103 @@
+name: unittest
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  checks: write
+  pull-requests: write
+
+jobs:
+  unittest:
+    # only run on pull request
+    if: ${{ github.event.issue.pull_request && (startsWith(github.event.comment.body, '/unittest')) && (github.event.comment.author_association == 'COLLABORATOR' || github.event.comment.author_association == 'MEMBER' || github.event.comment.author_association == 'OWNER') }}
+    runs-on: self-hosted
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        path: tuft-${{ github.run_id }}
+        ref: refs/pull/${{ github.event.issue.number }}/head
+
+    - name: Setup docker compose
+      working-directory: tuft-${{ github.run_id }}/.github/workflows/docker
+      run: |
+        docker compose up -d
+        sleep 15s
+
+    - name: Check ray status
+      working-directory: tuft-${{ github.run_id }}/.github/workflows/docker
+      run: |
+        MAX_RETRIES=20
+        RETRY_INTERVAL=5
+        for i in $(seq 1 $MAX_RETRIES); do
+          if docker compose exec tuft-node-1 bash -c "source /opt/venv/bin/activate && ray status" \
+            && docker compose exec tuft-node-2 bash -c "source /opt/venv/bin/activate && ray status"; then
+            break
+          fi
+          echo "Waiting for ray cluster to be ready... ($i/$MAX_RETRIES)"
+          sleep $RETRY_INTERVAL
+          if [ "$i" -eq "$MAX_RETRIES" ]; then
+            echo "Ray cluster failed to start after $MAX_RETRIES retries."
+            exit 1
+          fi
+        done
+
+    - name: Run unittest
+      working-directory: tuft-${{ github.run_id }}/.github/workflows/docker
+      # set a github env variable to indicate tests were run, so that subsequent steps can check it
+      run: |
+        echo "tests_run=true" >> $GITHUB_ENV
+        docker compose exec tuft-node-1 bash -c "source /opt/venv/bin/activate && pytest tests -v -s --gpu --ctrf report.json"
+
+    - name: Convert report.json time to ms
+      working-directory: tuft-${{ github.run_id }}
+      if: env.tests_run == 'true' || failure()
+      run: |
+        REPORT=report.json
+        if [ -f "$REPORT" ]; then
+          jq '(.results.tests[] | .duration, .start, .stop) |= (. * 1000) | (.results.summary.start, .results.summary.stop) |= (. * 1000)' "$REPORT" > "$REPORT.tmp" && mv "$REPORT.tmp" "$REPORT"
+        fi
+
+    - name: Clean checkpoint dir
+      working-directory: tuft-${{ github.run_id }}/.github/workflows/docker
+      if: always()
+      run: |
+        docker compose exec tuft-node-1 rm -rf /mnt/checkpoints/*
+      continue-on-error: true
+
+    - name: Upload test results
+      if: env.tests_run == 'true' || failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: pytest-results
+        path: tuft-${{ github.run_id }}/report.json
+      continue-on-error: true
+
+    - name: Publish Test Report
+      if: env.tests_run == 'true' || failure()
+      uses: ctrf-io/github-test-reporter@v1
+      with:
+        report-path: tuft-${{ github.run_id }}/report.json
+        summary: true
+        pull-request: false
+        issue: ${{ github.event.issue.number }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      continue-on-error: true
+
+    - name: Remove docker compose
+      working-directory: tuft-${{ github.run_id }}/.github/workflows/docker
+      if: always()
+      run: |
+        docker compose down --remove-orphans
+      continue-on-error: true
+
+    - name: Cleanup workspace
+      if: always()
+      run: |
+        rm -rf tuft-${{ github.run_id }} 2>/dev/null
+      continue-on-error: true
