@@ -35,7 +35,9 @@ We recommend using [uv](https://github.com/astral-sh/uv) for dependency manageme
     # If you want to run the full feature set (e.g., model serving, persistence),
     # please install all dependencies
     uv sync --all-extras
-    uv pip install flash-attn --no-build-isolation
+    ./scripts/install_flash_attn.sh
+    # If you face issues with flash-attn installation, you can try installing it manually:
+    # uv pip install flash-attn --no-build-isolation
     ```
 
 4. Activate environment:
