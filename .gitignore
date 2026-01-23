@@ -67,3 +67,6 @@ uv.lock
 
 # Ignore rdb files
 *.rdb
+
+# Sync history
+.sync_history
