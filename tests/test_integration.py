@@ -267,7 +267,7 @@ def server_endpoint(tmp_path_factory: pytest.TempPathFactory):
     server.should_exit = True
     thread.join(timeout=5)
     client.close()
-    ray.shutdown()
+    ray.shutdown(_exiting_interpreter=True)
 
 
 @pytest.mark.integration
@@ -486,6 +486,7 @@ def test_multi_lora_adapters(server_endpoint: str) -> None:
         assert _normalize_text(cross_text_a) != _normalize_text("olleh dlrow")
     finally:
         service_client.holder.close()
+        ray.shutdown(_exiting_interpreter=True)
 
 
 @pytest.mark.integration
@@ -600,7 +601,7 @@ def test_checkpoint_resume_persistence(tmp_path: Path) -> None:
 
         _log("Restarting server...")
         _stop_server(server, thread, client)
-        ray.shutdown()
+        ray.shutdown(_exiting_interpreter=True)
         ray.init(
             ignore_reinit_error=True,
             runtime_env={"env_vars": {"TRANSFORMERS_NO_TORCHVISION": "1"}},
@@ -655,6 +656,6 @@ def test_checkpoint_resume_persistence(tmp_path: Path) -> None:
             service_client.holder.close()
         if server and thread and client:
             _stop_server(server, thread, client)
-        ray.shutdown()
+        ray.shutdown(_exiting_interpreter=True)
         if file_redis_path.exists():
             file_redis_path.unlink()
