@@ -23,7 +23,6 @@ from tuft.server import create_root_app
 Integration test for checkpoint persistence across server restarts.
 
 How to run this test (GPU required):
-    PYTHONPATH=/mnt/nas/guanming.fh/work/llm-rpc/src:/mnt/nas/guanming.fh/work/llm-rpc/tinker/src \\
     TUFT_TEST_MODEL=/path/dir/qwen/Qwen3-0.6B \\
     pytest -s tests/test_integration_persistence.py::test_checkpoint_resume_persistence --gpu -m gpu
 
@@ -293,4 +292,3 @@ def test_checkpoint_resume_persistence(tmp_path: Path) -> None:
         ray.shutdown()
         if file_redis_path.exists():
             file_redis_path.unlink()
-

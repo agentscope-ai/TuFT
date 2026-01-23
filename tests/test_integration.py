@@ -450,5 +450,3 @@ def test_multi_lora_adapters(server_endpoint: str) -> None:
         assert _normalize_text(cross_text_a) != _normalize_text("olleh dlrow")
     finally:
         service_client.holder.close()
-
-
