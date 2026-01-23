@@ -62,6 +62,10 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                     repetition_penalty=1.0,
                     enable_lora=True,
                     enable_runtime_lora_updating=True,
+                    lora_kwargs={
+                        "max_lora_rank": config.max_lora_rank,
+                        "max_loras": config.max_loras,
+                    },
                 )
             )
         )

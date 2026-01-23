@@ -64,6 +64,10 @@ class ModelConfig:
     seed: int = 42
     min_response_tokens: int = 0
 
+    # default lora setting
+    max_lora_rank: int = 16  # maximum rank for LoRA adapters
+    max_loras: int = 1  # maximum number of LoRA adapters that can be applied simultaneously
+
 
 def load_yaml_config(config_path: Path) -> AppConfig:
     """Loads an AppConfig from a YAML file."""
