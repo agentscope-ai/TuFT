@@ -279,6 +279,30 @@ config = PersistenceConfig.from_redis_url("redis://localhost:6379/0")
 config = PersistenceConfig.from_file_redis("~/.cache/tuft/file_redis.json")
 ```
 
+## Roadmap
+
+### Core Focus: Post-Training for Agent Scenarios
+
+We are focused on exploring post-training methodologies and engineering practices for Agent scenarios, addressing key challenges such as behavior alignment, policy generalization, and reasoning consistency in real-world tasks. Compared to traditional fine-tuning approaches, Agent training involves complex input-output structures, multi-step decision modeling, and dynamic response mechanisms to external feedback, which introduces higher system complexity and optimization challenges. This direction represents both a research frontier and a critical path toward practical intelligent agents.
+
+### Current Challenges and Near-Term Evolution
+
+Facing the practical demands of large-scale Agent training, single-machine setups are increasingly showing limitations in efficiency and scalability. Therefore, our next phase focuses on distributed capabilities and production readiness. We will comprehensively support **multi-machine, multi-GPU training architectures** by integrating mature open-source solutions (such as PeFT, FSDP, vLLM, DeepSpeed, etc.), building efficient gradient aggregation, communication optimization, and fault tolerance mechanisms, maximizing reuse of existing ecosystem achievements to lower the barrier to entry.
+
+Simultaneously, we are advancing **cloud-native deployment capabilities**, enabling seamless integration with mainstream public cloud platforms (such as AWS, Alibaba Cloud, GCP, etc.) and supporting Kubernetes-based orchestration management. We will further explore lightweight runtime modes in Serverless GPU scenarios to adapt to diverse deployment environments.
+
+In terms of observability, we will gradually build a comprehensive monitoring and debugging system: covering real-time log collection, GPU resource monitoring, and training progress tracking at the infrastructure layer; metric visualization (Loss, Throughput, Latency) and anomaly alerts at the analysis layer; and training trajectory recording, sample-level prediction comparison, and intermediate state snapshot export at the debugging layer. Future considerations include integrating ecosystem tools like OpenTelemetry or Prometheus/Grafana to help developers more intuitively understand training processes and identify performance bottlenecks.
+
+### Long-Term Vision: From Training Framework to Closed-Loop Learning Ecosystem
+
+In the long term, our goal is not just to provide a tool that "can run post-training," but to collaborate with other open-source projects to build an **efficient, verifiable, environment-driven Agent learning loop**. We plan to establish standardized interfaces with typical interaction environments (such as WebShop, MiniWob++, BrowserEnv, Voyager, etc.), creating an automated pipeline for "task execution → feedback collection → data generation → model updates."
+
+Building on this foundation, we will explore reinforcement learning signal injection mechanisms based on environment feedback, supporting advanced paradigms such as RLAIF (Reinforcement Learning from AI Feedback) and Error Replay, promoting the evolution of training processes from static data fitting to dynamic experience learning. We also hope to build lightweight simulation environment sandboxes to reduce configuration costs for local experimentation, enabling more developers to quickly validate ideas and participate in collaborative development.
+
+### Open Collaboration: Roadmap as a Starting Point for Dialogue
+
+This roadmap is not a fixed commitment, but rather a starting point for our journey with the community. Every feature design will be gradually implemented through GitHub Issue discussions, RFC proposals, and prototype validation. We sincerely welcome you to propose real-world use cases, performance bottlenecks, or innovative ideas—it is these voices that will collectively define the future of Agent post-training.
+
 ## Development
 
 - Design docs are located in [`docs`](./docs/).
