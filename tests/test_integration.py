@@ -198,14 +198,14 @@ def server_endpoint(tmp_path_factory: pytest.TempPathFactory):
 
     models = []
     for env in model_envs:
-        if env not in os.environ:
+        if env not in os.environ and "TUFT_TEST_MODEL" not in os.environ:
             warnings.warn(
                 f"Skipping GPU integration test because {env} is not set.",
                 RuntimeWarning,
                 stacklevel=2,
             )
             pytest.skip(f"{env} is not set, skipping GPU integration test")
-        models.append(Path(os.environ[env]))
+        models.append(Path(os.environ[env] if env in os.environ else os.environ["TUFT_TEST_MODEL"]))
 
     _log(f"Using model path: {models}")
 
