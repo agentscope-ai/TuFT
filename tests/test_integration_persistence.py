@@ -1,125 +1,38 @@
 from __future__ import annotations
 
 import os
-import socket
-import threading
-import time
 import warnings
 from pathlib import Path
 
-import httpx
 import pytest
 import ray
-import uvicorn
 from transformers import AutoTokenizer
 
 import tinker.types as types
 from tinker.lib.public_interfaces.service_client import ServiceClient
 from tuft.config import AppConfig, ModelConfig
 from tuft.persistence import PersistenceConfig
-from tuft.server import create_root_app
+
+from .helpers import (
+    TEST_PROMPTS,
+    _create_training_data,
+    _find_free_port,
+    _log,
+    _start_server,
+    _stop_server,
+)
 
 """
 Integration test for checkpoint persistence across server restarts.
 
 How to run this test (GPU required):
-    TUFT_TEST_MODEL=/path/dir/qwen/Qwen3-0.6B \\
+    TUFT_TEST_MODEL=/path/to/model/Qwen3-0.6B \\
     pytest -s tests/test_integration_persistence.py::test_checkpoint_resume_persistence --gpu -m gpu
 
 Notes:
     - The test is marked with @pytest.mark.gpu and will be skipped unless --gpu is set.
     - This test is in a separate file to avoid Ray initialization conflicts with other tests.
 """
-
-PIG_LATIN_EXAMPLES = [
-    {"input": "banana split", "output": "anana-bay plit-say"},
-    {"input": "hello world", "output": "ello-hay orld-way"},
-    {"input": "donut shop", "output": "onut-day op-shay"},
-]
-
-TEST_PROMPTS = [
-    "English: banana split\nPig Latin:",
-    "English: hello world\nPig Latin:",
-    "English: donut shop\nPig Latin:",
-]
-
-
-def _find_free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
-
-
-def _log(message: str) -> None:
-    print(message, flush=True)
-
-
-def _start_server(
-    config: AppConfig, port: int
-) -> tuple[uvicorn.Server, threading.Thread, str, httpx.Client]:
-    app = create_root_app(config)
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-
-    base_url = f"http://127.0.0.1:{port}"
-    client = httpx.Client()
-    healthy = False
-    for attempt in range(1, 121):
-        try:
-            response = client.get(f"{base_url}/api/v1/healthz", timeout=1)
-            response.raise_for_status()
-            healthy = True
-            break
-        except httpx.HTTPError:
-            time.sleep(2)
-        if attempt % 5 == 0:
-            _log(f"Waiting for server healthz... attempt {attempt}/120")
-    if not healthy:
-        server.should_exit = True
-        thread.join(timeout=5)
-        client.close()
-        raise RuntimeError("Server failed to start")
-    _log("Server is healthy")
-    return server, thread, base_url, client
-
-
-def _stop_server(server: uvicorn.Server, thread: threading.Thread, client: httpx.Client) -> None:
-    server.should_exit = True
-    thread.join(timeout=5)
-    client.close()
-
-
-def _create_training_data(tokenizer) -> list[types.Datum]:
-    data: list[types.Datum] = []
-    for example in PIG_LATIN_EXAMPLES:
-        prompt = f"English: {example['input']}\nPig Latin:"
-        completion = f" {example['output']}\n"
-        prompt_tokens = tokenizer.encode(prompt, add_special_tokens=True)
-        completion_tokens = tokenizer.encode(completion, add_special_tokens=False)
-
-        tokens = prompt_tokens + completion_tokens
-        input_tokens = tokens[:-1]
-        target_tokens = tokens[1:]
-        weights = [0.0] * (len(prompt_tokens) - 1) + [1.0] * len(completion_tokens)
-
-        datum = types.Datum(
-            model_input=types.ModelInput.from_ints(input_tokens),
-            loss_fn_inputs={
-                "target_tokens": types.TensorData(
-                    data=target_tokens,
-                    dtype="int64",
-                    shape=[len(target_tokens)],
-                ),
-                "weights": types.TensorData(
-                    data=weights,
-                    dtype="float32",
-                    shape=[len(weights)],
-                ),
-            },
-        )
-        data.append(datum)
-    return data
 
 
 @pytest.mark.integration
