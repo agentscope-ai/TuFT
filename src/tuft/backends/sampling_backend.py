@@ -50,7 +50,6 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                 scheduling_strategy=PlacementGroupSchedulingStrategy(
                     placement_group=pg,
                     placement_group_capture_child_tasks=True,
-                    placement_group_bundle_index=0,
                 ),
             )
             .remote(
@@ -70,7 +69,6 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                         "max_lora_rank": config.max_lora_rank,
                         "max_loras": config.max_loras,
                     },
-                    bundle_indices="0",
                 )
             )
         )
