@@ -194,16 +194,20 @@ def server_endpoint(tmp_path_factory: pytest.TempPathFactory):
     os.environ.setdefault("WORLD_SIZE", "1")
     os.environ.setdefault("RANK", "0")
 
-    model_env = os.environ.get("TUFT_TEST_MODEL")
-    if not model_env:
-        warnings.warn(
-            "Skipping GPU integration test because TUFT_TEST_MODEL is not set.",
-            RuntimeWarning,
-            stacklevel=2,
-        )
-        pytest.skip("TUFT_TEST_MODEL is not set, skipping GPU integration test")
-    model_path = Path(model_env)
-    _log(f"Using model path: {model_path}")
+    model_envs = ["TUFT_TEST_MODEL_1", "TUFT_TEST_MODEL_2"]
+
+    models = []
+    for env in model_envs:
+        if env not in os.environ:
+            warnings.warn(
+                f"Skipping GPU integration test because {env} is not set.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            pytest.skip(f"{env} is not set, skipping GPU integration test")
+        models.append(Path(os.environ[env]))
+
+    _log(f"Using model path: {models}")
 
     _log("Starting Ray...")
     ray.init(
@@ -216,10 +220,16 @@ def server_endpoint(tmp_path_factory: pytest.TempPathFactory):
     config.supported_models = [
         ModelConfig(
             model_name="Qwen/Qwen3-0.6B",
-            model_path=model_path,
+            model_path=models[0],
             max_model_len=4096,
             tensor_parallel_size=1,
-        )
+        ),
+        ModelConfig(
+            model_name="Qwen/Qwen3-1.7B",
+            model_path=models[1],
+            max_model_len=4096,
+            tensor_parallel_size=1,
+        ),
     ]
     config.authorized_users = {
         "tml-test-key": "default",
@@ -287,54 +297,79 @@ def test_auth_and_pig_latin_training_flow(server_endpoint: str) -> None:
         base_url=server_endpoint,
         timeout=120,
     )
+    # here we assume the model has the same tokenizer
     tokenizer = AutoTokenizer.from_pretrained(os.environ["TUFT_TEST_MODEL"])
     try:
         capabilities = service_client.get_server_capabilities()
         assert capabilities.supported_models, "server did not report supported models"
-        base_model = capabilities.supported_models[0].model_name or "Qwen/Qwen3-0.6B"
-        _log(f"Base model: {base_model}")
+        assert len(capabilities.supported_models) == 2, "expected 2 supported models"
+        supported_model_names = [m.model_name for m in capabilities.supported_models]
+        base_model_1 = "Qwen/Qwen3-0.6B"
+        base_model_2 = "Qwen/Qwen3-1.7B"
+        assert base_model_1 in supported_model_names, f"{base_model_1} not reported as supported"
+        assert base_model_2 in supported_model_names, f"{base_model_2} not reported as supported"
+
+        _log(f"Base model: {base_model_1}")
 
         _log("Creating LoRA training client...")
-        training_client = service_client.create_lora_training_client(base_model=base_model, rank=8)
+        training_client_1 = service_client.create_lora_training_client(
+            base_model=base_model_1, rank=8
+        )
+        training_client_2 = service_client.create_lora_training_client(
+            base_model=base_model_1, rank=16
+        )
+        training_client_3 = service_client.create_lora_training_client(
+            base_model=base_model_2, rank=16
+        )
+        training_clients = [training_client_1, training_client_2, training_client_3]
         train_data = _create_training_data(tokenizer)
         _log(f"Training samples: {len(train_data)}")
 
         for epoch in range(1, 21):
             if epoch == 1:
                 _log("Running training loop...")
-            training_client.forward_backward(train_data, "cross_entropy").result(timeout=60)
-            training_client.optim_step(types.AdamParams(learning_rate=1e-4)).result(timeout=60)
+            for training_client in training_clients:
+                training_client.forward_backward(train_data, "cross_entropy").result(timeout=60)
+            for training_client in training_clients:
+                training_client.optim_step(types.AdamParams(learning_rate=1e-4)).result(timeout=60)
             if epoch % 5 == 0:
                 _log(f"Training progress: epoch {epoch}/20")
         _log("Training complete")
 
-        sampler_response = training_client.save_weights_for_sampler("sampler-pig-latin").result(
-            timeout=60
-        )
-        assert sampler_response.path.startswith("tinker://")
-        _log(f"Sampler path: {sampler_response.path}")
+        sampling_clients = []
 
-        _log("Creating sampling client from trained LoRA...")
-        sampling_client = service_client.create_sampling_client(model_path=sampler_response.path)
+        for i, training_client in enumerate(training_clients, start=1):
+            _log(f"Saving sampler weights for training client {i}...")
+            sampler_response = training_client.save_weights_for_sampler(
+                f"sampler-client-{i}"
+            ).result(timeout=60)
+            assert sampler_response.path.startswith("tinker://")
+            _log(f"Sampler path for client {i}: {sampler_response.path}")
+            sampling_clients.append(
+                service_client.create_sampling_client(model_path=sampler_response.path)
+            )
 
         _log("Running sampling assertions...")
         for prompt_text, example in zip(TEST_PROMPTS, PIG_LATIN_EXAMPLES, strict=True):
             prompt_tokens = tokenizer.encode(prompt_text, add_special_tokens=True)
-            sample_res = sampling_client.sample(
-                prompt=types.ModelInput.from_ints(prompt_tokens),
-                num_samples=1,
-                sampling_params=types.SamplingParams(
-                    max_tokens=16,
-                    temperature=0.1,
-                    top_p=1.0,
-                    stop=["\n"],
-                ),
-            ).result(timeout=60)
-            assert sample_res.sequences and sample_res.sequences[0].tokens
-            output_text = tokenizer.decode(sample_res.sequences[0].tokens, skip_special_tokens=True)
-            _log(f"Prompt: {prompt_text!r}")
-            _log(f"Output: {output_text!r}")
-            assert _normalize_text(output_text) == _normalize_text(example["output"])
+            for sampling_client in sampling_clients:
+                sample_res = sampling_client.sample(
+                    prompt=types.ModelInput.from_ints(prompt_tokens),
+                    num_samples=1,
+                    sampling_params=types.SamplingParams(
+                        max_tokens=16,
+                        temperature=0.1,
+                        top_p=1.0,
+                        stop=["\n"],
+                    ),
+                ).result(timeout=60)
+                assert sample_res.sequences and sample_res.sequences[0].tokens
+                output_text = tokenizer.decode(
+                    sample_res.sequences[0].tokens, skip_special_tokens=True
+                )
+                _log(f"Prompt: {prompt_text!r}")
+                _log(f"Output: {output_text!r}")
+                assert _normalize_text(output_text) == _normalize_text(example["output"])
     finally:
         service_client.holder.close()
 
