@@ -11,7 +11,7 @@ services:
       - TUFT_TEST_MODEL=/mnt/models/Qwen3-0.6B
       - TUFT_TEST_MODEL_1=/mnt/models/Qwen3-0.6B
       - TUFT_TEST_MODEL_2=/mnt/models/Qwen3-1.7B
-      - TEST_REDIS_URL=tuft-redis:6379
+      - TEST_REDIS_URL=redis://tuft-redis:6379
       - VIRTUAL_ENV=/opt/venv
     working_dir: /workspace
     networks:
@@ -38,7 +38,7 @@ services:
       - TUFT_TEST_MODEL=/mnt/models/Qwen3-0.6B
       - TUFT_TEST_MODEL_1=/mnt/models/Qwen3-0.6B
       - TUFT_TEST_MODEL_2=/mnt/models/Qwen3-1.7B
-      - TEST_REDIS_URL=tuft-redis:6379
+      - TEST_REDIS_URL=redis://tuft-redis:6379
       - VIRTUAL_ENV=/opt/venv
     working_dir: /workspace
     volumes:

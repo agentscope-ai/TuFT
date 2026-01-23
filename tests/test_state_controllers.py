@@ -24,7 +24,7 @@ def ray_cluster(request):
 
         ray.init(ignore_reinit_error=True)
         yield
-        ray.shutdown()
+        ray.shutdown(_exiting_interpreter=True)
         return
     yield
 

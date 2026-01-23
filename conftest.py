@@ -184,3 +184,7 @@ def pytest_collection_modifyitems(config, items):
         for item in items:
             if "gpu" in item.keywords:
                 item.add_marker(skip_gpu)
+
+
+def pytest_runtest_logstart(location):
+    print(f"\n[pytest] Running {location[0]}:{location[1]}:{location[2]}")
