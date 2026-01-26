@@ -9,7 +9,10 @@ LossFnType: TypeAlias = Callable[
 
 LOSS_FN = {
     "cross_entropy": "tuft.loss_fn.cross_entropy.cross_entropy_loss",
+    "importance_sampling": "tuft.loss_fn.importance_sampling.importance_sampling_loss",
     "ppo": "tuft.loss_fn.ppo.ppo_loss",
+    "cispo": "tuft.loss_fn.cispo.cispo_loss",
+    "dro": "tuft.loss_fn.dro.dro_loss",
 }
 
 
