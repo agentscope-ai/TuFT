@@ -283,25 +283,36 @@ config = PersistenceConfig.from_file_redis("~/.cache/tuft/file_redis.json")
 
 ### Core Focus: Post-Training for Agent Scenarios
 
-We are focused on exploring post-training methodologies and engineering practices for Agent scenarios, addressing key challenges such as behavior alignment, policy generalization, and reasoning consistency in real-world tasks. Compared to traditional fine-tuning approaches, Agent training involves complex input-output structures, multi-step decision modeling, and dynamic response mechanisms to external feedback, which introduces higher system complexity and optimization challenges. This direction represents both a research frontier and a critical path toward practical intelligent agents.
+We focus on post-training for agentic models. The rollout phase in RL training involves reasoning, multi-turn conversations, and tool use, which tends to be asynchronous relative to the training phase. We aim to improve the throughput and resource efficiency of the overall system, building tools that are easy to use and integrate into existing workflows.
 
-### Current Challenges and Near-Term Evolution
+### Architecture & Positioning
 
-Facing the practical demands of large-scale Agent training, single-machine setups are increasingly showing limitations in efficiency and scalability. Therefore, our next phase focuses on distributed capabilities and production readiness. We will comprehensively support **multi-machine, multi-GPU training architectures** by integrating mature open-source solutions (such as PeFT, FSDP, vLLM, DeepSpeed, etc.), building efficient gradient aggregation, communication optimization, and fault tolerance mechanisms, maximizing reuse of existing ecosystem achievements to lower the barrier to entry.
+- **Horizontal platform**: Not a vertically integrated fine-tuning solution, but a flexible platform that plugs into different training frameworks and compute infrastructures
+- **Code-first API**: Connects agentic training workflows with compute infrastructure through programmatic interfaces
+- **Layer in AI stack**: Sits above the infrastructure layer (Kubernetes, cloud platforms, GPU clusters), integrating with training frameworks (PeFT, FSDP, vLLM, DeepSpeed) as implementation dependencies
+- **Integration approach**: Works with existing ecosystems rather than replacing them
 
-Simultaneously, we are advancing **cloud-native deployment capabilities**, enabling seamless integration with mainstream public cloud platforms (such as AWS, Alibaba Cloud, GCP, etc.) and supporting Kubernetes-based orchestration management. We will further explore lightweight runtime modes in Serverless GPU scenarios to adapt to diverse deployment environments.
+### Near-Term (3 months)
 
-In terms of observability, we will gradually build a comprehensive monitoring and debugging system: covering real-time log collection, GPU resource monitoring, and training progress tracking at the infrastructure layer; metric visualization (Loss, Throughput, Latency) and anomaly alerts at the analysis layer; and training trajectory recording, sample-level prediction comparison, and intermediate state snapshot export at the debugging layer. Future considerations include integrating ecosystem tools like OpenTelemetry or Prometheus/Grafana to help developers more intuitively understand training processes and identify performance bottlenecks.
+- **Multi-machine, multi-GPU training**: Support distributed architectures using PeFT, FSDP, vLLM, DeepSpeed, etc.
+- **Cloud-native deployment**: Integration with AWS, Alibaba Cloud, GCP, and Kubernetes orchestration
+- **Observability**: Monitoring system with real-time logs, GPU metrics, training progress, and debugging tools
+- **Serverless GPU**: Lightweight runtime modes for diverse deployment scenarios, with multi-user and multi-tenant GPU resource sharing to improve utilization efficiency
 
-### Long-Term Vision: From Training Framework to Closed-Loop Learning Ecosystem
+### Long-Term (6 months)
 
-In the long term, our goal is not just to provide a tool that "can run post-training," but to collaborate with other open-source projects to build an **efficient, verifiable, environment-driven Agent learning loop**. We plan to establish standardized interfaces with typical interaction environments (such as WebShop, MiniWob++, BrowserEnv, Voyager, etc.), creating an automated pipeline for "task execution → feedback collection → data generation → model updates."
+- **Environment-driven learning loop**: Standardized interfaces with WebShop, MiniWob++, BrowserEnv, Voyager
+- **Automated pipeline**: Task execution → feedback collection → data generation → model updates
+- **Advanced RL paradigms**: RLAIF, Error Replay, and environment feedback mechanisms
+- **Simulation sandboxes**: Lightweight local environments for rapid experimentation
 
-Building on this foundation, we will explore reinforcement learning signal injection mechanisms based on environment feedback, supporting advanced paradigms such as RLAIF (Reinforcement Learning from AI Feedback) and Error Replay, promoting the evolution of training processes from static data fitting to dynamic experience learning. We also hope to build lightweight simulation environment sandboxes to reduce configuration costs for local experimentation, enabling more developers to quickly validate ideas and participate in collaborative development.
+### Open Collaboration: We are Looking for Collaborators
 
-### Open Collaboration: Roadmap as a Starting Point for Dialogue
+This roadmap is not fixed, but rather a starting point for our journey with the open source community. Every feature design will be implemented through GitHub Issue discussions, PRs, and prototype validation. We sincerely welcome you to propose real-world use cases, performance bottlenecks, or innovative ideas—it is these voices that will collectively define the future of Agent post-training.
 
-This roadmap is not a fixed commitment, but rather a starting point for our journey with the community. Every feature design will be gradually implemented through GitHub Issue discussions, RFC proposals, and prototype validation. We sincerely welcome you to propose real-world use cases, performance bottlenecks, or innovative ideas—it is these voices that will collectively define the future of Agent post-training.
+We welcome contributions from the community! Join us on:
+- **DingTalk Group**: 163525013125
+- **Discord**: 678910
 
 ## Development
 
