@@ -47,10 +47,11 @@ def _init_telemetry(config: AppConfig, log_level: str) -> None:
 
     # Configure root logger level to ensure logs flow to OTel
     numeric_level = getattr(logging, log_level.upper(), logging.INFO)
-    logging.basicConfig(level=numeric_level)
 
     if not config.telemetry.enabled:
+        logging.basicConfig(level=numeric_level)
         return
+
     try:
         from .telemetry import TelemetryConfig as OTelConfig
         from .telemetry import init_telemetry
