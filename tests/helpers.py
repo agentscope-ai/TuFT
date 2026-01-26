@@ -22,6 +22,16 @@ PIG_LATIN_EXAMPLES = [
     {"input": "donut shop", "output": "onut-day op-shay"},
 ]
 
+PIG_LATIN_EXAMPLES_EXTENDED = [
+    {"input": "banana split", "output": "anana-bay plit-say"},
+    {"input": "quantum physics", "output": "uantum-qay ysics-phay"},
+    {"input": "donut shop", "output": "onut-day op-shay"},
+    {"input": "pickle jar", "output": "ickle-pay ar-jay"},
+    {"input": "space exploration", "output": "ace-spay exploration-way"},
+    {"input": "rubber duck", "output": "ubber-ray uck-day"},
+    {"input": "coding wizard", "output": "oding-cay izard-way"},
+]
+
 TEST_PROMPTS = [
     "English: banana split\nPig Latin:",
     "English: hello world\nPig Latin:",
