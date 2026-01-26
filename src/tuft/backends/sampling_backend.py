@@ -41,13 +41,16 @@ class VLLMSamplingBackend(BaseSamplingBackend):
             [{"CPU": 1, "GPU": 1} for _ in range(config.tensor_parallel_size)],
             strategy="PACK",
         )
-        ray.get(pg.ready())
+        ray.get(pg.ready(), timeout=10)
         return (
             ray.remote(vLLMRolloutModel)
             .options(
                 name="sampling_model_" + self.base_model,
                 num_gpus=0 if config.tensor_parallel_size > 1 else 1,
-                scheduling_strategy=PlacementGroupSchedulingStrategy(placement_group=pg),
+                scheduling_strategy=PlacementGroupSchedulingStrategy(
+                    placement_group=pg,
+                    placement_group_capture_child_tasks=True,
+                ),
             )
             .remote(
                 config=InferenceModelConfig(
@@ -62,6 +65,10 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                     repetition_penalty=1.0,
                     enable_lora=True,
                     enable_runtime_lora_updating=True,
+                    lora_kwargs={
+                        "max_lora_rank": config.max_lora_rank,
+                        "max_loras": config.max_loras,
+                    },
                 )
             )
         )

@@ -15,7 +15,7 @@ def ray_cluster():
 
     ray.init(ignore_reinit_error=True)
     yield
-    ray.shutdown()
+    ray.shutdown(_exiting_interpreter=True)
 
 
 @pytest.mark.gpu

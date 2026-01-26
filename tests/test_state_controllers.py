@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import os
 from pathlib import Path
 
@@ -24,7 +25,8 @@ def ray_cluster(request):
 
         ray.init(ignore_reinit_error=True)
         yield
-        ray.shutdown()
+        ray.shutdown(_exiting_interpreter=True)
+        gc.collect()
         return
     yield
 

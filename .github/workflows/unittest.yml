@@ -51,7 +51,7 @@ jobs:
       # set a github env variable to indicate tests were run, so that subsequent steps can check it
       run: |
         echo "tests_run=true" >> $GITHUB_ENV
-        docker compose exec tuft-node-1 bash -c "source /opt/venv/bin/activate && pytest tests -v -s --gpu --ctrf report.json"
+        docker compose exec tuft-node-1 bash -c "source /opt/venv/bin/activate && pytest tests -v -s --gpu --basetemp /mnt/checkpoints --ctrf report.json"
 
     - name: Convert report.json time to ms
       working-directory: tuft-${{ github.run_id }}

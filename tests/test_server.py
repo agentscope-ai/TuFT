@@ -78,7 +78,7 @@ def server_endpoint(tmp_path_factory: pytest.TempPathFactory, request):
     server.should_exit = True
     thread.join(timeout=5)
     client.close()
-    ray.shutdown()
+    ray.shutdown(_exiting_interpreter=True)
     # Restore TINKER_API_KEY if it was set
     if saved_api_key is not None:
         os.environ["TINKER_API_KEY"] = saved_api_key
