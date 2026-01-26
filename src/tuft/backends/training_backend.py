@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from dataclasses import dataclass, field
 from typing import Sequence
 
@@ -8,6 +9,10 @@ from tinker import types
 from tuft.backends.base_backend import BaseTrainingBackend
 from tuft.checkpoints import CheckpointRecord
 from tuft.config import ModelConfig
+from tuft.telemetry.tracing import get_tracer, inject_context
+
+logger = logging.getLogger(__name__)
+_tracer = get_tracer("tuft.training_backend")
 
 
 class HFTrainingBackend(BaseTrainingBackend):
@@ -17,6 +22,7 @@ class HFTrainingBackend(BaseTrainingBackend):
         from .hf_training_model import HFTrainingModel
 
         self.config = config
+        logger.info("Ray actor created: HFTrainingModel(%s)", config.model_name)
         self.model = HFTrainingModel.get_actor(config)
 
     async def async_init(self) -> None:
@@ -24,10 +30,18 @@ class HFTrainingBackend(BaseTrainingBackend):
 
     async def create_adapter(self, lora_id: str, lora_config: types.LoraConfig) -> None:
         """Create a LoRA adapter with the given ID and configuration."""
-        await self.model.create_adapter.remote(lora_id, lora_config)
+        with _tracer.start_as_current_span("training_backend.create_adapter") as span:
+            span.set_attribute("tuft.lora_id", lora_id)
+            span.set_attribute("tuft.lora_rank", lora_config.rank)
+            # Inject trace context for Ray actor
+            trace_context: dict[str, str] = {}
+            inject_context(trace_context)
+            await self.model.create_adapter.remote(lora_id, lora_config, trace_context)
 
     async def remove_adapter(self, lora_id: str) -> None:
-        await self.model.remove_adapter.remote(lora_id)
+        with _tracer.start_as_current_span("training_backend.remove_adapter") as span:
+            span.set_attribute("tuft.lora_id", lora_id)
+            await self.model.remove_adapter.remote(lora_id)
 
     async def forward(
         self,
@@ -49,13 +63,22 @@ class HFTrainingBackend(BaseTrainingBackend):
         Returns:
             ForwardBackwardOutput: The output of the forward (and backward) pass.
         """
-        return await self.model.forward.remote(
-            data=data,
-            lora_id=lora_id,
-            loss_fn=loss_fn,
-            loss_fn_config=loss_fn_config,
-            backward=backward,
-        )
+        span_name = "training_backend.forward_backward" if backward else "training_backend.forward"
+        with _tracer.start_as_current_span(span_name) as span:
+            span.set_attribute("tuft.lora_id", lora_id)
+            span.set_attribute("tuft.backward", backward)
+            span.set_attribute("tuft.data_count", len(data))
+            # Inject trace context for Ray actor
+            trace_context: dict[str, str] = {}
+            inject_context(trace_context)
+            return await self.model.forward.remote(
+                data=data,
+                lora_id=lora_id,
+                loss_fn=loss_fn,
+                loss_fn_config=loss_fn_config,
+                backward=backward,
+                trace_context=trace_context,
+            )
 
     async def optim_step(
         self, adam_params: types.AdamParams, lora_id: str
@@ -68,27 +91,46 @@ class HFTrainingBackend(BaseTrainingBackend):
         Returns:
             OptimStepResponse: The response containing optimization metrics.
         """
-        return await self.model.optim_step.remote(adam_params, lora_id)
+        with _tracer.start_as_current_span("training_backend.optim_step") as span:
+            span.set_attribute("tuft.lora_id", lora_id)
+            # Inject trace context for Ray actor
+            trace_context: dict[str, str] = {}
+            inject_context(trace_context)
+            return await self.model.optim_step.remote(adam_params, lora_id, trace_context)
 
     async def save_state(
         self, lora_id: str, checkpoint_record: "CheckpointRecord", optimizer: bool
     ) -> None:
         """Save the state of the specified LoRA adapter."""
-        await self.model.save_state.remote(
-            lora_id=lora_id,
-            checkpoint_record=checkpoint_record,
-            optimizer=optimizer,
-        )
+        with _tracer.start_as_current_span("training_backend.save_state") as span:
+            span.set_attribute("tuft.lora_id", lora_id)
+            span.set_attribute("tuft.optimizer", optimizer)
+            # Inject trace context for Ray actor
+            trace_context: dict[str, str] = {}
+            inject_context(trace_context)
+            await self.model.save_state.remote(
+                lora_id=lora_id,
+                checkpoint_record=checkpoint_record,
+                optimizer=optimizer,
+                trace_context=trace_context,
+            )
 
     async def load_state(
         self, lora_id: str, checkpoint_record: "CheckpointRecord", optimizer: bool
     ) -> None:
         """Load the state of the specified LoRA adapter from the given path."""
-        await self.model.load_state.remote(
-            lora_id=lora_id,
-            checkpoint_record=checkpoint_record,
-            optimizer=optimizer,
-        )
+        with _tracer.start_as_current_span("training_backend.load_state") as span:
+            span.set_attribute("tuft.lora_id", lora_id)
+            span.set_attribute("tuft.optimizer", optimizer)
+            # Inject trace context for Ray actor
+            trace_context: dict[str, str] = {}
+            inject_context(trace_context)
+            await self.model.load_state.remote(
+                lora_id=lora_id,
+                checkpoint_record=checkpoint_record,
+                optimizer=optimizer,
+                trace_context=trace_context,
+            )
 
 
 @dataclass

@@ -8,9 +8,11 @@ from typing import Optional
 from tinker import types
 
 from ..config import ModelConfig
+from ..telemetry.tracing import get_tracer
 from .base_backend import BaseSamplingBackend
 
 logger = getLogger(__name__)
+_tracer = get_tracer("tuft.sampling_backend")
 
 
 class VLLMSamplingBackend(BaseSamplingBackend):
@@ -88,35 +90,45 @@ class VLLMSamplingBackend(BaseSamplingBackend):
         lora_id: Optional[str] = None,
     ) -> types.SampleResponse:
         """Sampling using vLLM engine."""
-        async with self._lock:
-            if lora_id is not None and lora_id not in self.lora_adapters:
-                raise ValueError(f"LoRA adapter {lora_id} not found in backend.")
-            lora_request = self.lora_adapters[lora_id] if lora_id is not None else None
-        return await self.engine.sample.remote(
-            prompt=prompt,
-            num_samples=num_samples,
-            sampling_params=sampling_params,
-            include_prompt_logprobs=include_prompt_logprobs,
-            topk_prompt_logprobs=topk_prompt_logprobs,
-            lora_request=lora_request,
-        )
+        with _tracer.start_as_current_span("sampling_backend.sample") as span:
+            span.set_attribute("tuft.num_samples", num_samples)
+            span.set_attribute("tuft.has_lora", lora_id is not None)
+
+            async with self._lock:
+                if lora_id is not None and lora_id not in self.lora_adapters:
+                    raise ValueError(f"LoRA adapter {lora_id} not found in backend.")
+                lora_request = self.lora_adapters[lora_id] if lora_id is not None else None
+            return await self.engine.sample.remote(
+                prompt=prompt,
+                num_samples=num_samples,
+                sampling_params=sampling_params,
+                include_prompt_logprobs=include_prompt_logprobs,
+                topk_prompt_logprobs=topk_prompt_logprobs,
+                lora_request=lora_request,
+            )
 
     async def add_adapter(self, lora_id: str, adapter_path: Path) -> None:
         from vllm.lora.request import LoRARequest
 
-        async with self._lock:
-            self._counter += 1
-            self.lora_adapters[lora_id] = LoRARequest(
-                lora_int_id=self._counter + 1,
-                lora_name=lora_id,
-                lora_path=str(adapter_path),
-            )
+        with _tracer.start_as_current_span("sampling_backend.add_adapter") as span:
+            span.set_attribute("tuft.lora_id", lora_id)
+
+            async with self._lock:
+                self._counter += 1
+                self.lora_adapters[lora_id] = LoRARequest(
+                    lora_int_id=self._counter + 1,
+                    lora_name=lora_id,
+                    lora_path=str(adapter_path),
+                )
 
     async def remove_adapter(self, lora_id: str) -> None:
-        async with self._lock:
-            if lora_id in self.lora_adapters:
-                del self.lora_adapters[lora_id]
-        # TODO: unload LoRA from vLLM engine
+        with _tracer.start_as_current_span("sampling_backend.remove_adapter") as span:
+            span.set_attribute("tuft.lora_id", lora_id)
+
+            async with self._lock:
+                if lora_id in self.lora_adapters:
+                    del self.lora_adapters[lora_id]
+            # TODO: unload LoRA from vLLM engine
 
 
 class DummySamplingBackend(BaseSamplingBackend):

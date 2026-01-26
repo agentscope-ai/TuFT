@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,8 +31,11 @@ from .persistence import (
     load_record,
     save_record,
 )
+from .telemetry.metrics import get_metrics
+from .telemetry.tracing import get_tracer
 
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("tuft.sampling_controller")
 
 
 def _now() -> datetime:
@@ -168,51 +172,61 @@ class SamplingController:
         adapter_path: Path | None = None
         sampling_session_id = str(uuid.uuid4())
 
-        if model_path:
-            # model_path should have higher priority than base_model
-            try:
-                parsed_checkpoint = CheckpointRecord.from_tinker_path(
-                    model_path, self.config.checkpoint_dir
+        with _tracer.start_as_current_span("sampling_controller.create_sampling_session") as span:
+            span.set_attribute("tuft.session_id", session_id)
+            span.set_attribute("tuft.sampling_session_id", sampling_session_id)
+            if base_model:
+                span.set_attribute("tuft.base_model", base_model)
+
+            if model_path:
+                # model_path should have higher priority than base_model
+                try:
+                    parsed_checkpoint = CheckpointRecord.from_tinker_path(
+                        model_path, self.config.checkpoint_dir
+                    )
+                except FileNotFoundError as exc:
+                    raise CheckpointNotFoundException(checkpoint_id=model_path) from exc
+                if not parsed_checkpoint.path.exists():
+                    raise CheckpointNotFoundException(
+                        checkpoint_id=parsed_checkpoint.checkpoint_id,
+                    )
+                metadata = parsed_checkpoint.metadata
+                base_model_ref = metadata.base_model
+                is_public = parsed_checkpoint.public
+                model_owner = parsed_checkpoint.owner_name
+                if not is_public and model_owner != user_id:
+                    raise CheckpointAccessDeniedException(
+                        checkpoint_id=parsed_checkpoint.checkpoint_id,
+                    )
+                if base_model_ref not in self._base_backends:
+                    raise UnknownModelException(model_name=base_model_ref)
+                adapter_path = parsed_checkpoint.adapter_path
+                sampling_backend = self._base_backends[base_model_ref]
+                await sampling_backend.add_adapter(
+                    lora_id=sampling_session_id, adapter_path=adapter_path
                 )
-            except FileNotFoundError as exc:
-                raise CheckpointNotFoundException(checkpoint_id=model_path) from exc
-            if not parsed_checkpoint.path.exists():
-                raise CheckpointNotFoundException(
-                    checkpoint_id=parsed_checkpoint.checkpoint_id,
-                )
-            metadata = parsed_checkpoint.metadata
-            base_model_ref = metadata.base_model
-            is_public = parsed_checkpoint.public
-            model_owner = parsed_checkpoint.owner_name
-            if not is_public and model_owner != user_id:
-                raise CheckpointAccessDeniedException(
-                    checkpoint_id=parsed_checkpoint.checkpoint_id,
-                )
-            if base_model_ref not in self._base_backends:
-                raise UnknownModelException(model_name=base_model_ref)
-            adapter_path = parsed_checkpoint.adapter_path
-            sampling_backend = self._base_backends[base_model_ref]
-            await sampling_backend.add_adapter(
-                lora_id=sampling_session_id, adapter_path=adapter_path
+                # TODO: remove adapter when session is deleted
+            elif base_model:
+                base_model_ref = base_model
+                if base_model_ref not in self._base_backends:
+                    raise UnknownModelException(model_name=base_model_ref)
+            else:
+                raise UnknownModelException(model_name="None")
+            self.sampling_sessions[sampling_session_id] = SamplingSessionRecord(
+                sampling_session_id=sampling_session_id,
+                session_id=session_id,
+                user_id=user_id,
+                model_id=sampling_session_id,
+                base_model=base_model_ref,
+                model_path=str(adapter_path) if adapter_path else None,
+                session_seq_id=session_seq_id,
             )
-            # TODO: remove adapter when session is deleted
-        elif base_model:
-            base_model_ref = base_model
-            if base_model_ref not in self._base_backends:
-                raise UnknownModelException(model_name=base_model_ref)
-        else:
-            raise UnknownModelException(model_name="None")
-        self.sampling_sessions[sampling_session_id] = SamplingSessionRecord(
-            sampling_session_id=sampling_session_id,
-            session_id=session_id,
-            user_id=user_id,
-            model_id=sampling_session_id,
-            base_model=base_model_ref,
-            model_path=str(adapter_path) if adapter_path else None,
-            session_seq_id=session_seq_id,
-        )
-        self._save_session(sampling_session_id)
-        return sampling_session_id
+            self._save_session(sampling_session_id)
+
+            # Update metrics
+            get_metrics().sampling_sessions_active.add(1, {"base_model": base_model_ref or ""})
+            logger.info("Sampling session created: %s", sampling_session_id)
+            return sampling_session_id
 
     def _hash_prompt(self, prompt: types.ModelInput) -> str:
         tokens = ",".join(str(token) for token in prompt.to_ints())
@@ -266,26 +280,62 @@ class SamplingController:
         request: types.SampleRequest,
         user_id: str,
     ) -> types.SampleResponse:
-        backend, lora_id = self._resolve_backend(request, user_id=user_id)
-        prompt = request.prompt
-        sampling_params = request.sampling_params
-        num_samples = request.num_samples
-        include_prompt_logprobs = bool(request.prompt_logprobs)
-        topk_prompt_logprobs = request.topk_prompt_logprobs or 0
-        return await backend.sample(
-            prompt=prompt,
-            num_samples=num_samples,
-            sampling_params=sampling_params,
-            include_prompt_logprobs=include_prompt_logprobs,
-            topk_prompt_logprobs=topk_prompt_logprobs,
-            lora_id=lora_id,
-        )
+        with _tracer.start_as_current_span("sampling_controller.run_sample") as span:
+            sampling_session_id = request.sampling_session_id or ""
+            span.set_attribute("tuft.sampling_session_id", sampling_session_id)
+            # Get session_id from sampling session record if available
+            if request.sampling_session_id:
+                record = self.sampling_sessions.get(request.sampling_session_id)
+                if record:
+                    span.set_attribute("tuft.session_id", record.session_id)
+            span.set_attribute("tuft.num_samples", request.num_samples)
+
+            logger.info("Sampling begin for %s", sampling_session_id)
+            start_time = time.perf_counter()
+
+            backend, lora_id = self._resolve_backend(request, user_id=user_id)
+            prompt = request.prompt
+            sampling_params = request.sampling_params
+            num_samples = request.num_samples
+            include_prompt_logprobs = bool(request.prompt_logprobs)
+            topk_prompt_logprobs = request.topk_prompt_logprobs or 0
+
+            response = await backend.sample(
+                prompt=prompt,
+                num_samples=num_samples,
+                sampling_params=sampling_params,
+                include_prompt_logprobs=include_prompt_logprobs,
+                topk_prompt_logprobs=topk_prompt_logprobs,
+                lora_id=lora_id,
+            )
+
+            duration = time.perf_counter() - start_time
+            logger.info("Sampling completed for %s", sampling_session_id)
+
+            # Get base_model for metrics
+            record = self.sampling_sessions.get(request.sampling_session_id or "")
+            base_model = record.base_model if record else ""
+
+            # Update metrics
+            metrics = get_metrics()
+            metrics.sampling_requests.add(1, {"base_model": base_model})
+            metrics.sampling_duration.record(duration, {"base_model": base_model})
+
+            # Record output tokens for each sequence
+            for seq in response.sequences:
+                if seq.tokens:
+                    metrics.sampling_output_tokens.record(len(seq.tokens))
+
+            return response
 
     async def evict_model(self, model_id: str, user_id: str) -> None:
         for sampling_id, record in list(self.sampling_sessions.items()):
             if record.model_id == model_id and record.user_id == user_id:
+                base_model = record.base_model
                 del self.sampling_sessions[sampling_id]
                 self._delete_session(sampling_id)
+                # Update metrics
+                get_metrics().sampling_sessions_active.add(-1, {"base_model": base_model or ""})
 
     def get_sampler_info(
         self, sampler_id: str, user_id: str, default_base_model: str

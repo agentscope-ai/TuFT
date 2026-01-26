@@ -31,8 +31,11 @@ from .persistence import (
     save_record,
     save_records_atomic,
 )
+from .telemetry.metrics import get_metrics
+from .telemetry.tracing import get_tracer
 
 logger = logging.getLogger(__name__)
+_tracer = get_tracer("tuft.training_controller")
 
 T = TypeVar("T")
 
@@ -285,22 +288,33 @@ class TrainingController:
         user_metadata: dict[str, str] | None,
     ) -> TrainingRunRecord:
         model_id = str(uuid.uuid4())
-        if base_model not in self.training_backends:
-            raise UnknownModelException(model_name=base_model)
-        backend = self.training_backends[base_model]
-        record = TrainingRunRecord(
-            training_run_id=model_id,
-            base_model=base_model,
-            lora_rank=lora_config.rank,
-            session_id=session_id,
-            model_owner=model_owner,
-            user_metadata=user_metadata,
-            backend=backend,
-        )
-        await backend.create_adapter(model_id, lora_config)
-        self.training_runs[model_id] = record
-        self._save_training_run(model_id)
-        return record
+        with _tracer.start_as_current_span("training_controller.create_model") as span:
+            span.set_attribute("tuft.training_run_id", model_id)
+            span.set_attribute("tuft.session_id", session_id)
+            span.set_attribute("tuft.base_model", base_model)
+            span.set_attribute("tuft.lora_rank", lora_config.rank)
+
+            logger.info("Creating model %s", model_id)
+
+            if base_model not in self.training_backends:
+                raise UnknownModelException(model_name=base_model)
+            backend = self.training_backends[base_model]
+            record = TrainingRunRecord(
+                training_run_id=model_id,
+                base_model=base_model,
+                lora_rank=lora_config.rank,
+                session_id=session_id,
+                model_owner=model_owner,
+                user_metadata=user_metadata,
+                backend=backend,
+            )
+            await backend.create_adapter(model_id, lora_config)
+            self.training_runs[model_id] = record
+            self._save_training_run(model_id)
+
+            # Update metrics
+            get_metrics().training_models_active.add(1, {"base_model": base_model})
+            return record
 
     def get_run_record(
         self,
@@ -340,18 +354,34 @@ class TrainingController:
         record = self.get_run_record(model_id, user_id)
         self.update_activity(model_id, user_id)
 
-        async def _operation() -> types.ForwardBackwardOutput:
-            if record.backend is None:
-                raise UnknownModelException(model_name=model_id)
-            return await record.backend.forward(
-                data,
-                lora_id=model_id,
-                loss_fn=loss_fn,
-                loss_fn_config=loss_fn_config,
-                backward=backward,
-            )
+        span_name = (
+            "training_controller.run_forward_backward"
+            if backward
+            else "training_controller.run_forward"
+        )
+        with _tracer.start_as_current_span(span_name) as span:
+            span.set_attribute("tuft.training_run_id", model_id)
+            span.set_attribute("tuft.session_id", record.session_id)
+            span.set_attribute("tuft.backward", backward)
+            span.set_attribute("tuft.data_count", len(data))
+            span.set_attribute("tuft.loss_fn", loss_fn)
 
-        return await self._with_sequence_guard(record, seq_id, _operation)
+            logger.info("Forward/backward begin for %s", model_id)
+
+            async def _operation() -> types.ForwardBackwardOutput:
+                if record.backend is None:
+                    raise UnknownModelException(model_name=model_id)
+                result = await record.backend.forward(
+                    data,
+                    lora_id=model_id,
+                    loss_fn=loss_fn,
+                    loss_fn_config=loss_fn_config,
+                    backward=backward,
+                )
+                logger.info("Forward/backward completed for %s", model_id)
+                return result
+
+            return await self._with_sequence_guard(record, seq_id, _operation)
 
     async def run_optim_step(
         self, model_id: str, user_id: str, params: types.AdamParams, seq_id: int | None
@@ -359,12 +389,21 @@ class TrainingController:
         record = self.get_run_record(model_id, user_id)
         self.update_activity(model_id, user_id)
 
-        async def _operation() -> types.OptimStepResponse:
-            if record.backend is None:
-                raise UnknownModelException(model_name=model_id)
-            return await record.backend.optim_step(adam_params=params, lora_id=model_id)
+        with _tracer.start_as_current_span("training_controller.run_optim_step") as span:
+            span.set_attribute("tuft.training_run_id", model_id)
+            span.set_attribute("tuft.session_id", record.session_id)
+            span.set_attribute("tuft.learning_rate", params.learning_rate)
 
-        return await self._with_sequence_guard(record, seq_id, _operation)
+            logger.info("Optimizer step begin for %s", model_id)
+
+            async def _operation() -> types.OptimStepResponse:
+                if record.backend is None:
+                    raise UnknownModelException(model_name=model_id)
+                result = await record.backend.optim_step(adam_params=params, lora_id=model_id)
+                logger.info("Optimizer step completed for %s", model_id)
+                return result
+
+            return await self._with_sequence_guard(record, seq_id, _operation)
 
     async def unload_model(self, model_id: str, user_id: str) -> None:
         # TODO: Ensure that all created training runs can be unloaded to reduce
@@ -374,10 +413,14 @@ class TrainingController:
         record = self.training_runs[model_id]
         if record.model_owner != user_id:
             raise UserMismatchException()
+        base_model = record.base_model
         if record.backend is not None:
             await record.backend.remove_adapter(model_id)
         del self.training_runs[model_id]
         self._delete_training_run(model_id)
+
+        # Update metrics
+        get_metrics().training_models_active.add(-1, {"base_model": base_model})
 
     def list_training_runs(
         self, *, user_id: str, limit: int | None = None, offset: int = 0
@@ -426,52 +469,71 @@ class TrainingController:
         """Save a checkpoint for the given training run."""
         training_run = self.get_run_record(model_id=model_id, user_id=user_id)
 
-        async def _operation() -> CheckpointRecord:
-            counter_attr = (
-                "next_training_checkpoint"
-                if checkpoint_type == "training"
-                else "next_sampler_checkpoint"
-            )
-            counter = getattr(training_run, counter_attr)
-            checkpoint_name = name or f"checkpoint-{counter:04d}"
-            setattr(training_run, counter_attr, counter + 1)
-            checkpoint = CheckpointRecord.from_training_run(
-                training_run_id=training_run.training_run_id,
-                checkpoint_name=checkpoint_name,
-                owner_name=training_run.model_owner,
-                checkpoint_type=checkpoint_type,
-                checkpoint_root_dir=self.config.checkpoint_dir,
-                exist_ok=True,
-            )
-            checkpoint.future_id = future_id
-            checkpoint.seq_id = seq_id
-            target_map = (
-                training_run.checkpoints
-                if checkpoint_type == "training"
-                else training_run.sampler_checkpoints
-            )
-            if training_run.backend is not None:
-                await training_run.backend.save_state(
-                    lora_id=training_run.training_run_id,
-                    checkpoint_record=checkpoint,
-                    optimizer=(checkpoint_type == "training"),
+        with _tracer.start_as_current_span("training_controller.save_checkpoint") as span:
+            span.set_attribute("tuft.training_run_id", model_id)
+            span.set_attribute("tuft.session_id", training_run.session_id)
+            span.set_attribute("tuft.checkpoint_type", checkpoint_type)
+
+            async def _operation() -> CheckpointRecord:
+                counter_attr = (
+                    "next_training_checkpoint"
+                    if checkpoint_type == "training"
+                    else "next_sampler_checkpoint"
                 )
-            checkpoint.size_bytes = checkpoint.path.stat().st_size
-            checkpoint.save_metadata(
-                base_model=training_run.base_model,
-                session_id=training_run.session_id,
-                lora_rank=training_run.lora_rank,
-            )
-            # save the checkpoint record in the training run
-            target_map[checkpoint_name] = checkpoint
+                counter = getattr(training_run, counter_attr)
+                checkpoint_name = name or f"checkpoint-{counter:04d}"
+                checkpoint_id = f"{model_id}/{checkpoint_name}"
+                logger.info("Checkpoint save begin: %s", checkpoint_id)
 
-            # Save training run and checkpoint atomically to prevent inconsistency
-            # if server crashes between saves
-            self._save_training_run_with_checkpoint(model_id, checkpoint_name, checkpoint_type)
+                setattr(training_run, counter_attr, counter + 1)
+                checkpoint = CheckpointRecord.from_training_run(
+                    training_run_id=training_run.training_run_id,
+                    checkpoint_name=checkpoint_name,
+                    owner_name=training_run.model_owner,
+                    checkpoint_type=checkpoint_type,
+                    checkpoint_root_dir=self.config.checkpoint_dir,
+                    exist_ok=True,
+                )
+                checkpoint.future_id = future_id
+                checkpoint.seq_id = seq_id
+                target_map = (
+                    training_run.checkpoints
+                    if checkpoint_type == "training"
+                    else training_run.sampler_checkpoints
+                )
+                if training_run.backend is not None:
+                    await training_run.backend.save_state(
+                        lora_id=training_run.training_run_id,
+                        checkpoint_record=checkpoint,
+                        optimizer=(checkpoint_type == "training"),
+                    )
+                checkpoint.size_bytes = checkpoint.path.stat().st_size
+                checkpoint.save_metadata(
+                    base_model=training_run.base_model,
+                    session_id=training_run.session_id,
+                    lora_rank=training_run.lora_rank,
+                )
+                # save the checkpoint record in the training run
+                target_map[checkpoint_name] = checkpoint
 
-            return checkpoint
+                # Save training run and checkpoint atomically to prevent inconsistency
+                # if server crashes between saves
+                self._save_training_run_with_checkpoint(model_id, checkpoint_name, checkpoint_type)
 
-        return await self._with_sequence_guard(training_run, seq_id, _operation)
+                # Update metrics
+                metrics = get_metrics()
+                metrics.training_checkpoints_saved.add(
+                    1, {"model_id": model_id, "checkpoint_type": checkpoint_type}
+                )
+                logger.info("Checkpoint saved: %s", checkpoint_id)
+                metrics.training_checkpoint_size.record(
+                    checkpoint.size_bytes,
+                    {"model_id": model_id, "checkpoint_type": checkpoint_type},
+                )
+
+                return checkpoint
+
+            return await self._with_sequence_guard(training_run, seq_id, _operation)
 
     async def load_checkpoint(
         self,
@@ -508,6 +570,9 @@ class TrainingController:
             if training_run.backend is None:
                 raise UnknownModelException(model_name=model_id)
 
+            checkpoint_id = parsed_checkpoint.checkpoint_id
+            logger.info("Checkpoint load begin: %s", checkpoint_id)
+
             async def _operation() -> None:
                 assert training_run.backend is not None
                 await training_run.backend.load_state(
@@ -515,6 +580,7 @@ class TrainingController:
                     checkpoint_record=checkpoint,
                     optimizer=optimizer,
                 )
+                logger.info("Checkpoint loaded: %s", checkpoint_id)
 
             await self._with_sequence_guard(training_run, seq_id, _operation)
         else:

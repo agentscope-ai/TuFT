@@ -18,6 +18,27 @@ def _default_persistence_config() -> PersistenceConfig:
 
 
 @dataclass
+class TelemetryConfig:
+    """Configuration for OpenTelemetry integration.
+
+    Attributes:
+        enabled: Whether telemetry is enabled.
+        service_name: Name of the service for tracing.
+        otlp_endpoint: OTLP exporter endpoint. If None, uses OTEL_EXPORTER_OTLP_ENDPOINT env var.
+        resource_attributes: Additional resource attributes as key-value pairs.
+    """
+
+    enabled: bool = False
+    service_name: str = "tuft"
+    otlp_endpoint: str | None = None
+    resource_attributes: Dict[str, str] = field(default_factory=dict)
+
+
+def _default_telemetry_config() -> TelemetryConfig:
+    return TelemetryConfig()
+
+
+@dataclass
 class AppConfig:
     """Runtime configuration for the FastAPI service."""
 
@@ -29,6 +50,7 @@ class AppConfig:
     # replace with proper auth system later
     authorized_users: Dict[str, str] = field(default_factory=dict)
     persistence: PersistenceConfig = field(default_factory=_default_persistence_config)
+    telemetry: TelemetryConfig = field(default_factory=_default_telemetry_config)
 
     def ensure_directories(self) -> None:
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)

@@ -41,6 +41,36 @@ def _build_config(
     return config
 
 
+def _init_telemetry(config: AppConfig, log_level: str) -> None:
+    """Initialize OpenTelemetry if enabled."""
+    import logging
+
+    # Configure root logger level to ensure logs flow to OTel
+    numeric_level = getattr(logging, log_level.upper(), logging.INFO)
+    logging.basicConfig(level=numeric_level)
+
+    if not config.telemetry.enabled:
+        return
+    try:
+        from .telemetry import TelemetryConfig as OTelConfig
+        from .telemetry import init_telemetry
+        from .telemetry.metrics import ResourceMetricsCollector
+
+        otel_config = OTelConfig(
+            enabled=config.telemetry.enabled,
+            service_name=config.telemetry.service_name,
+            otlp_endpoint=config.telemetry.otlp_endpoint,
+            resource_attributes=config.telemetry.resource_attributes,
+        )
+        init_telemetry(otel_config)
+        # Start resource metrics collection
+        ResourceMetricsCollector.start(str(config.checkpoint_dir))
+    except ImportError:
+        logging.getLogger(__name__).warning(
+            "OpenTelemetry packages not installed. Install with: pip install tuft[otel]"
+        )
+
+
 @app.callback(invoke_without_command=True)
 def start(
     host: str = _HOST_OPTION,
@@ -51,7 +81,12 @@ def start(
     checkpoint_dir: Path | None = _CHECKPOINT_DIR_OPTION,
 ) -> None:
     """Start the FastAPI server using uvicorn."""
+    import logging as _logging
+
     config = _build_config(model_config, checkpoint_dir)
+    # Initialize telemetry before starting the server
+    _init_telemetry(config, log_level)
+    _logging.getLogger("tuft").info("Server starting on %s:%s", host, port)
     uvicorn.run(
         create_root_app(config),
         host=host,

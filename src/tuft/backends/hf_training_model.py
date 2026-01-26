@@ -14,6 +14,9 @@ from tinker.types import LoraConfig as TinkerLoraConfig
 from tuft.checkpoints import CheckpointRecord
 from tuft.config import ModelConfig
 from tuft.loss_fn import get_loss_fn
+from tuft.telemetry.tracing import extract_context, get_tracer
+
+_tracer = get_tracer("tuft.hf_training_model")
 
 MODULE_MAP = {
     "llama": {
@@ -60,86 +63,120 @@ class HFTrainingModel:
     # --------------------------------
     # LoRA adapter management methods
     # --------------------------------
-    async def create_adapter(self, lora_id: str, lora_config: TinkerLoraConfig):
-        if lora_id in self.adapter_optimizer:
-            raise ValueError(f"Adapter {lora_id} already exists.")
-        peft_config = LoraConfig(
-            r=lora_config.rank,
-            target_modules=get_target_modules(str(self.config.model_path), lora_config),
-            # TODO: here we set lora_alpha equal to rank for common practice,
-            # but we may expose it in the future if needed.
-            lora_alpha=lora_config.rank,
-        )
+    async def create_adapter(
+        self,
+        lora_id: str,
+        lora_config: TinkerLoraConfig,
+        trace_context: dict[str, str] | None = None,
+    ):
+        ctx = extract_context(trace_context or {})
+        with _tracer.start_as_current_span("hf_model.create_adapter", context=ctx) as span:
+            span.set_attribute("tuft.lora_id", lora_id)
+            if lora_id in self.adapter_optimizer:
+                raise ValueError(f"Adapter {lora_id} already exists.")
+            peft_config = LoraConfig(
+                r=lora_config.rank,
+                target_modules=get_target_modules(str(self.config.model_path), lora_config),
+                # TODO: here we set lora_alpha equal to rank for common practice,
+                # but we may expose it in the future if needed.
+                lora_alpha=lora_config.rank,
+            )
 
-        self.model.add_adapter(adapter_name=lora_id, peft_config=peft_config)
-        async with self._lock:
-            self.model.set_adapter(lora_id)
-            params = [p for p in self.model.parameters() if p.requires_grad]
-            self.adapter_optimizer[lora_id] = torch.optim.AdamW(params)
+            self.model.add_adapter(adapter_name=lora_id, peft_config=peft_config)
+            async with self._lock:
+                self.model.set_adapter(lora_id)
+                params = [p for p in self.model.parameters() if p.requires_grad]
+                self.adapter_optimizer[lora_id] = torch.optim.AdamW(params)
 
-    async def save_state(self, lora_id: str, checkpoint_record: CheckpointRecord, optimizer: bool):
+    async def save_state(
+        self,
+        lora_id: str,
+        checkpoint_record: CheckpointRecord,
+        optimizer: bool,
+        trace_context: dict[str, str] | None = None,
+    ):
         """
         Save LoRA adapter and optimizer state.
         Args:
             lora_id: The LoRA adapter ID to save.
-            save_path: The directory path to save the state.
+            checkpoint_record: The CheckpointRecord containing paths to save to.
             optimizer: Whether to save the optimizer state.
+            trace_context: Optional trace context for distributed tracing.
         """
-        if lora_id not in self.adapter_optimizer:
-            raise ValueError(f"Adapter {lora_id} not found.")
+        ctx = extract_context(trace_context or {})
+        with _tracer.start_as_current_span("hf_model.save_state", context=ctx) as span:
+            span.set_attribute("tuft.lora_id", lora_id)
+            span.set_attribute("tuft.optimizer", optimizer)
 
-        # 1. Save adapter (LoRA weights)
-        adapter_dir = checkpoint_record.adapter_path
-        adapter_dir.mkdir(parents=True, exist_ok=True)
-        # peft automatically creates a subdirectory with adapter name inside the given path
-        self.model.save_pretrained(str(adapter_dir), selected_adapters=[lora_id])
-        # move the files out of the subdirectory
-        lora_subdir = adapter_dir / lora_id
-        if lora_subdir.exists() and lora_subdir.is_dir():
-            for item in lora_subdir.iterdir():
-                dest = adapter_dir / item.name
-                if dest.exists():
-                    if dest.is_file():
-                        dest.unlink()
-                    elif dest.is_dir():
-                        shutil.rmtree(dest)
-                shutil.move(str(item), str(dest))
-            lora_subdir.rmdir()
+            if lora_id not in self.adapter_optimizer:
+                raise ValueError(f"Adapter {lora_id} not found.")
 
-        # 2. Save optimizer state
-        if optimizer:
-            opt_dir = checkpoint_record.optimizer_path
-            opt_dir.mkdir(parents=True, exist_ok=True)
-            opt_state = self.adapter_optimizer[lora_id].state_dict()
-            opt_path = opt_dir / (f"{lora_id}.pt")
-            torch.save(opt_state, opt_path)
+            # 1. Save adapter (LoRA weights)
+            adapter_dir = checkpoint_record.adapter_path
+            adapter_dir.mkdir(parents=True, exist_ok=True)
+            # peft automatically creates a subdirectory with adapter name inside the given path
+            self.model.save_pretrained(str(adapter_dir), selected_adapters=[lora_id])
+            # move the files out of the subdirectory
+            lora_subdir = adapter_dir / lora_id
+            if lora_subdir.exists() and lora_subdir.is_dir():
+                for item in lora_subdir.iterdir():
+                    dest = adapter_dir / item.name
+                    if dest.exists():
+                        if dest.is_file():
+                            dest.unlink()
+                        elif dest.is_dir():
+                            shutil.rmtree(dest)
+                    shutil.move(str(item), str(dest))
+                lora_subdir.rmdir()
 
-    async def load_state(self, lora_id: str, checkpoint_record: CheckpointRecord, optimizer: bool):
+            # 2. Save optimizer state
+            if optimizer:
+                opt_dir = checkpoint_record.optimizer_path
+                opt_dir.mkdir(parents=True, exist_ok=True)
+                opt_state = self.adapter_optimizer[lora_id].state_dict()
+                opt_path = opt_dir / (f"{lora_id}.pt")
+                torch.save(opt_state, opt_path)
+
+    async def load_state(
+        self,
+        lora_id: str,
+        checkpoint_record: CheckpointRecord,
+        optimizer: bool,
+        trace_context: dict[str, str] | None = None,
+    ):
         """
         Load LoRA adapter and optimizer state (standard format).
         Args:
             lora_id: The LoRA adapter ID to load.
             checkpoint_record: The CheckpointRecord containing paths to load from.
             optimizer: Whether to load the optimizer state.
+            trace_context: Optional trace context for distributed tracing.
         """
-        # 1. Load adapter
-        # find lora adapter name from the directory
-        self.model.load_adapter(model_id=str(checkpoint_record.adapter_path), adapter_name=lora_id)
+        ctx = extract_context(trace_context or {})
+        with _tracer.start_as_current_span("hf_model.load_state", context=ctx) as span:
+            span.set_attribute("tuft.lora_id", lora_id)
+            span.set_attribute("tuft.optimizer", optimizer)
 
-        # 2. Load optimizer state if needed
-        async with self._lock:
-            self.model.set_adapter(lora_id)
-            params = [p for p in self.model.parameters() if p.requires_grad]
-            optimizer_obj = torch.optim.AdamW(params)
-            if optimizer:
-                opt_dir = checkpoint_record.optimizer_path
-                opt_path = opt_dir / f"{lora_id}.pt"
-                state_dict = None
-                if opt_path.exists():
-                    state_dict = torch.load(opt_path)
-                if state_dict is not None:
-                    optimizer_obj.load_state_dict(state_dict)
-            self.adapter_optimizer[lora_id] = optimizer_obj
+            # 1. Load adapter
+            # find lora adapter name from the directory
+            self.model.load_adapter(
+                model_id=str(checkpoint_record.adapter_path), adapter_name=lora_id
+            )
+
+            # 2. Load optimizer state if needed
+            async with self._lock:
+                self.model.set_adapter(lora_id)
+                params = [p for p in self.model.parameters() if p.requires_grad]
+                optimizer_obj = torch.optim.AdamW(params)
+                if optimizer:
+                    opt_dir = checkpoint_record.optimizer_path
+                    opt_path = opt_dir / f"{lora_id}.pt"
+                    state_dict = None
+                    if opt_path.exists():
+                        state_dict = torch.load(opt_path)
+                    if state_dict is not None:
+                        optimizer_obj.load_state_dict(state_dict)
+                self.adapter_optimizer[lora_id] = optimizer_obj
 
     async def remove_adapter(self, lora_id: str):
         async with self._lock:
@@ -157,6 +194,7 @@ class HFTrainingModel:
         loss_fn: types.LossFnType,
         loss_fn_config: dict[str, float] | None,
         backward: bool = False,
+        trace_context: dict[str, str] | None = None,
     ) -> types.ForwardBackwardOutput:
         """Forward pass (and backward if specified).
 
@@ -166,94 +204,110 @@ class HFTrainingModel:
             loss_fn: The loss function to apply.
             loss_fn_config: Optional configuration for the loss function.
             backward: Whether to perform backward pass.
+            trace_context: Optional trace context for distributed tracing.
 
         Returns:
             ForwardBackwardOutput: The output of the forward (and backward) pass.
         """
-        # Prepare input tensors
-        input_ids = [torch.tensor(datum.model_input.to_ints(), dtype=torch.long) for datum in data]
-        input_ids_padded = pad_sequence(input_ids, batch_first=True, padding_value=0)
-        attention_mask = (input_ids_padded != 0).long()
-        position_ids = (
-            torch.arange(input_ids_padded.size(1), dtype=torch.long)
-            .unsqueeze(0)
-            .expand(input_ids_padded.size(0), -1)
-        )
-        # Move tensors to model device
-        device = next(self.model.parameters()).device
-        input_ids_padded = input_ids_padded.to(device)
-        attention_mask = attention_mask.to(device)
-        position_ids = position_ids.to(device)
+        ctx = extract_context(trace_context or {})
+        span_name = "hf_model.forward_backward" if backward else "hf_model.forward"
+        with _tracer.start_as_current_span(span_name, context=ctx) as span:
+            span.set_attribute("tuft.lora_id", lora_id)
+            span.set_attribute("tuft.backward", backward)
+            span.set_attribute("tuft.data_count", len(data))
 
-        # Activate the correct adapter
-        async with self._lock:
-            self._activate_adapter(lora_id)
-
-            # Forward pass
-            outputs = self.model(
-                input_ids=input_ids_padded,
-                attention_mask=attention_mask,
-                position_ids=position_ids,
-                return_dict=True,
+            # Prepare input tensors
+            input_ids = [
+                torch.tensor(datum.model_input.to_ints(), dtype=torch.long) for datum in data
+            ]
+            input_ids_padded = pad_sequence(input_ids, batch_first=True, padding_value=0)
+            attention_mask = (input_ids_padded != 0).long()
+            position_ids = (
+                torch.arange(input_ids_padded.size(1), dtype=torch.long)
+                .unsqueeze(0)
+                .expand(input_ids_padded.size(0), -1)
             )
+            # Move tensors to model device
+            device = next(self.model.parameters()).device
+            input_ids_padded = input_ids_padded.to(device)
+            attention_mask = attention_mask.to(device)
+            position_ids = position_ids.to(device)
 
-            # Compute loss
-            if loss_fn_config is None:
-                loss_fn_config = {}
-            loss_fn_callable = get_loss_fn(loss_fn)
-            logits = outputs.logits
-            if "temperature" in loss_fn_config:
-                temperature = loss_fn_config["temperature"]
-                logits.div_(temperature)
+            # Activate the correct adapter
+            async with self._lock:
+                self._activate_adapter(lora_id)
 
-            loss_fn_inputs = self._prepare_loss_fn_inputs(data)
+                # Forward pass
+                outputs = self.model(
+                    input_ids=input_ids_padded,
+                    attention_mask=attention_mask,
+                    position_ids=position_ids,
+                    return_dict=True,
+                )
 
-            ## compute target_logprobs from logits and target_tokens
-            target_tokens = loss_fn_inputs["target_tokens"]
-            target_logprobs = self._compute_logprobs_from_target_tokens(logits, target_tokens)
-            loss_fn_inputs["target_logprobs"] = target_logprobs
+                # Compute loss
+                if loss_fn_config is None:
+                    loss_fn_config = {}
+                loss_fn_callable = get_loss_fn(loss_fn)
+                logits = outputs.logits
+                if "temperature" in loss_fn_config:
+                    temperature = loss_fn_config["temperature"]
+                    logits.div_(temperature)
 
-            loss, metric = loss_fn_callable(loss_fn_inputs, loss_fn_config)
+                loss_fn_inputs = self._prepare_loss_fn_inputs(data)
 
-            # Backward pass if needed
-            if backward:
-                loss.backward()
+                ## compute target_logprobs from logits and target_tokens
+                target_tokens = loss_fn_inputs["target_tokens"]
+                target_logprobs = self._compute_logprobs_from_target_tokens(logits, target_tokens)
+                loss_fn_inputs["target_logprobs"] = target_logprobs
 
-        unpaded_logprobs = self._unpad_tensor(
-            target_logprobs, [len(datum.model_input.to_ints()) for datum in data]
-        )
-        return types.ForwardBackwardOutput(
-            loss_fn_output_type=loss_fn,
-            loss_fn_outputs=[
-                {"logprobs": types.TensorData.from_torch(logprobs.detach())}
-                for logprobs in unpaded_logprobs
-            ],
-            metrics=metric,
-        )
+                loss, metric = loss_fn_callable(loss_fn_inputs, loss_fn_config)
+
+                # Backward pass if needed
+                if backward:
+                    loss.backward()
+
+            unpaded_logprobs = self._unpad_tensor(
+                target_logprobs, [len(datum.model_input.to_ints()) for datum in data]
+            )
+            return types.ForwardBackwardOutput(
+                loss_fn_output_type=loss_fn,
+                loss_fn_outputs=[
+                    {"logprobs": types.TensorData.from_torch(logprobs.detach())}
+                    for logprobs in unpaded_logprobs
+                ],
+                metrics=metric,
+            )
 
     async def optim_step(
         self,
         adam_params: types.AdamParams,
         lora_id: str,
+        trace_context: dict[str, str] | None = None,
     ) -> types.OptimStepResponse:
         """Perform an optimization step using Adam optimizer.
 
         Args:
             adam_params: Parameters for the Adam optimizer.
             lora_id: The LoRA adapter ID to use.
+            trace_context: Optional trace context for distributed tracing.
 
         Returns:
             OptimStepResponse: The response containing optimization metrics.
         """
-        optimizer = self.adapter_optimizer[lora_id]
-        for param_group in optimizer.param_groups:
-            param_group["lr"] = adam_params.learning_rate
-            param_group["betas"] = (adam_params.beta1, adam_params.beta2)
-            param_group["eps"] = adam_params.eps
-            param_group["weight_decay"] = adam_params.weight_decay
-        optimizer.step()
-        optimizer.zero_grad()
-        return types.OptimStepResponse()
+        ctx = extract_context(trace_context or {})
+        with _tracer.start_as_current_span("hf_model.optim_step", context=ctx) as span:
+            span.set_attribute("tuft.lora_id", lora_id)
+
+            optimizer = self.adapter_optimizer[lora_id]
+            for param_group in optimizer.param_groups:
+                param_group["lr"] = adam_params.learning_rate
+                param_group["betas"] = (adam_params.beta1, adam_params.beta2)
+                param_group["eps"] = adam_params.eps
+                param_group["weight_decay"] = adam_params.weight_decay
+            optimizer.step()
+            optimizer.zero_grad()
+            return types.OptimStepResponse()
 
     # --------------------------------
     # Helper methods

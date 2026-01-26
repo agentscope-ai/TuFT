@@ -54,7 +54,7 @@ You can also install TuFT directly from PyPI:
 uv pip install tuft
 
 # Install optional dependencies as needed
-uv pip install "tuft[dev,backend,persistence]"
+uv pip install "tuft[dev,backend,persistence,otel]"
 ```
 
 ### Run the server
@@ -278,6 +278,43 @@ config = PersistenceConfig.from_redis_url("redis://localhost:6379/0")
 # File-backed store
 config = PersistenceConfig.from_file_redis("~/.cache/tuft/file_redis.json")
 ```
+
+## Observability (OpenTelemetry)
+
+TuFT supports optional OpenTelemetry integration for distributed tracing, metrics, and logging.
+This allows you to monitor your TuFT server using observability tools like SigNoz, Jaeger, or Grafana.
+
+### Installation
+
+Install the optional OpenTelemetry dependency:
+
+```bash
+uv pip install tuft[otel]
+```
+
+### Configuration
+
+Add the following to your configuration file:
+
+```yaml
+telemetry:
+  enabled: true
+  service_name: tuft
+  otlp_endpoint: http://localhost:4317  # Your OTLP collector endpoint
+  resource_attributes: {}
+    # example:
+    # deployment.environment: production
+    # service.version: 1.0.0
+    # service.namespace: my-namespace
+```
+
+Alternatively, use environment variables:
+
+```bash
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+export OTEL_DEBUG=1  # Enable console exporter for debugging
+```
+
 
 ## Development
 

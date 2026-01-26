@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Literal
@@ -19,6 +21,11 @@ from .persistence import (
     load_record,
     save_record,
 )
+from .telemetry.metrics import get_metrics
+from .telemetry.tracing import get_tracer
+
+logger = logging.getLogger(__name__)
+_tracer = get_tracer("tuft.futures")
 
 QueueState = Literal["active", "paused_capacity", "paused_rate_limit"]
 
@@ -221,34 +228,69 @@ class FutureStore:
             )
             self._store_record(record)
 
+        # Update metrics
+        metrics = get_metrics()
+        metrics.futures_created.add(
+            1, {"operation_type": operation_type or "unknown", "model_id": model_id or ""}
+        )
+        metrics.futures_queue_length.add(1, {"queue_state": queue_state})
+
+        logger.info("Future enqueued: %s", record.request_id)
+        enqueue_time = time.perf_counter()
+
         async def _runner() -> None:
-            try:
-                if asyncio.iscoroutinefunction(operation):
-                    payload = await operation()
+            start_time = time.perf_counter()
+            wait_time = start_time - enqueue_time
+
+            with _tracer.start_as_current_span("future_store.execute_operation") as span:
+                span.set_attribute("tuft.request_id", record.request_id)
+                span.set_attribute("tuft.operation_type", operation_type or "unknown")
+                if model_id:
+                    span.set_attribute("tuft.model_id", model_id)
+
+                logger.info("Future begin: %s", record.request_id)
+                try:
+                    if asyncio.iscoroutinefunction(operation):
+                        payload = await operation()
+                    else:
+                        # Run sync operation in thread pool to avoid blocking
+                        loop = asyncio.get_running_loop()
+                        payload = await loop.run_in_executor(None, operation)
+                except TuFTException as exc:
+                    message = exc.detail
+                    failure = types.RequestFailedResponse(
+                        error=message,
+                        category=types.RequestErrorCategory.User,
+                    )
+                    span.record_exception(exc)
+                    logger.error("Future failed: %s", record.request_id)
+                    await self._mark_failed(record.request_id, failure, operation_type)
+                except Exception as exc:  # pylint: disable=broad-except
+                    failure = types.RequestFailedResponse(
+                        error=str(exc),
+                        category=types.RequestErrorCategory.Server,
+                    )
+                    span.record_exception(exc)
+                    logger.error("Future failed: %s", record.request_id)
+                    await self._mark_failed(record.request_id, failure, operation_type)
                 else:
-                    # Run sync operation in thread pool to avoid blocking
-                    loop = asyncio.get_running_loop()
-                    payload = await loop.run_in_executor(None, operation)
-            except TuFTException as exc:
-                message = exc.detail
-                failure = types.RequestFailedResponse(
-                    error=message,
-                    category=types.RequestErrorCategory.User,
-                )
-                await self._mark_failed(record.request_id, failure)
-            except Exception as exc:  # pylint: disable=broad-except
-                failure = types.RequestFailedResponse(
-                    error=str(exc),
-                    category=types.RequestErrorCategory.Server,
-                )
-                await self._mark_failed(record.request_id, failure)
-            else:
-                await self._mark_ready(record.request_id, payload)
-            finally:
-                # Clean up task reference
-                task = asyncio.current_task()
-                if task:
-                    self._tasks.discard(task)
+                    logger.info("Future completed: %s", record.request_id)
+                    await self._mark_ready(record.request_id, payload, operation_type)
+                finally:
+                    # Record execution time
+                    execution_time = time.perf_counter() - start_time
+                    metrics.futures_wait_time.record(
+                        wait_time, {"operation_type": operation_type or "unknown"}
+                    )
+                    metrics.futures_execution_time.record(
+                        execution_time, {"operation_type": operation_type or "unknown"}
+                    )
+                    metrics.futures_queue_length.add(-1, {"queue_state": queue_state})
+
+                    # Clean up task reference
+                    task = asyncio.current_task()
+                    if task:
+                        self._tasks.discard(task)
 
         # Create and track the task
         task = asyncio.create_task(_runner())
@@ -277,7 +319,9 @@ class FutureStore:
 
         return types.UntypedAPIFuture(request_id=record.request_id, model_id=model_id)
 
-    async def _mark_ready(self, request_id: str, payload: Any) -> None:
+    async def _mark_ready(
+        self, request_id: str, payload: Any, operation_type: str | None = None
+    ) -> None:
         """Mark a future as ready with the given payload."""
         async with self._lock:
             record = self._records.get(request_id)
@@ -289,7 +333,21 @@ class FutureStore:
             record.event.set()
             self._save_future(request_id)
 
-    async def _mark_failed(self, request_id: str, failure: types.RequestFailedResponse) -> None:
+            # Update metrics
+            get_metrics().futures_completed.add(
+                1,
+                {
+                    "operation_type": operation_type or record.operation_type or "unknown",
+                    "status": "ready",
+                },
+            )
+
+    async def _mark_failed(
+        self,
+        request_id: str,
+        failure: types.RequestFailedResponse,
+        operation_type: str | None = None,
+    ) -> None:
         """Mark a future as failed with the given error."""
         async with self._lock:
             record = self._records.get(request_id)
@@ -299,6 +357,15 @@ class FutureStore:
             record.error = failure
             record.event.set()
             self._save_future(request_id)
+
+            # Update metrics
+            get_metrics().futures_completed.add(
+                1,
+                {
+                    "operation_type": operation_type or record.operation_type or "unknown",
+                    "status": "failed",
+                },
+            )
 
     async def retrieve(
         self,

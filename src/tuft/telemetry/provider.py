@@ -1,0 +1,252 @@
+"""OpenTelemetry Provider initialization.
+
+Initializes TracerProvider, MeterProvider, and LoggerProvider with
+OTLP or Console exporters based on configuration.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
+
+# Global state to track initialization
+_tel_initialized = False
+
+
+@dataclass
+class TelemetryConfig:
+    """Configuration for OpenTelemetry.
+
+    Attributes:
+        enabled: Whether telemetry is enabled.
+        service_name: Name of the service (default: "tuft").
+        otlp_endpoint: OTLP endpoint URL. If None, uses OTEL_EXPORTER_OTLP_ENDPOINT env var.
+        resource_attributes: Additional resource attributes.
+    """
+
+    enabled: bool = False
+    service_name: str = "tuft"
+    otlp_endpoint: str | None = None
+    resource_attributes: dict[str, str] = field(default_factory=dict)
+
+
+def _is_debug_mode() -> bool:
+    """Check if debug mode is enabled via OTEL_DEBUG environment variable."""
+    return os.getenv("OTEL_DEBUG", "0") == "1"
+
+
+def _get_otlp_endpoint(config: TelemetryConfig) -> str | None:
+    """Get OTLP endpoint from config or environment variable."""
+    if config.otlp_endpoint:
+        return config.otlp_endpoint
+    return os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+
+
+def init_telemetry(config: TelemetryConfig) -> None:
+    """Initialize OpenTelemetry providers.
+
+    Sets up TracerProvider, MeterProvider, and LoggerProvider with appropriate
+    exporters based on configuration and environment variables.
+
+    Args:
+        config: Telemetry configuration.
+    """
+    global _tel_initialized
+
+    if not config.enabled:
+        logger.debug("Telemetry is disabled")
+        return
+
+    if _tel_initialized:
+        logger.warning("Telemetry already initialized, skipping")
+        return
+
+    try:
+        from opentelemetry.sdk.resources import Resource
+    except ImportError:
+        logger.warning("OpenTelemetry packages not installed. Install with: pip install tuft[otel]")
+        return
+
+    # Build resource with service info
+    resource_attrs = {
+        "service.name": config.service_name,
+    }
+    resource_attrs.update(config.resource_attributes)
+    resource = Resource.create(resource_attrs)
+
+    # Determine exporter mode
+    debug_mode = _is_debug_mode()
+    otlp_endpoint = _get_otlp_endpoint(config)
+
+    if debug_mode:
+        logger.info("Initializing telemetry with Console exporters (debug mode)")
+        _init_console_exporters(resource)
+    elif otlp_endpoint:
+        logger.info("Initializing telemetry with OTLP exporters to %s", otlp_endpoint)
+        _init_otlp_exporters(resource, otlp_endpoint)
+    else:
+        logger.info("Initializing telemetry with OTLP exporters (using default endpoint)")
+        _init_otlp_exporters(resource, None)
+
+    # Configure logging integration
+    _configure_logging_integration()
+
+    _tel_initialized = True
+    logger.info("Telemetry initialized successfully")
+
+
+def _init_console_exporters(resource) -> None:
+    """Initialize Console exporters for debugging."""
+    from opentelemetry import metrics, trace
+    from opentelemetry._logs import set_logger_provider
+    from opentelemetry.sdk._logs import LoggerProvider
+    from opentelemetry.sdk._logs.export import BatchLogRecordProcessor, ConsoleLogExporter
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.metrics.export import (
+        ConsoleMetricExporter,
+        PeriodicExportingMetricReader,
+    )
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+
+    # Trace
+    tracer_provider = TracerProvider(resource=resource)
+    tracer_provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+    trace.set_tracer_provider(tracer_provider)
+
+    # Metrics
+    reader = PeriodicExportingMetricReader(ConsoleMetricExporter(), export_interval_millis=10000)
+    meter_provider = MeterProvider(resource=resource, metric_readers=[reader])
+    metrics.set_meter_provider(meter_provider)
+
+    # Logs
+    logger_provider = LoggerProvider(resource=resource)
+    logger_provider.add_log_record_processor(BatchLogRecordProcessor(ConsoleLogExporter()))
+    set_logger_provider(logger_provider)
+
+
+def _init_otlp_exporters(resource, endpoint: str | None) -> None:
+    """Initialize OTLP exporters."""
+    from opentelemetry import metrics, trace
+    from opentelemetry._logs import set_logger_provider
+    from opentelemetry.sdk._logs import LoggerProvider
+    from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+    try:
+        from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+        from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    except ImportError:
+        logger.warning("OTLP exporter not available, falling back to console")
+        _init_console_exporters(resource)
+        return
+
+    # Build exporter kwargs
+    exporter_kwargs = {}
+    if endpoint:
+        exporter_kwargs["endpoint"] = endpoint
+
+    # Trace
+    tracer_provider = TracerProvider(resource=resource)
+    try:
+        span_exporter = OTLPSpanExporter(**exporter_kwargs)
+        tracer_provider.add_span_processor(BatchSpanProcessor(span_exporter))
+    except Exception as e:
+        logger.warning("Failed to create OTLP span exporter: %s", e)
+    trace.set_tracer_provider(tracer_provider)
+
+    # Metrics
+    try:
+        metric_exporter = OTLPMetricExporter(**exporter_kwargs)
+        reader = PeriodicExportingMetricReader(metric_exporter, export_interval_millis=10000)
+        meter_provider = MeterProvider(resource=resource, metric_readers=[reader])
+        metrics.set_meter_provider(meter_provider)
+    except Exception as e:
+        logger.warning("Failed to create OTLP metric exporter: %s", e)
+
+    # Logs
+    try:
+        log_exporter = OTLPLogExporter(**exporter_kwargs)
+        logger_provider = LoggerProvider(resource=resource)
+        logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
+        set_logger_provider(logger_provider)
+    except Exception as e:
+        logger.warning("Failed to create OTLP log exporter: %s", e)
+
+
+def _configure_logging_integration() -> None:
+    """Configure Python logging to integrate with OpenTelemetry."""
+    try:
+        from opentelemetry.instrumentation.logging import LoggingInstrumentor
+
+        LoggingInstrumentor().instrument(set_logging_format=True)
+    except ImportError:
+        logger.debug("Logging instrumentation not available")
+    except Exception as e:
+        logger.warning("Failed to configure logging instrumentation: %s", e)
+
+    # Bridge Python logging to OTel LoggerProvider
+    try:
+        from opentelemetry._logs import get_logger_provider
+        from opentelemetry.sdk._logs import LoggingHandler
+
+        # Get the configured logger provider
+        otel_logger_provider = get_logger_provider()
+
+        # Create a handler that sends logs to OTel
+        otel_handler = LoggingHandler(
+            level=logging.DEBUG,
+            logger_provider=otel_logger_provider,
+        )
+
+        # Add the handler to the root logger
+        root_logger = logging.getLogger()
+        root_logger.addHandler(otel_handler)
+
+        logger.debug("Python logging bridged to OTel LoggerProvider")
+    except ImportError:
+        logger.debug("OTel logging handler not available")
+    except Exception as e:
+        logger.warning("Failed to bridge Python logging to OTel: %s", e)
+
+
+def shutdown_telemetry() -> None:
+    """Shutdown OpenTelemetry providers gracefully."""
+    global _tel_initialized
+
+    if not _tel_initialized:
+        return
+
+    try:
+        from opentelemetry import metrics, trace
+        from opentelemetry._logs import get_logger_provider
+
+        # Shutdown trace provider
+        tracer_provider = trace.get_tracer_provider()
+        shutdown_fn = getattr(tracer_provider, "shutdown", None)
+        if shutdown_fn is not None:
+            shutdown_fn()
+
+        # Shutdown meter provider
+        meter_provider = metrics.get_meter_provider()
+        shutdown_fn = getattr(meter_provider, "shutdown", None)
+        if shutdown_fn is not None:
+            shutdown_fn()
+
+        # Shutdown logger provider
+        logger_provider = get_logger_provider()
+        shutdown_fn = getattr(logger_provider, "shutdown", None)
+        if shutdown_fn is not None:
+            shutdown_fn()
+
+        _tel_initialized = False
+        logger.info("Telemetry shutdown complete")
+    except Exception as e:
+        logger.warning("Error during telemetry shutdown: %s", e)
