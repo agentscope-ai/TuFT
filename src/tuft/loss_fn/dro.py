@@ -20,7 +20,7 @@ def dro_loss(
     target_logprobs = loss_fn_inputs["target_logprobs"]
     sampling_logprobs = loss_fn_inputs["logprobs"]
     advantages = loss_fn_inputs["advantages"]
-    beta = loss_fn_config.get("beta", 1.0)
+    beta = loss_fn_config.get("beta", 0.01)
 
     # Compute quadratic penalty term
     quadratic_term = (target_logprobs - sampling_logprobs) ** 2
