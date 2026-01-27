@@ -312,7 +312,7 @@ This roadmap is not fixed, but rather a starting point for our journey with the 
 
 We welcome contributions from the community! Join us on:
 - **DingTalk Group**: 163525013125
-- **Discord**: 678910
+- [Discord](https://discord.gg/wEahC7ZJ) (on AgentScope's Server)
 
 ## Development
 
