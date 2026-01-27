@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 from pydantic import BaseModel, Field
-
 from tinker import types
 
 from .backends import BaseSamplingBackend
@@ -24,12 +23,8 @@ from .exceptions import (
     UnknownModelException,
     UserMismatchException,
 )
-from .persistence import (
-    get_redis_store,
-    is_persistence_enabled,
-    load_record,
-    save_record,
-)
+from .persistence import get_redis_store, is_persistence_enabled, load_record, save_record
+
 
 logger = logging.getLogger(__name__)
 

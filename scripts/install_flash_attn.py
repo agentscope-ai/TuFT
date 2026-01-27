@@ -5,6 +5,7 @@ import sys
 
 import torch
 
+
 FLASH_VERSION = "2.8.1"
 
 # Get torch version
@@ -22,13 +23,14 @@ platform_name = platform.system().lower() + "_" + platform.machine()
 cxx11_abi = str(torch._C._GLIBCXX_USE_CXX11_ABI).upper()
 
 # Is ROCM
-IS_ROCM = hasattr(torch.version, "hip") and torch.version.hip is not None
+# torch.version.hip/cuda are runtime attributes not in type stubs
+IS_ROCM = hasattr(torch.version, "hip") and torch.version.hip is not None  # type: ignore[attr-defined]
 
 if IS_ROCM:
     print("We currently do not host ROCm wheels for flash-attn.")
     sys.exit(1)
 else:
-    torch_cuda_version = torch.version.cuda
+    torch_cuda_version = torch.version.cuda  # type: ignore[attr-defined]
     cuda_major = torch_cuda_version.split(".")[0] if torch_cuda_version else None
     if cuda_major != "12":
         print("Only CUDA 12 wheels are hosted for flash-attn.")

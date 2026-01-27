@@ -91,9 +91,9 @@ def load_yaml_config(config_path: Path) -> AppConfig:
     try:
         config = OmegaConf.merge(schema, loaded)
         app_config = OmegaConf.to_object(config)
-        assert isinstance(
-            app_config, AppConfig
-        ), "Loaded config is not of type AppConfig, which should not happen."
+        assert isinstance(app_config, AppConfig), (
+            "Loaded config is not of type AppConfig, which should not happen."
+        )
         return app_config
     except Exception as e:
         raise ValueError(f"Failed to load config from {config_path}: {e}") from e

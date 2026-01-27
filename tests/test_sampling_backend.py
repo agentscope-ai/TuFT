@@ -4,9 +4,8 @@ import os
 from pathlib import Path
 
 import pytest
-from transformers import AutoTokenizer
-
 from tinker import types
+from transformers import AutoTokenizer
 
 
 @pytest.fixture(scope="function", autouse=True)
@@ -24,9 +23,9 @@ async def test_sampling_backend():
     from tuft.backends.sampling_backend import VLLMSamplingBackend
     from tuft.config import ModelConfig
 
-    assert (
-        "TUFT_TEST_MODEL" in os.environ
-    ), "Environment variable TUFT_TEST_MODEL must be set for this test."
+    assert "TUFT_TEST_MODEL" in os.environ, (
+        "Environment variable TUFT_TEST_MODEL must be set for this test."
+    )
 
     model_path = Path(os.environ.get("TUFT_TEST_MODEL", "Qwen/Qwen3-0.6B"))
     model_config = ModelConfig(

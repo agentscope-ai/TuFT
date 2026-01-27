@@ -16,6 +16,7 @@ from .redis_store import (
     save_records_atomic,
 )
 
+
 __all__ = [
     "DEFAULT_FUTURE_TTL_SECONDS",
     "PersistenceConfig",
