@@ -52,12 +52,12 @@ def test_importance_sampling_loss():
     loss_fn_config = {}
     loss, metrics = loss_fn(loss_fn_inputs, loss_fn_config)
     expected_loss = -0.3894003927707672
-    assert torch.isclose(
-        loss, torch.tensor(expected_loss), rtol=0.001
-    ), "Importance sampling loss mismatch."
-    assert torch.isclose(
-        torch.tensor([metrics["loss:sum"]]), torch.tensor(expected_loss)
-    ), "Importance sampling metric mismatch."
+    assert torch.isclose(loss, torch.tensor(expected_loss), rtol=0.001), (
+        "Importance sampling loss mismatch."
+    )
+    assert torch.isclose(torch.tensor([metrics["loss:sum"]]), torch.tensor(expected_loss)), (
+        "Importance sampling metric mismatch."
+    )
 
 
 @pytest.mark.gpu
