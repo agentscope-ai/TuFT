@@ -1,5 +1,4 @@
 import pytest
-import torch
 
 
 @pytest.mark.gpu
@@ -25,6 +24,8 @@ def test_get_loss_fn():
 
 @pytest.mark.gpu
 def test_cross_entropy_loss():
+    import torch
+
     from tuft.loss_fn import get_loss_fn
 
     loss_fn = get_loss_fn("cross_entropy")
@@ -41,6 +42,8 @@ def test_cross_entropy_loss():
 
 @pytest.mark.gpu
 def test_importance_sampling_loss():
+    import torch
+
     from tuft.loss_fn import get_loss_fn
 
     loss_fn = get_loss_fn("importance_sampling")
@@ -62,6 +65,8 @@ def test_importance_sampling_loss():
 
 @pytest.mark.gpu
 def test_ppo_loss():
+    import torch
+
     from tuft.loss_fn import get_loss_fn
 
     loss_fn = get_loss_fn("ppo")
@@ -84,6 +89,8 @@ def test_ppo_loss():
 
 @pytest.mark.gpu
 def test_cispo_loss():
+    import torch
+
     from tuft.loss_fn import get_loss_fn
 
     loss_fn = get_loss_fn("cispo")
@@ -106,6 +113,8 @@ def test_cispo_loss():
 
 @pytest.mark.gpu
 def test_dro_loss():
+    import torch
+
     from tuft.loss_fn import get_loss_fn
 
     loss_fn = get_loss_fn("dro")
