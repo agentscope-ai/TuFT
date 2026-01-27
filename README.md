@@ -1,13 +1,208 @@
 # TuFT
 
-TuFT( **T**enant-**u**nified **F**ine**T**uning) is a multi-tenant system that provides a unified
+TuFT (**T**enant-**u**nified **F**ine**T**uning) is a multi-tenant system that provides a unified
 service API for finetuning large language models (LLMs).
-Users can use TuFT via compatible clients such as [Tinker SDK](https://github.com/thinking-machine-lab/tinker).
+Users can use TuFT via compatible client SDKs such as the Tinker SDK.
 
-Please read our [roadmap](#roadmap) for our goals and up-coming features.
+Please read our [roadmap](#roadmap) for our goals and upcoming features.
 We welcome open-source collaboration. Join our community for updates and help:
 - [DingTalk Group](https://qr.dingtalk.com/action/joingroup?code=v1,k1,UWvzO6HHSeuvRQ5WXCOMJEijadQV+hDjhMIpiVr8qCs=&_dt_no_comment=1&origin=11?)
 - [Discord](https://discord.gg/wEahC7ZJ)
+
+## Table of Contents
+
+- [Architecture](#architecture)
+- [Quick Start Example](#quick-start-example)
+- [Installation](#installation)
+- [Use the Pre-built Docker Image](#use-the-pre-built-docker-image)
+- [Persistence](#persistence)
+- [Roadmap](#roadmap)
+- [Development](#development)
+
+## Architecture
+
+TuFT provides a unified service API for agentic model training and sampling. The system supports multiple LoRA adapters per base model and checkpoint management.
+
+```mermaid
+graph TB
+    subgraph Client["Client Layer"]
+        SDK[Tinker SDK Client]
+    end
+    
+    subgraph API["TuFT Service API"]
+        REST[Service API<br/>REST/HTTP]
+        Session[Session Management]
+    end
+    
+    subgraph Backend["Backend Layer"]
+        Training[Training Backend<br/>Forward/Backward/Optim Step]
+        Sampling[Sampling Backend<br/>Token Generation]
+    end
+    
+    subgraph Models["Model Layer"]
+        BaseModel[Base LLM Model]
+        LoRA[LoRA Adapters<br/>Multiple per Base Model]
+    end
+    
+    subgraph Storage["Storage"]
+        Checkpoint[Model Checkpoints<br/>& LoRA Weights]
+    end
+    
+    SDK --> REST
+    REST --> Session
+    Session --> Training
+    Session --> Sampling
+    Training --> BaseModel
+    Training --> LoRA
+    Sampling --> BaseModel
+    Sampling --> LoRA
+    Training --> Checkpoint
+    Sampling --> Checkpoint
+```
+
+### Key Components
+
+- **Service API**: RESTful interface for training and sampling operations
+- **Training Backend**: Handles forward/backward passes and optimizer steps for LoRA fine-tuning
+- **Sampling Backend**: Generates tokens from trained models
+- **Checkpoint Storage**: Manages model checkpoints and LoRA weights
+
+## Quick Start Example
+
+This example demonstrates how to use TuFT for training and sampling with the [Tinker SDK](https://pypi.org/project/tinker/). 
+Make sure the server is running on port 8080 before running the code. See the [Run the server](#run-the-server) section below for instructions on starting the server.
+
+### 1. Data Preparation
+
+Prepare your training data in the format expected by TuFT:
+
+```python
+import tinker
+from tinker import types
+
+# Connect to the running TuFT server
+client = tinker.ServiceClient(base_url="http://localhost:8080", api_key="local-dev-key")
+
+# Discover available base models
+capabilities = client.get_server_capabilities()
+base_model = capabilities.supported_models[0].model_name
+
+print("Supported models:")
+for model in capabilities.supported_models:
+    print("-", model.model_name or "(unknown)")
+
+# Prepare training data
+# In practice, you would use a tokenizer:
+# tokenizer = training.get_tokenizer()
+# prompt_tokens = tokenizer.encode("Hello from TuFT")
+# target_tokens = tokenizer.encode(" Generalizing beyond the prompt")
+
+# For this example, we use fake token IDs
+prompt_tokens = [101, 42, 37, 102]
+target_tokens = [101, 99, 73, 102]
+
+datum = types.Datum(
+    model_input=types.ModelInput.from_ints(prompt_tokens),
+    loss_fn_inputs={
+        "target_tokens": types.TensorData(
+            data=target_tokens, 
+            dtype="int64", 
+            shape=[len(target_tokens)]
+        ),
+        "weights": types.TensorData(data=[1.0, 1.0, 1.0, 1.0], dtype="float32", shape=[4])
+    },
+)
+```
+
+**Example Output:**
+```
+Supported models:
+- Qwen/Qwen3-8B
+- Qwen/Qwen3-32B
+```
+
+### 2. Training
+
+Create a LoRA training client and perform forward/backward passes with optimizer steps:
+
+```python
+# Create a LoRA training client
+training = client.create_lora_training_client(base_model=base_model, rank=8)
+
+# Run forward/backward pass
+fwdbwd = training.forward_backward([datum], "cross_entropy").result(timeout=30)
+print("Loss metrics:", fwdbwd.metrics)
+
+# Apply optimizer update
+optim = training.optim_step(types.AdamParams(learning_rate=1e-4)).result(timeout=30)
+print("Optimizer metrics:", optim.metrics)
+```
+
+**Example Output:**
+```
+Loss metrics: {'loss:sum': 2.345, 'step:max': 0.0, 'grad_norm:mean': 0.123}
+Optimizer metrics: {'learning_rate:mean': 0.0001, 'step:max': 1.0, 'update_norm:mean': 0.045}
+```
+
+### 3. Save Checkpoint
+
+Save the trained model checkpoint and sampler weights:
+
+```python
+# Save checkpoint for training resumption
+checkpoint = training.save_state("demo-checkpoint").result(timeout=60)
+print("Checkpoint saved to:", checkpoint.path)
+
+# Save sampler weights for inference
+sampler_weights = training.save_weights_for_sampler("demo-sampler").result(timeout=60)
+print("Sampler weights saved to:", sampler_weights.path)
+
+# Inspect session information
+rest = client.create_rest_client()
+session_id = client.holder.get_session_id()
+session_info = rest.get_session(session_id).result(timeout=30)
+print("Session contains training runs:", session_info.training_run_ids)
+```
+
+**Example Output:**
+```
+Checkpoint saved to: tinker://550e8400-e29b-41d4-a716-446655440000/weights/checkpoint-001
+Sampler weights saved to: tinker://550e8400-e29b-41d4-a716-446655440000/sampler_weights/sampler-001
+Session contains training runs: ['550e8400-e29b-41d4-a716-446655440000']
+```
+
+### 4. Sampling
+
+Load the saved weights and generate tokens:
+
+```python
+# Create a sampling client with saved weights
+sampling = client.create_sampling_client(model_path=sampler_weights.path)
+
+# Prepare prompt for sampling
+# sample_prompt = tokenizer.encode("Tell me something inspiring.")
+sample_prompt = [101, 57, 12, 7, 102]
+
+# Generate tokens
+sample = sampling.sample(
+    prompt=types.ModelInput.from_ints(sample_prompt),
+    num_samples=1,
+    sampling_params=types.SamplingParams(max_tokens=5, temperature=0.5),
+).result(timeout=30)
+
+if sample.sequences:
+    print("Sample tokens:", sample.sequences[0].tokens)
+    # Decode tokens to text:
+    # sample_text = tokenizer.decode(sample.sequences[0].tokens)
+    # print("Generated text:", sample_text)
+```
+
+**Example Output:**
+```
+Sample tokens: [101, 57, 12, 7, 42, 102]
+```
+
+> **Note**: Replace fake token IDs with actual tokenizer calls when you have a tokenizer available locally.
 
 ## Installation
 
@@ -133,79 +328,6 @@ you can use the pre-built Docker image.
     ```
 
 
-## End-to-end example
-
-With the server running on port 8080, the following script exercises the main API surface using the
-bundled Tinker SDK. The tokenizer calls are commented out so the snippet works offline; instead we use
-fake token IDs to drive the toy backend.
-
-```python
-import tinker
-from tinker import types
-
-# Connect to the running tuft server via the bundled SDK
-client = tinker.ServiceClient(base_url="http://localhost:8080", api_key="local-dev-key")
-
-# Discover available base models before launching a training run
-capabilities = client.get_server_capabilities()
-base_model = capabilities.supported_models[0].model_name
-
-print("Supported models:")
-for model in capabilities.supported_models:
-    print("-", model.model_name or "(unknown)")
-
-# Start a LoRA training client targeting the first supported model
-training = client.create_lora_training_client(base_model=base_model, rank=8)
-
-# tokenizer = training.get_tokenizer()
-# prompt_tokens = tokenizer.encode("Hello from TuFT")
-# target_tokens = tokenizer.encode(" Generalizing beyond the prompt")
-prompt_tokens = [101, 42, 37, 102]
-target_tokens = [101, 99, 73, 102]
-
-datum = types.Datum(
-    model_input=types.ModelInput.from_ints(prompt_tokens),
-    loss_fn_inputs={
-        "target_tokens": types.TensorData(data=target_tokens, dtype="int64", shape=[len(target_tokens)])
-    },
-)
-
-# Run a single forward/backward pass and observe the reported metrics
-fwdbwd = training.forward_backward([datum], "cross_entropy").result(timeout=30)
-print("Loss metrics:", fwdbwd.metrics)
-
-# Apply an optimizer update to mutate the toy weights
-optim = training.optim_step(types.AdamParams(learning_rate=1e-4)).result(timeout=30)
-print("Optimizer metrics:", optim.metrics)
-
-# Persist both checkpoint and sampler artifacts for later reuse
-checkpoint = training.save_state("demo-checkpoint").result(timeout=60)
-sampler_weights = training.save_weights_for_sampler("demo-sampler").result(timeout=60)
-
-# Inspect the server session via the REST client for debugging
-rest = client.create_rest_client()
-session_id = client.holder.get_session_id()
-session_info = rest.get_session(session_id).result(timeout=30)
-print("Session contains training runs:", session_info.training_run_ids)
-
-# Spin up a sampler tied to the saved weights and generate tokens
-sampling = client.create_sampling_client(model_path=sampler_weights.path)
-# sample_prompt = tokenizer.encode("Tell me something inspiring.")
-sample_prompt = [101, 57, 12, 7, 102]
-sample = sampling.sample(
-    prompt=types.ModelInput.from_ints(sample_prompt),
-    num_samples=1,
-    sampling_params=types.SamplingParams(max_tokens=5, temperature=0.5),
-).result(timeout=30)
-
-if sample.sequences:
-    print("Sample tokens:", sample.sequences[0].tokens)
-
-print("Checkpoint saved to:", checkpoint.path)
-print("Sampler weights saved to:", sampler_weights.path)
-```
-
-Adjust the fake token IDs with your own prompts once you have a tokenizer locally.
 
 ## Persistence
 
@@ -267,23 +389,6 @@ persistence:
   namespace: "tuft"
 ```
 
-### Python API
-
-You can also configure persistence programmatically:
-
-```python
-from tuft.persistence import PersistenceConfig
-
-# Disabled (no persistence)
-config = PersistenceConfig.disabled()
-
-# External Redis server
-config = PersistenceConfig.from_redis_url("redis://localhost:6379/0")
-
-# File-backed store
-config = PersistenceConfig.from_file_redis("~/.cache/tuft/file_redis.json")
-```
-
 ## Roadmap
 
 ### Core Focus: Post-Training for Agent Scenarios
@@ -321,5 +426,61 @@ We welcome suggestions and contributions from the community! Join us on:
 
 ## Development
 
-- Design docs are located in [`docs`](./docs/).
-- Please install `pre-commit` and ensure test passes before creating new PRs.
+### Setup Development Environment
+
+1. Install [uv](https://github.com/astral-sh/uv) if you haven't already:
+
+    ```bash
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    ```
+
+2. Install dev dependencies:
+
+    ```bash
+    uv sync --extra dev
+    ```
+
+3. Set up pre-commit hooks:
+
+    ```bash
+    uv run pre-commit install
+    ```
+
+### Running Tests
+
+```bash
+uv run pytest
+```
+
+To skip integration tests:
+
+```bash
+uv run pytest -m "not integration"
+```
+
+### Linting and Type Checking
+
+Run the linter:
+
+```bash
+uv run ruff check .
+uv run ruff format .
+```
+
+Run the type checker:
+
+```bash
+uv run pyright
+```
+
+### Notebook Linting
+
+For Jupyter notebooks:
+
+```bash
+uv run nbqa ruff notebooks/
+```
+
+### Contributing
+
+Please ensure all tests pass and pre-commit hooks succeed before creating new PRs.
