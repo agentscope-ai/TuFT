@@ -295,7 +295,7 @@ We focus on post-training for agentic models. The rollout phase in RL training i
 ### Near-Term (3 months)
 
 - **Multi-machine, multi-GPU training**: Support distributed architectures using PeFT, FSDP, vLLM, DeepSpeed, etc.
-- **Cloud-native deployment**: Integration with AWS, Alibaba Cloud, GCP, and Kubernetes orchestration
+- **Cloud-native deployment**: Integration with AWS, Alibaba Cloud, GCP, Azure and Kubernetes orchestration
 - **Observability**: Monitoring system with real-time logs, GPU metrics, training progress, and debugging tools
 - **Serverless GPU**: Lightweight runtime modes for diverse deployment scenarios, with multi-user and multi-tenant GPU resource sharing to improve utilization efficiency
 
