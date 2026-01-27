@@ -2,7 +2,7 @@
 # TuFT Installation Script
 # Usage: /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install.sh)"
 
-set -e
+set -euo pipefail
 
 # Colors for output
 RED='\033[0;31m'
@@ -162,6 +162,7 @@ create_directories() {
     mkdir -p "$TUFT_BIN"
     mkdir -p "$TUFT_HOME/checkpoints"
     mkdir -p "$TUFT_HOME/configs"
+    mkdir -p "$TUFT_HOME/scripts"
 }
 
 # Create Python virtual environment and install tuft
@@ -205,6 +206,7 @@ install_tuft() {
 FLASH_ATTN_SCRIPT_URL="https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install_flash_attn.py"
 
 # Install flash-attn from precompiled wheels (avoids lengthy compilation)
+# Also stores the script locally for later use by install-backend command
 install_flash_attn() {
     if [ "$INSTALL_BACKEND" != true ]; then
         return
@@ -212,21 +214,25 @@ install_flash_attn() {
 
     print_step "Installing flash-attn from precompiled wheels..."
 
-    # Use local script if installing from local source, otherwise download from GitHub
+    local script_path="$TUFT_HOME/scripts/install_flash_attn.py"
+
+    # Copy or download the flash-attn install script to local storage
     if [ -n "$LOCAL_SOURCE_PATH" ] && [ -f "$LOCAL_SOURCE_PATH/scripts/install_flash_attn.py" ]; then
         print_step "Using local flash-attn install script"
-        "$TUFT_VENV/bin/python" "$LOCAL_SOURCE_PATH/scripts/install_flash_attn.py" || true
+        cp "$LOCAL_SOURCE_PATH/scripts/install_flash_attn.py" "$script_path"
+    else
+        # Download the script from GitHub and store locally
+        if ! curl -fsSL "$FLASH_ATTN_SCRIPT_URL" -o "$script_path"; then
+            print_warning "Could not download flash-attn install script, skipping"
+            return
+        fi
+    fi
+
+    # Run the script and check exit code
+    if "$TUFT_VENV/bin/python" "$script_path"; then
         print_success "flash-attn installation complete"
     else
-        # Download and run the install_flash_attn.py script from GitHub
-        local script_path="/tmp/install_flash_attn.py"
-        if curl -fsSL "$FLASH_ATTN_SCRIPT_URL" -o "$script_path"; then
-            "$TUFT_VENV/bin/python" "$script_path" || true
-            rm -f "$script_path"
-            print_success "flash-attn installation complete"
-        else
-            print_warning "Could not download flash-attn install script, skipping"
-        fi
+        print_warning "flash-attn installation failed. This is optional, so installation will continue."
     fi
 }
 
@@ -357,16 +363,27 @@ case "${1:-}" in
         # Install all extras (backend + persistence)
         uv pip install --python "$TUFT_PYTHON" "tuft[backend,persistence]"
 
-        # Install flash-attn from precompiled wheels
+        # Install flash-attn from precompiled wheels using local script
         echo ""
         echo "Installing flash-attn from precompiled wheels..."
-        FLASH_SCRIPT_URL="https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install_flash_attn.py"
-        FLASH_SCRIPT_PATH="/tmp/install_flash_attn.py"
-        if curl -fsSL "$FLASH_SCRIPT_URL" -o "$FLASH_SCRIPT_PATH"; then
-            "$TUFT_PYTHON" "$FLASH_SCRIPT_PATH" || true
-            rm -f "$FLASH_SCRIPT_PATH"
+        FLASH_SCRIPT_PATH="$TUFT_HOME/scripts/install_flash_attn.py"
+
+        # Download script if not present locally
+        if [ ! -f "$FLASH_SCRIPT_PATH" ]; then
+            FLASH_SCRIPT_URL="https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install_flash_attn.py"
+            mkdir -p "$TUFT_HOME/scripts"
+            if ! curl -fsSL "$FLASH_SCRIPT_URL" -o "$FLASH_SCRIPT_PATH"; then
+                echo "Warning: Could not download flash-attn install script, skipping"
+                echo ""
+                echo "Backend installation complete (flash-attn skipped)!"
+                exit 0
+            fi
+        fi
+
+        if "$TUFT_PYTHON" "$FLASH_SCRIPT_PATH"; then
+            echo "flash-attn installation complete"
         else
-            echo "Warning: Could not download flash-attn install script, skipping"
+            echo "Warning: flash-attn installation failed. This is optional, so installation will continue."
         fi
         echo ""
         echo "Backend installation complete!"
@@ -376,7 +393,7 @@ case "${1:-}" in
         echo "Uninstalling TuFT..."
         read -p "This will remove $TUFT_HOME. Are you sure? [y/N] " -n 1 -r
         echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
+        if [[ "$REPLY" =~ ^[Yy]$ ]]; then
             rm -rf "$TUFT_HOME"
             echo "TuFT uninstalled. Please remove $TUFT_HOME/bin from your PATH."
         else
@@ -540,7 +557,7 @@ print_completion() {
     echo "To get started:"
     echo ""
     echo "  1. Restart your terminal or run:"
-    echo "     source ~/.$(basename $SHELL)rc"
+    echo "     source ~/.$(basename "$SHELL")rc"
     echo ""
     echo "  2. Create a model configuration file:"
     echo "     cp $TUFT_HOME/configs/models.yaml.example $TUFT_HOME/configs/models.yaml"
