@@ -7,8 +7,7 @@ import pytest
 from typer.testing import CliRunner
 
 from tuft import cli
-from tuft.config import AppConfig
-from tuft.config import ModelConfig
+from tuft.config import AppConfig, ModelConfig
 
 
 def test_start_passes_config(monkeypatch, tmp_path) -> None:

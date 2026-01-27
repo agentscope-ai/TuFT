@@ -83,8 +83,7 @@ def configure_persistence(request):
     Each test uses a unique temporary file for FileRedis to ensure test isolation.
     Use --no-persistence to disable persistence entirely.
     """
-    from tuft.persistence import PersistenceConfig
-    from tuft.persistence import get_redis_store
+    from tuft.persistence import PersistenceConfig, get_redis_store
 
     store = get_redis_store()
     store.reset()
@@ -150,8 +149,7 @@ def enable_persistence(request):
 
     Uses Redis if available, otherwise falls back to FileRedis with unique temp file.
     """
-    from tuft.persistence import PersistenceConfig
-    from tuft.persistence import get_redis_store
+    from tuft.persistence import PersistenceConfig, get_redis_store
 
     store = get_redis_store()
     store.reset()

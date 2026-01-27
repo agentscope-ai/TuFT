@@ -4,14 +4,13 @@ from typing import Dict
 
 import ray
 import torch
-from peft import LoraConfig
-from peft import get_peft_model
+from peft import LoraConfig, get_peft_model
 from ray.actor import ActorProxy
+from tinker import types
 from tinker.types import LoraConfig as TinkerLoraConfig
 from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoModelForCausalLM
 
-from tinker import types
 from tuft.checkpoints import CheckpointRecord
 from tuft.config import ModelConfig
 from tuft.loss_fn import get_loss_fn

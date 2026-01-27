@@ -5,19 +5,12 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from datetime import timezone
 from functools import partial
-from typing import Any
-from typing import Callable
+from typing import Any, Callable
 
-from fastapi import Depends
-from fastapi import FastAPI
-from fastapi import HTTPException
-from fastapi import Query
-from fastapi import Request
-from fastapi import status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import Response
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
-
 from tinker import types
 
 from .auth import User

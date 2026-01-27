@@ -7,22 +7,17 @@ from pathlib import Path
 
 import pytest
 import ray
+from tinker import types
 from tinker.types.try_again_response import TryAgainResponse
 
-from tinker import types
 from tuft.auth import User
-from tuft.config import AppConfig
-from tuft.config import ModelConfig
+from tuft.config import AppConfig, ModelConfig
 from tuft.exceptions import UnknownModelException
 from tuft.futures import FutureStore
-from tuft.persistence import get_redis_store
-from tuft.persistence import is_persistence_enabled
-from tuft.sampling_controller import SamplingController
-from tuft.sampling_controller import SamplingSessionRecord
-from tuft.state import ServerState
-from tuft.state import SessionManager
-from tuft.training_controller import TrainingController
-from tuft.training_controller import TrainingRunRecord
+from tuft.persistence import get_redis_store, is_persistence_enabled
+from tuft.sampling_controller import SamplingController, SamplingSessionRecord
+from tuft.state import ServerState, SessionManager
+from tuft.training_controller import TrainingController, TrainingRunRecord
 
 
 def _is_gpu_mode() -> bool:

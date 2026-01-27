@@ -1,6 +1,4 @@
-from typing import Callable
-from typing import Dict
-from typing import Tuple
+from typing import Callable, Dict, Tuple
 
 from torch import Tensor
 from typing_extensions import TypeAlias

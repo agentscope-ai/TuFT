@@ -7,8 +7,7 @@ from pathlib import Path
 import typer
 import uvicorn
 
-from .config import AppConfig
-from .config import load_yaml_config
+from .config import AppConfig, load_yaml_config
 from .server import create_root_app
 
 

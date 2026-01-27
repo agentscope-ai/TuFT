@@ -10,11 +10,10 @@ import httpx
 import pytest
 import ray
 import uvicorn
+from tinker import types
 from tinker.lib.public_interfaces.service_client import ServiceClient
 
-from tinker import types
-from tuft.config import AppConfig
-from tuft.config import ModelConfig
+from tuft.config import AppConfig, ModelConfig
 from tuft.server import create_root_app
 
 
