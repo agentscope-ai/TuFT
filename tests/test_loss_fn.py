@@ -1,10 +1,11 @@
 import pytest
 import torch
 
-from tuft.loss_fn import get_loss_fn
 
-
+@pytest.mark.gpu
 def test_get_loss_fn():
+    from tuft.loss_fn import get_loss_fn
+
     loss_fn_names = [
         "cross_entropy",
         "importance_sampling",
@@ -22,7 +23,10 @@ def test_get_loss_fn():
     assert str(exc_info.value) == f"Loss function {invalid_name} not found."
 
 
+@pytest.mark.gpu
 def test_cross_entropy_loss():
+    from tuft.loss_fn import get_loss_fn
+
     loss_fn = get_loss_fn("cross_entropy")
     loss_fn_inputs = {
         "target_logprobs": torch.tensor([-0.2, -0.5, -0.3]),
@@ -35,7 +39,10 @@ def test_cross_entropy_loss():
     assert metrics["loss:sum"] == expected_loss, "Cross-entropy metric mismatch."
 
 
+@pytest.mark.gpu
 def test_importance_sampling_loss():
+    from tuft.loss_fn import get_loss_fn
+
     loss_fn = get_loss_fn("importance_sampling")
     loss_fn_inputs = {
         "target_logprobs": torch.tensor([-0.1, -0.4, -0.5]),
@@ -53,7 +60,10 @@ def test_importance_sampling_loss():
     ), "Importance sampling metric mismatch."
 
 
+@pytest.mark.gpu
 def test_ppo_loss():
+    from tuft.loss_fn import get_loss_fn
+
     loss_fn = get_loss_fn("ppo")
     loss_fn_inputs = {
         "target_logprobs": torch.tensor([-0.2, -0.5, -0.4]),
@@ -72,7 +82,10 @@ def test_ppo_loss():
     ), "PPO metric mismatch."
 
 
+@pytest.mark.gpu
 def test_cispo_loss():
+    from tuft.loss_fn import get_loss_fn
+
     loss_fn = get_loss_fn("cispo")
     loss_fn_inputs = {
         "target_logprobs": torch.tensor([-0.3, -0.6, -0.2]),
@@ -91,7 +104,10 @@ def test_cispo_loss():
     ), "CISPO metric mismatch."
 
 
+@pytest.mark.gpu
 def test_dro_loss():
+    from tuft.loss_fn import get_loss_fn
+
     loss_fn = get_loss_fn("dro")
     loss_fn_inputs = {
         "target_logprobs": torch.tensor([-0.4, -0.3, -0.5]),
