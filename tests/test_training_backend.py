@@ -19,7 +19,8 @@ from .helpers import (
     _normalize_text,
 )
 
-def _construct_data() -> List[types.Datum]:
+
+def _construct_data(name: str = "extended") -> List[types.Datum]:
     assert "TUFT_TEST_MODEL" in os.environ, (
         "Environment variable TUFT_TEST_MODEL must be set for this test."
     )
@@ -231,9 +232,9 @@ async def test_colocate_sampling_and_training():
     from tuft.backends.sampling_backend import VLLMSamplingBackend
     from tuft.backends.training_backend import HFTrainingBackend
 
-    assert (
-        "TUFT_TEST_MODEL" in os.environ
-    ), "Environment variable TUFT_TEST_MODEL must be set for this test."
+    assert "TUFT_TEST_MODEL" in os.environ, (
+        "Environment variable TUFT_TEST_MODEL must be set for this test."
+    )
 
     model_path = Path(os.environ.get("TUFT_TEST_MODEL", "Qwen/Qwen3-0.6B"))
     model_config = ModelConfig(
@@ -301,6 +302,6 @@ async def test_colocate_sampling_and_training():
             )
             assert sample_res.sequences and sample_res.sequences[0].tokens
             output_text = tokenizer.decode(sample_res.sequences[0].tokens, skip_special_tokens=True)
-            assert _normalize_text(output_text) == _normalize_text(
-                example["output"]
-            ), f"Expected {_normalize_text(example['output'])}, got {_normalize_text(output_text)}"
+            assert _normalize_text(output_text) == _normalize_text(example["output"]), (
+                f"Expected {_normalize_text(example['output'])}, got {_normalize_text(output_text)}"
+            )
