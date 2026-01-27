@@ -6,17 +6,17 @@ from typing import List
 import numpy as np
 import pytest
 import transformers
-
 from tinker import types
+
 from tuft.backends.training_backend import HFTrainingBackend
 from tuft.checkpoints import CheckpointRecord
 from tuft.config import ModelConfig
 
 
 def _construct_data() -> List[types.Datum]:
-    assert (
-        "TUFT_TEST_MODEL" in os.environ
-    ), "Environment variable TUFT_TEST_MODEL must be set for this test."
+    assert "TUFT_TEST_MODEL" in os.environ, (
+        "Environment variable TUFT_TEST_MODEL must be set for this test."
+    )
 
     model_path = Path(os.environ.get("TUFT_TEST_MODEL", "Qwen/Qwen3-0.6B"))
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_path)
@@ -62,9 +62,9 @@ def _construct_data() -> List[types.Datum]:
 @pytest.mark.gpu
 @pytest.mark.asyncio
 async def test_training_backend():
-    assert (
-        "TUFT_TEST_MODEL" in os.environ
-    ), "Environment variable TUFT_TEST_MODEL must be set for this test."
+    assert "TUFT_TEST_MODEL" in os.environ, (
+        "Environment variable TUFT_TEST_MODEL must be set for this test."
+    )
 
     model_path = Path(os.environ.get("TUFT_TEST_MODEL", "Qwen/Qwen3-8B"))
     model_config = ModelConfig(
@@ -116,15 +116,15 @@ async def test_training_backend():
         print(f"(2) Loss per token at step {step}: {loss_per_token_2:.4f}")
     # Verify that the loss is decreasing
     for i in range(1, len(loss_per_tokens_1)):
-        assert (
-            loss_per_tokens_1[i] < loss_per_tokens_1[i - 1]
-        ), "Loss did not decrease for lora_id test_lora_1"
-        assert (
-            loss_per_tokens_2[i] < loss_per_tokens_2[i - 1]
-        ), "Loss did not decrease for lora_id test_lora_2"
-        assert (
-            abs(loss_per_tokens_1[i] - loss_per_tokens_2[i]) < 0.2
-        ), "Losses for both LoRAs diverged unexpectedly"
+        assert loss_per_tokens_1[i] < loss_per_tokens_1[i - 1], (
+            "Loss did not decrease for lora_id test_lora_1"
+        )
+        assert loss_per_tokens_2[i] < loss_per_tokens_2[i - 1], (
+            "Loss did not decrease for lora_id test_lora_2"
+        )
+        assert abs(loss_per_tokens_1[i] - loss_per_tokens_2[i]) < 0.2, (
+            "Losses for both LoRAs diverged unexpectedly"
+        )
     # test saving and loading adapter
     # use a temp directory to save and load
     loss_per_tokens_loaded_1 = []
@@ -191,19 +191,19 @@ async def test_training_backend():
             loss_per_tokens_loaded_2.append(loss_per_token_loaded_2)
             print(f"(1) Loss per token at step {step}: {loss_per_token_loaded_1:.4f}")
             print(f"(2) Loss per token at step {step}: {loss_per_token_loaded_2:.4f}")
-    assert (
-        loss_per_tokens_loaded_1[0] < loss_per_tokens_1[-1]
-    ), "Loaded lora_id test_lora_3 did not improve over saved state"
-    assert (
-        loss_per_tokens_loaded_2[0] < loss_per_tokens_2[-1]
-    ), "Loaded lora_id test_lora_4 did not improve over saved state"
+    assert loss_per_tokens_loaded_1[0] < loss_per_tokens_1[-1], (
+        "Loaded lora_id test_lora_3 did not improve over saved state"
+    )
+    assert loss_per_tokens_loaded_2[0] < loss_per_tokens_2[-1], (
+        "Loaded lora_id test_lora_4 did not improve over saved state"
+    )
     for i in range(1, len(loss_per_tokens_loaded_1)):
-        assert (
-            loss_per_tokens_loaded_1[i] < loss_per_tokens_loaded_1[i - 1]
-        ), "Loss did not decrease for loaded lora_id test_lora_3"
-        assert (
-            loss_per_tokens_loaded_2[i] < loss_per_tokens_loaded_2[i - 1]
-        ), "Loss did not decrease for loaded lora_id test_lora_4"
+        assert loss_per_tokens_loaded_1[i] < loss_per_tokens_loaded_1[i - 1], (
+            "Loss did not decrease for loaded lora_id test_lora_3"
+        )
+        assert loss_per_tokens_loaded_2[i] < loss_per_tokens_loaded_2[i - 1], (
+            "Loss did not decrease for loaded lora_id test_lora_4"
+        )
 
 
 # From offical Tinker on  Qwen/Qwen3-8B:

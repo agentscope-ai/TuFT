@@ -25,6 +25,7 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
