@@ -301,7 +301,7 @@ We focus on post-training for agentic models. The rollout phase in RL training i
 
 ### Long-Term (6 months)
 
-- **Environment-driven learning loop**: Standardized interfaces with WebShop, MiniWob++, BrowserEnv, Voyager
+- **Environment-driven learning loop**: Standardized interfaces with WebShop, MiniWob++, BrowserEnv, Voyager and other agent training environments
 - **Automated pipeline**: Task execution → feedback collection → data generation → model updates
 - **Advanced RL paradigms**: RLAIF, Error Replay, and environment feedback mechanisms
 - **Simulation sandboxes**: Lightweight local environments for rapid experimentation
