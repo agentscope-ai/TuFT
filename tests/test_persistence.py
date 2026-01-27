@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 import ray
-
 from tinker import types
 from tinker.types.try_again_response import TryAgainResponse
+
 from tuft.auth import User
 from tuft.config import AppConfig, ModelConfig
 from tuft.exceptions import UnknownModelException

@@ -10,6 +10,7 @@ import uvicorn
 from .config import AppConfig, load_yaml_config
 from .server import create_root_app
 
+
 app = typer.Typer(help="Start the local TuFT server.")
 
 _HOST_OPTION = typer.Option("127.0.0.1", "--host", help="Interface to bind")

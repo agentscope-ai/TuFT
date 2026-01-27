@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 from pydantic import BaseModel, Field
-
 from tinker import types
 
 from .backends import BaseSamplingBackend
@@ -30,6 +29,7 @@ from .persistence import (
     load_record,
     save_record,
 )
+
 
 logger = logging.getLogger(__name__)
 

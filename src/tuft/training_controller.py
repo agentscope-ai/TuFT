@@ -9,7 +9,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable, Dict, List, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
-
 from tinker import types
 
 from .backends import BaseTrainingBackend
@@ -31,6 +30,7 @@ from .persistence import (
     save_record,
     save_records_atomic,
 )
+
 
 logger = logging.getLogger(__name__)
 

@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from typing import Dict, TypeVar
 
 from pydantic import BaseModel, Field
-
 from tinker import types
 
 from .auth import AuthenticationDB, User
@@ -23,6 +22,7 @@ from .persistence import (
 )
 from .sampling_controller import SamplingController
 from .training_controller import TrainingController, TrainingRunRecord
+
 
 T = TypeVar("T")
 

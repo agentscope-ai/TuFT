@@ -6,8 +6,8 @@ from typing import List
 import numpy as np
 import pytest
 import transformers
-
 from tinker import types
+
 from tuft.backends.training_backend import HFTrainingBackend
 from tuft.checkpoints import CheckpointRecord
 from tuft.config import ModelConfig

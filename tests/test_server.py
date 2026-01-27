@@ -10,11 +10,12 @@ import httpx
 import pytest
 import ray
 import uvicorn
-
 from tinker import types
 from tinker.lib.public_interfaces.service_client import ServiceClient
+
 from tuft.config import AppConfig, ModelConfig
 from tuft.server import create_root_app
+
 
 pytest.importorskip("h2")
 

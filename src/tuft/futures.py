@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-
 from tinker import types
 from tinker.types.try_again_response import TryAgainResponse
 
@@ -19,6 +18,7 @@ from .persistence import (
     load_record,
     save_record,
 )
+
 
 QueueState = Literal["active", "paused_capacity", "paused_rate_limit"]
 

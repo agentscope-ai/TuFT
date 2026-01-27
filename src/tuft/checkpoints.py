@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_serializer
-
 from tinker import types
 
 from .exceptions import CheckpointMetadataReadException

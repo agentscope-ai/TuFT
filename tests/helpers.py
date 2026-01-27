@@ -8,12 +8,13 @@ import threading
 import time
 
 import httpx
-import uvicorn
-
 import tinker.types as types
+import uvicorn
 from tinker._exceptions import RequestFailedError
+
 from tuft.config import AppConfig
 from tuft.server import create_root_app
+
 
 # Test data constants
 PIG_LATIN_EXAMPLES = [
