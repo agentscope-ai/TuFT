@@ -23,6 +23,7 @@ platform_name = platform.system().lower() + "_" + platform.machine()
 cxx11_abi = str(torch._C._GLIBCXX_USE_CXX11_ABI).upper()
 
 # Is ROCM
+# torch.version.hip/cuda are runtime attributes not in type stubs
 IS_ROCM = hasattr(torch.version, "hip") and torch.version.hip is not None  # type: ignore[attr-defined]
 
 if IS_ROCM:
