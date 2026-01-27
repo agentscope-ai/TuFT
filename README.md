@@ -310,7 +310,7 @@ We focus on post-training for agentic models. The rollout phase in RL training i
 
 This roadmap is not fixed, but rather a starting point for our journey with the open source community. Every feature design will be implemented through GitHub Issue discussions, PRs, and prototype validation. We sincerely welcome you to propose real-world use cases, performance bottlenecks, or innovative ideas—it is these voices that will collectively define the future of Agent post-training.
 
-We welcome contributions from the community! Join us on:
+We welcome suggestions and contributions from the community! Join us on:
 - [DingTalk Group](https://qr.dingtalk.com/action/joingroup?code=v1,k1,UWvzO6HHSeuvRQ5WXCOMJEijadQV+hDjhMIpiVr8qCs=&_dt_no_comment=1&origin=11? TuFT invites you to join DingTalk group chat 【客】Opensource TuFT. Please tap to view more.)
 - [Discord](https://discord.gg/wEahC7ZJ) (on AgentScope's Server)
 
