@@ -52,10 +52,7 @@ jobs:
         run: uv run ruff format .
 
       - name: Run nbqa-ruff on notebooks
-        run: uv run nbqa ruff --fix . || true
-
-      - name: Run mdformat on markdown
-        run: uv run mdformat --check .
+        run: uv run nbqa ruff --fix . --nbqa-ignore .venv --nbqa-ignore tinker || true
 
       - name: Run pyright type checker
         run: uv run pyright

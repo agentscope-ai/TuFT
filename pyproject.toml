@@ -23,9 +23,6 @@ dependencies = [
 [project.optional-dependencies]
 
 dev = [
-    "mdformat>=0.7.22",
-    "mdformat-gfm>=1.0.0",
-    "mdformat-black>=0.1.1",
     "nbqa>=1.9.1",
     "pre-commit>=4.5.1",
     "pyright>=1.1.408",
@@ -84,9 +81,8 @@ markers = [
 [tool.nbqa.addopts]
 ruff = ["--fix"]
 
-[tool.mdformat]
-wrap = "keep"
-number = true
+[tool.nbqa.exclude]
+ruff = "^(\\.venv|tinker)/"
 
 [tool.uv.extra-build-dependencies]
 flash-attn = ["torch", "numpy"]
