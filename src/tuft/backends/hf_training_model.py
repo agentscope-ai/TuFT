@@ -6,17 +6,19 @@ import ray
 import torch
 from peft import LoraConfig, get_peft_model
 from ray.actor import ActorProxy
+from tinker import types
+from tinker.types import LoraConfig as TinkerLoraConfig
 from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoModelForCausalLM
 
-from tinker import types
-from tinker.types import LoraConfig as TinkerLoraConfig
 from tuft.checkpoints import CheckpointRecord
 from tuft.config import ModelConfig
 from tuft.loss_fn import get_loss_fn
 from tuft.telemetry.tracing import extract_context, get_tracer
 
+
 _tracer = get_tracer("tuft.hf_training_model")
+
 
 MODULE_MAP = {
     "llama": {

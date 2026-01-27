@@ -11,6 +11,7 @@ from ..config import ModelConfig
 from ..telemetry.tracing import get_tracer
 from .base_backend import BaseSamplingBackend
 
+
 logger = getLogger(__name__)
 _tracer = get_tracer("tuft.sampling_backend")
 
@@ -77,7 +78,8 @@ class VLLMSamplingBackend(BaseSamplingBackend):
 
     async def async_init(self) -> None:
         """Initialize the backend for sampling."""
-        await self.engine.prepare.remote()
+        # Ray @ray.remote decorator adds .remote() method dynamically
+        await self.engine.prepare.remote()  # type: ignore[attr-defined]
         logger.info(f"SamplingBackend for model {self.base_model} initialized.")
 
     async def sample(
@@ -98,7 +100,8 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                 if lora_id is not None and lora_id not in self.lora_adapters:
                     raise ValueError(f"LoRA adapter {lora_id} not found in backend.")
                 lora_request = self.lora_adapters[lora_id] if lora_id is not None else None
-            return await self.engine.sample.remote(
+            # Ray @ray.remote decorator adds .remote() method dynamically
+            return await self.engine.sample.remote(  # type: ignore[attr-defined]
                 prompt=prompt,
                 num_samples=num_samples,
                 sampling_params=sampling_params,

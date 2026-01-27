@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from typing import Dict, TypeVar
 
 from pydantic import BaseModel, Field
-
 from tinker import types
 
 from .auth import AuthenticationDB, User
@@ -15,14 +14,10 @@ from .checkpoints import CheckpointRecord
 from .config import AppConfig
 from .exceptions import SessionNotFoundException, UserMismatchException
 from .futures import FutureStore
-from .persistence import (
-    get_redis_store,
-    is_persistence_enabled,
-    load_record,
-    save_record,
-)
+from .persistence import get_redis_store, is_persistence_enabled, load_record, save_record
 from .sampling_controller import SamplingController
 from .training_controller import TrainingController, TrainingRunRecord
+
 
 T = TypeVar("T")
 

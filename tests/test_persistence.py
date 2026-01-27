@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 import ray
-
 from tinker import types
 from tinker.types.try_again_response import TryAgainResponse
+
 from tuft.auth import User
 from tuft.config import AppConfig, ModelConfig
 from tuft.exceptions import UnknownModelException
@@ -32,9 +32,9 @@ def _create_test_config(checkpoint_dir: Path) -> AppConfig:
     In CPU mode, uses a dummy model path since the model won't actually be loaded.
     """
     if _is_gpu_mode():
-        assert (
-            "TUFT_TEST_MODEL" in os.environ
-        ), "Environment variable TUFT_TEST_MODEL must be set for GPU tests."
+        assert "TUFT_TEST_MODEL" in os.environ, (
+            "Environment variable TUFT_TEST_MODEL must be set for GPU tests."
+        )
         model_path = Path(os.environ.get("TUFT_TEST_MODEL", "Qwen/Qwen3-0.6B"))
     else:
         model_path = Path("/dummy/model")
@@ -142,9 +142,9 @@ class TestSessionManagerPersistence:
         # === Phase 3: Server restart (new manager created) ===
         new_manager = SessionManager()
 
-        assert (
-            session_id in new_manager._sessions
-        ), "Session should be automatically restored from Redis on manager creation"
+        assert session_id in new_manager._sessions, (
+            "Session should be automatically restored from Redis on manager creation"
+        )
         restored = new_manager._sessions[session_id]
         assert restored.tags == ["persistent"]
         assert restored.user_metadata == {"test": "yes"}
@@ -336,9 +336,9 @@ class TestTrainingRunPersistence:
         # === Phase 3: Server restart (new controller created) ===
         new_controller = TrainingController(app_config)
 
-        assert (
-            training_run_id in new_controller.training_runs
-        ), "Training run should be automatically restored from Redis"
+        assert training_run_id in new_controller.training_runs, (
+            "Training run should be automatically restored from Redis"
+        )
         restored = new_controller.training_runs[training_run_id]
         assert restored.base_model == "Qwen/Qwen3-0.6B"
         assert restored.lora_rank == 8
@@ -607,18 +607,18 @@ class TestServerStatePersistence:
         assert restored_training.next_seq_id == seq_id_at_ckpt2
 
         # *** Verify all 4 futures before/at checkpoint-2 are still ready ***
-        assert (
-            state2.future_store._records[fb1_request_id].status == "ready"
-        ), "fb1 should remain 'ready' after first restart"
-        assert (
-            state2.future_store._records[o1_request_id].status == "ready"
-        ), "o1 should remain 'ready' after first restart"
-        assert (
-            state2.future_store._records[fb2_request_id].status == "ready"
-        ), "fb2 should remain 'ready' after first restart"
-        assert (
-            state2.future_store._records[o2_request_id].status == "ready"
-        ), "o2 should remain 'ready' after first restart"
+        assert state2.future_store._records[fb1_request_id].status == "ready", (
+            "fb1 should remain 'ready' after first restart"
+        )
+        assert state2.future_store._records[o1_request_id].status == "ready", (
+            "o1 should remain 'ready' after first restart"
+        )
+        assert state2.future_store._records[fb2_request_id].status == "ready", (
+            "fb2 should remain 'ready' after first restart"
+        )
+        assert state2.future_store._records[o2_request_id].status == "ready", (
+            "o2 should remain 'ready' after first restart"
+        )
 
         # =====================================================================
         # PHASE 4: Continue training after checkpoint-2
@@ -678,34 +678,34 @@ class TestServerStatePersistence:
         # Note: next_seq_id is restored from Redis, not rolled back to checkpoint state.
         # It reflects the latest saved value (after fb3 and o3 operations = 7)
         # This is intentional: seq_id is always monotonically increasing to avoid conflicts.
-        assert (
-            restored.next_seq_id == 7
-        ), "next_seq_id should be the latest value from Redis (after fb3 and o3)"
+        assert restored.next_seq_id == 7, (
+            "next_seq_id should be the latest value from Redis (after fb3 and o3)"
+        )
 
         # *** Verify futures BEFORE/AT checkpoint-2 are still ready ***
-        assert (
-            state3.future_store._records[fb1_request_id].status == "ready"
-        ), "fb1 should remain 'ready' after second restart"
-        assert (
-            state3.future_store._records[o1_request_id].status == "ready"
-        ), "o1 should remain 'ready' after second restart"
-        assert (
-            state3.future_store._records[fb2_request_id].status == "ready"
-        ), "fb2 should remain 'ready' after second restart"
-        assert (
-            state3.future_store._records[o2_request_id].status == "ready"
-        ), "o2 should remain 'ready' after second restart"
+        assert state3.future_store._records[fb1_request_id].status == "ready", (
+            "fb1 should remain 'ready' after second restart"
+        )
+        assert state3.future_store._records[o1_request_id].status == "ready", (
+            "o1 should remain 'ready' after second restart"
+        )
+        assert state3.future_store._records[fb2_request_id].status == "ready", (
+            "fb2 should remain 'ready' after second restart"
+        )
+        assert state3.future_store._records[o2_request_id].status == "ready", (
+            "o2 should remain 'ready' after second restart"
+        )
 
         # *** Verify futures AFTER checkpoint-2 are marked as FAILED ***
         # Even though they were "ready" before crash, they are now invalid
-        assert (
-            state3.future_store._records[fb3_request_id].status == "failed"
-        ), "fb3 (after checkpoint-2) should be 'failed' after second restart"
+        assert state3.future_store._records[fb3_request_id].status == "failed", (
+            "fb3 (after checkpoint-2) should be 'failed' after second restart"
+        )
         assert state3.future_store._records[fb3_request_id].error is not None
 
-        assert (
-            state3.future_store._records[o3_request_id].status == "failed"
-        ), "o3 (after checkpoint-2) should be 'failed' after second restart"
+        assert state3.future_store._records[o3_request_id].status == "failed", (
+            "o3 (after checkpoint-2) should be 'failed' after second restart"
+        )
         assert state3.future_store._records[o3_request_id].error is not None
         # =====================================================================
         # PHASE 5: Verify training can continue from checkpoint-2

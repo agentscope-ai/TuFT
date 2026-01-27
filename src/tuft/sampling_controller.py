@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 from pydantic import BaseModel, Field
-
 from tinker import types
 
 from .backends import BaseSamplingBackend
@@ -25,14 +24,10 @@ from .exceptions import (
     UnknownModelException,
     UserMismatchException,
 )
-from .persistence import (
-    get_redis_store,
-    is_persistence_enabled,
-    load_record,
-    save_record,
-)
+from .persistence import get_redis_store, is_persistence_enabled, load_record, save_record
 from .telemetry.metrics import get_metrics
 from .telemetry.tracing import get_tracer
+
 
 logger = logging.getLogger(__name__)
 _tracer = get_tracer("tuft.sampling_controller")

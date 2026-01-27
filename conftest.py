@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+
 TEST_REDIS_DB = 15
 TEST_REDIS_URL = os.getenv("TEST_REDIS_URL")
 
