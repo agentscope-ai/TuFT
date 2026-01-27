@@ -10,11 +10,12 @@ import httpx
 import pytest
 import ray
 import uvicorn
-
 from tinker import types
 from tinker.lib.public_interfaces.service_client import ServiceClient
+
 from tuft.config import AppConfig, ModelConfig
 from tuft.server import create_root_app
+
 
 pytest.importorskip("h2")
 
@@ -32,9 +33,9 @@ def server_endpoint(tmp_path_factory: pytest.TempPathFactory, request):
     saved_api_key = os.environ.pop("TINKER_API_KEY", None)
     ray.init(ignore_reinit_error=True)
     if request.config.getoption("--gpu"):
-        assert (
-            "TUFT_TEST_MODEL" in os.environ
-        ), "Environment variable TUFT_TEST_MODEL must be set for this test."
+        assert "TUFT_TEST_MODEL" in os.environ, (
+            "Environment variable TUFT_TEST_MODEL must be set for this test."
+        )
         model_path = Path(os.environ.get("TUFT_TEST_MODEL", "Qwen/Qwen3-0.6B"))
     else:
         model_path = Path("/dummy/model")
