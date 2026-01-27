@@ -215,12 +215,12 @@ Based on **Figure 1** (train mean NLL) and **Figure 2** (test NLL):
 
 <p align="center"><strong>Figure 1. Test NLL</strong></p>
 <p align="center">
-  <img src="../assets/test_nll.png" alt="test_nll" width="720">
+  <img src="../assets/test_nll_sft.png" alt="test_nll" width="720">
 </p>
 
 <p align="center"><strong>Figure 2. Train mean NLL</strong></p>
 <p align="center">
-  <img src="../assets/train_mean_nll.png" alt="train_mean_nll" width="720">
+  <img src="../assets/train_mean_nll_sft.png" alt="train_mean_nll" width="720">
 </p>
 
 
