@@ -10,11 +10,11 @@ from pathlib import Path
 import httpx
 import pytest
 import ray
+import tinker.types as types
 import uvicorn
+from tinker.lib.public_interfaces.service_client import ServiceClient
 from transformers import AutoTokenizer
 
-import tinker.types as types
-from tinker.lib.public_interfaces.service_client import ServiceClient
 from tuft.config import AppConfig, ModelConfig
 from tuft.server import create_root_app
 

@@ -33,9 +33,9 @@ def ray_cluster(request):
 
 def _build_state(tmp_path, use_gpu: bool = False) -> ServerState:
     if use_gpu:
-        assert (
-            "TUFT_TEST_MODEL" in os.environ
-        ), "Environment variable TUFT_TEST_MODEL must be set for this test."
+        assert "TUFT_TEST_MODEL" in os.environ, (
+            "Environment variable TUFT_TEST_MODEL must be set for this test."
+        )
         model_path = Path(os.environ.get("TUFT_TEST_MODEL", "Qwen/Qwen3-0.6B"))
     else:
         model_path = Path("/path/to/model")

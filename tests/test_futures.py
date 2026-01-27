@@ -4,9 +4,9 @@ import asyncio
 import time
 
 import pytest
+from tinker.types.try_again_response import TryAgainResponse
 
 from tinker import types
-from tinker.types.try_again_response import TryAgainResponse
 from tuft.exceptions import UnknownModelException, UserMismatchException
 from tuft.futures import FutureStore
 

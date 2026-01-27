@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 import ray
-from transformers import AutoTokenizer
-
 import tinker.types as types
 from tinker.lib.public_interfaces.service_client import ServiceClient
+from transformers import AutoTokenizer
+
 from tuft.config import AppConfig, ModelConfig
 from tuft.persistence import PersistenceConfig
 
