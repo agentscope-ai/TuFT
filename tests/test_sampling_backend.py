@@ -4,8 +4,9 @@ import os
 from pathlib import Path
 
 import pytest
-from tinker import types
 from transformers import AutoTokenizer
+
+from tinker import types
 
 
 @pytest.fixture(scope="function", autouse=True)

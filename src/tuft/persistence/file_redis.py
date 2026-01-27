@@ -28,7 +28,6 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Iterable
 
-
 logger = logging.getLogger(__name__)
 
 

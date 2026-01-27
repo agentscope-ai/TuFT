@@ -3,8 +3,8 @@ from dataclasses import dataclass, field
 from typing import Sequence
 
 import numpy as np
-from tinker import types
 
+from tinker import types
 from tuft.backends.base_backend import BaseTrainingBackend
 from tuft.checkpoints import CheckpointRecord
 from tuft.config import ModelConfig

@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, Sequence
 
 import numpy as np
+
 from tinker import types
 
 

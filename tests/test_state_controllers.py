@@ -5,8 +5,8 @@ import os
 from pathlib import Path
 
 import pytest
-from tinker import types
 
+from tinker import types
 from tuft.auth import User
 from tuft.config import AppConfig, ModelConfig
 from tuft.exceptions import (

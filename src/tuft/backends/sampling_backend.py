@@ -10,7 +10,6 @@ from tinker import types
 from ..config import ModelConfig
 from .base_backend import BaseSamplingBackend
 
-
 logger = getLogger(__name__)
 
 
