@@ -1,10 +1,10 @@
 # TuFT
 
-TuFT( **T**enant-**u**nified **F**ine**T**uning) is a multi-tenant system that provides a unified
+TuFT (**T**enant-**u**nified **F**ine**T**uning) is a multi-tenant system that provides a unified
 service API for finetuning large language models (LLMs).
-Users can use TuFT via compatible clients such as [Tinker SDK](https://github.com/thinking-machine-lab/tinker).
+Users can use TuFT via compatible client SDKs such as the Tinker SDK.
 
-Please read our [roadmap](#roadmap) for our goals and up-coming features.
+Please read our [roadmap](#roadmap) for our goals and upcoming features.
 We welcome open-source collaboration. Join our community for updates and help:
 - [DingTalk Group](https://qr.dingtalk.com/action/joingroup?code=v1,k1,UWvzO6HHSeuvRQ5WXCOMJEijadQV+hDjhMIpiVr8qCs=&_dt_no_comment=1&origin=11?)
 - [Discord](https://discord.gg/wEahC7ZJ)
@@ -12,27 +12,11 @@ We welcome open-source collaboration. Join our community for updates and help:
 ## Table of Contents
 
 - [Architecture](#architecture)
-  - [Key Components](#key-components)
 - [Quick Start Example](#quick-start-example)
-  - [1. Data Preparation](#1-data-preparation)
-  - [2. Training](#2-training)
-  - [3. Save Checkpoint](#3-save-checkpoint)
-  - [4. Sampling](#4-sampling)
 - [Installation](#installation)
-  - [Install from Source Code](#install-from-source-code)
-  - [Install via PyPI](#install-via-pypi)
-  - [Run the server](#run-the-server)
 - [Use the Pre-built Docker Image](#use-the-pre-built-docker-image)
 - [Persistence](#persistence)
-  - [Persistence Modes](#persistence-modes)
-  - [Configuration](#configuration)
-  - [Python API](#python-api)
 - [Roadmap](#roadmap)
-  - [Core Focus: Post-Training for Agent Scenarios](#core-focus-post-training-for-agent-scenarios)
-  - [Architecture & Positioning](#architecture--positioning)
-  - [Near-Term (3 months)](#near-term-3-months)
-  - [Long-Term (6 months)](#long-term-6-months)
-  - [Open Collaboration: We are Looking for Collaborators](#open-collaboration-we-are-looking-for-collaborators)
 - [Development](#development)
 
 ## Architecture
@@ -85,7 +69,8 @@ graph TB
 
 ## Quick Start Example
 
-This example demonstrates how to use TuFT for training and sampling. Make sure the server is running on port 8080 before running the code. See the [Run the server](#run-the-server) section below for instructions on starting the server.
+This example demonstrates how to use TuFT for training and sampling with the [Tinker SDK](https://pypi.org/project/tinker/). 
+Make sure the server is running on port 8080 before running the code. See the [Run the server](#run-the-server) section below for instructions on starting the server.
 
 ### 1. Data Preparation
 
@@ -404,23 +389,6 @@ persistence:
   namespace: "tuft"
 ```
 
-### Python API
-
-You can also configure persistence programmatically:
-
-```python
-from tuft.persistence import PersistenceConfig
-
-# Disabled (no persistence)
-config = PersistenceConfig.disabled()
-
-# External Redis server
-config = PersistenceConfig.from_redis_url("redis://localhost:6379/0")
-
-# File-backed store
-config = PersistenceConfig.from_file_redis("~/.cache/tuft/file_redis.json")
-```
-
 ## Roadmap
 
 ### Core Focus: Post-Training for Agent Scenarios
@@ -458,5 +426,61 @@ We welcome suggestions and contributions from the community! Join us on:
 
 ## Development
 
-- Design docs are located in [`docs`](./docs/).
-- Please install `pre-commit` and ensure test passes before creating new PRs.
+### Setup Development Environment
+
+1. Install [uv](https://github.com/astral-sh/uv) if you haven't already:
+
+    ```bash
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    ```
+
+2. Install dev dependencies:
+
+    ```bash
+    uv sync --extra dev
+    ```
+
+3. Set up pre-commit hooks:
+
+    ```bash
+    uv run pre-commit install
+    ```
+
+### Running Tests
+
+```bash
+uv run pytest
+```
+
+To skip integration tests:
+
+```bash
+uv run pytest -m "not integration"
+```
+
+### Linting and Type Checking
+
+Run the linter:
+
+```bash
+uv run ruff check .
+uv run ruff format .
+```
+
+Run the type checker:
+
+```bash
+uv run pyright
+```
+
+### Notebook Linting
+
+For Jupyter notebooks:
+
+```bash
+uv run nbqa ruff notebooks/
+```
+
+### Contributing
+
+Please ensure all tests pass and pre-commit hooks succeed before creating new PRs.
