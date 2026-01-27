@@ -26,7 +26,10 @@ RUN chmod 1777 /tmp && apt update && apt install -y --no-install-recommends \
 ENV VIRTUAL_ENV=/opt/venv
 
 # copy the TuFT dir into the workspace
-COPY . .
+COPY ./pyproject.toml .
+COPY ./LICENSE .
+COPY ./README.md .
+COPY ./src ./src
 
 #  Uncomment the following line if you want to use AliCloud Mirror to speed up pip install
 # ENV UV_DEFAULT_INDEX=http://mirrors.cloud.aliyuncs.com/pypi/simple/
