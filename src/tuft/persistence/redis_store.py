@@ -32,22 +32,16 @@ logger = logging.getLogger(__name__)
 
 def _get_tracer():
     """Lazy import tracer to avoid circular imports."""
-    try:
-        from tuft.telemetry.tracing import get_tracer
+    from tuft.telemetry.tracing import get_tracer
 
-        return get_tracer("tuft.redis_store")
-    except ImportError:
-        return None
+    return get_tracer("tuft.redis_store")
 
 
 def _get_metrics():
     """Lazy import metrics to avoid circular imports."""
-    try:
-        from tuft.telemetry.metrics import get_metrics
+    from tuft.telemetry.metrics import get_metrics
 
-        return get_metrics()
-    except ImportError:
-        return None
+    return get_metrics()
 
 
 T = TypeVar("T", bound=BaseModel)
@@ -236,15 +230,9 @@ class RedisStore:
         tracer = _get_tracer()
 
         try:
-            if tracer:
-                with tracer.start_as_current_span("redis.SET") as span:
-                    span.set_attribute("db.system", "redis")
-                    span.set_attribute("db.operation", "SET")
-                    if ttl_seconds is not None:
-                        redis.setex(key, ttl_seconds, value)
-                    else:
-                        redis.set(key, value)
-            else:
+            with tracer.start_as_current_span("redis.SET") as span:
+                span.set_attribute("db.system", "redis")
+                span.set_attribute("db.operation", "SET")
                 if ttl_seconds is not None:
                     redis.setex(key, ttl_seconds, value)
                 else:
@@ -253,8 +241,7 @@ class RedisStore:
             # Record metrics
             duration = time.perf_counter() - start_time
             metrics = _get_metrics()
-            if metrics:
-                metrics.redis_operation_duration.record(duration, {"operation": "SET"})
+            metrics.redis_operation_duration.record(duration, {"operation": "SET"})
             if duration > 0.1:
                 logger.warning("Redis operation slow: SET (%.3fs)", duration)
 
@@ -273,19 +260,15 @@ class RedisStore:
         tracer = _get_tracer()
 
         try:
-            if tracer:
-                with tracer.start_as_current_span("redis.GET") as span:
-                    span.set_attribute("db.system", "redis")
-                    span.set_attribute("db.operation", "GET")
-                    result = redis.get(key)
-            else:
+            with tracer.start_as_current_span("redis.GET") as span:
+                span.set_attribute("db.system", "redis")
+                span.set_attribute("db.operation", "GET")
                 result = redis.get(key)
 
             # Record metrics
             duration = time.perf_counter() - start_time
             metrics = _get_metrics()
-            if metrics:
-                metrics.redis_operation_duration.record(duration, {"operation": "GET"})
+            metrics.redis_operation_duration.record(duration, {"operation": "GET"})
             if duration > 0.1:
                 logger.warning("Redis operation slow: GET (%.3fs)", duration)
 
@@ -304,19 +287,15 @@ class RedisStore:
         tracer = _get_tracer()
 
         try:
-            if tracer:
-                with tracer.start_as_current_span("redis.DEL") as span:
-                    span.set_attribute("db.system", "redis")
-                    span.set_attribute("db.operation", "DEL")
-                    redis.delete(key)
-            else:
+            with tracer.start_as_current_span("redis.DEL") as span:
+                span.set_attribute("db.system", "redis")
+                span.set_attribute("db.operation", "DEL")
                 redis.delete(key)
 
             # Record metrics
             duration = time.perf_counter() - start_time
             metrics = _get_metrics()
-            if metrics:
-                metrics.redis_operation_duration.record(duration, {"operation": "DEL"})
+            metrics.redis_operation_duration.record(duration, {"operation": "DEL"})
 
             return True
         except Exception:
@@ -333,19 +312,15 @@ class RedisStore:
         tracer = _get_tracer()
 
         try:
-            if tracer:
-                with tracer.start_as_current_span("redis.SCAN") as span:
-                    span.set_attribute("db.system", "redis")
-                    span.set_attribute("db.operation", "SCAN")
-                    result = list(redis.scan_iter(match=pattern))
-            else:
+            with tracer.start_as_current_span("redis.SCAN") as span:
+                span.set_attribute("db.system", "redis")
+                span.set_attribute("db.operation", "SCAN")
                 result = list(redis.scan_iter(match=pattern))
 
             # Record metrics
             duration = time.perf_counter() - start_time
             metrics = _get_metrics()
-            if metrics:
-                metrics.redis_operation_duration.record(duration, {"operation": "SCAN"})
+            metrics.redis_operation_duration.record(duration, {"operation": "SCAN"})
 
             return result
         except Exception:

@@ -9,6 +9,12 @@ import logging
 import threading
 from typing import Any
 
+import psutil
+import pynvml
+from opentelemetry import metrics
+from opentelemetry.metrics import Observation
+
+
 logger = logging.getLogger(__name__)
 
 # Module-level meter cache
@@ -22,60 +28,20 @@ def get_meter(name: str = "tuft"):
         name: Name for the meter (typically module name).
 
     Returns:
-        A Meter instance, or a NoOpMeter if OTel is not available.
+        A Meter instance. When no MeterProvider is configured,
+        OpenTelemetry automatically returns a NoOpMeter.
     """
     if name in _meters:
         return _meters[name]
 
-    try:
-        from opentelemetry import metrics
-
-        meter = metrics.get_meter(name)
-    except ImportError:
-        meter = _NoOpMeter()
-
+    meter = metrics.get_meter(name)
     _meters[name] = meter
     return meter
 
 
-class _NoOpMeter:
-    """No-op meter for when OpenTelemetry is not available."""
-
-    def create_counter(self, name: str, **kwargs):
-        return _NoOpCounter()
-
-    def create_up_down_counter(self, name: str, **kwargs):
-        return _NoOpCounter()
-
-    def create_histogram(self, name: str, **kwargs):
-        return _NoOpHistogram()
-
-    def create_gauge(self, name: str, **kwargs):
-        return _NoOpGauge()
-
-    def create_observable_gauge(self, name: str, callbacks, **kwargs):
-        return None
-
-
-class _NoOpCounter:
-    """No-op counter."""
-
-    def add(self, amount: int | float, attributes: dict[str, Any] | None = None) -> None:
-        pass
-
-
-class _NoOpHistogram:
-    """No-op histogram."""
-
-    def record(self, amount: int | float, attributes: dict[str, Any] | None = None) -> None:
-        pass
-
-
-class _NoOpGauge:
-    """No-op gauge."""
-
-    def set(self, amount: int | float, attributes: dict[str, Any] | None = None) -> None:
-        pass
+def clear_meters() -> None:
+    """Clear the meter cache. Used during shutdown."""
+    _meters.clear()
 
 
 class TuftMetrics:
@@ -205,16 +171,32 @@ class ResourceMetricsCollector:
         self._checkpoint_dir = checkpoint_dir
         self._running = False
         self._thread: threading.Thread | None = None
+        self._nvml_initialized = False
+        self._gpu_available = self._check_and_init_gpu()
         self._setup_metrics()
+
+    def _check_and_init_gpu(self) -> bool:
+        """Check if GPU monitoring is available and initialize NVML once."""
+        try:
+            pynvml.nvmlInit()
+            self._nvml_initialized = True
+            return True
+        except pynvml.NVMLError as e:
+            logger.debug("GPU monitoring not available: %s", e)
+            return False
+
+    def _shutdown_gpu(self) -> None:
+        """Shutdown NVML if it was initialized."""
+        if self._nvml_initialized:
+            try:
+                pynvml.nvmlShutdown()
+                self._nvml_initialized = False
+            except pynvml.NVMLError as e:
+                logger.warning("Failed to shutdown NVML: %s", e)
 
     def _setup_metrics(self) -> None:
         """Set up observable gauges for resource metrics."""
-        try:
-            from opentelemetry import metrics
-
-            meter = metrics.get_meter("tuft.resources")
-        except ImportError:
-            return
+        meter = metrics.get_meter("tuft.resources")
 
         # CPU metrics
         meter.create_observable_gauge(
@@ -245,7 +227,7 @@ class ResourceMetricsCollector:
         )
 
         # GPU metrics (if available)
-        if self._is_gpu_available():
+        if self._gpu_available:
             meter.create_observable_gauge(
                 "tuft.resource.gpu.utilization_percent",
                 callbacks=[self._gpu_utilization_callback],
@@ -273,115 +255,65 @@ class ResourceMetricsCollector:
             unit="bytes",
         )
 
-    def _is_gpu_available(self) -> bool:
-        """Check if GPU monitoring is available."""
-        try:
-            import pynvml
-
-            pynvml.nvmlInit()
-            pynvml.nvmlShutdown()
-            return True
-        except Exception:
-            return False
-
     def _cpu_utilization_callback(self, options):
         """Callback for CPU utilization metric."""
-        try:
-            import psutil
-            from opentelemetry.metrics import Observation
-
-            yield Observation(psutil.cpu_percent(interval=None))
-        except ImportError:
-            pass
+        yield Observation(psutil.cpu_percent(interval=None))
 
     def _memory_used_callback(self, options):
         """Callback for memory used metric."""
-        try:
-            import psutil
-            from opentelemetry.metrics import Observation
-
-            yield Observation(psutil.virtual_memory().used)
-        except ImportError:
-            pass
+        yield Observation(psutil.virtual_memory().used)
 
     def _memory_total_callback(self, options):
         """Callback for total memory metric."""
-        try:
-            import psutil
-            from opentelemetry.metrics import Observation
-
-            yield Observation(psutil.virtual_memory().total)
-        except ImportError:
-            pass
+        yield Observation(psutil.virtual_memory().total)
 
     def _memory_utilization_callback(self, options):
         """Callback for memory utilization metric."""
-        try:
-            import psutil
-            from opentelemetry.metrics import Observation
-
-            yield Observation(psutil.virtual_memory().percent)
-        except ImportError:
-            pass
+        yield Observation(psutil.virtual_memory().percent)
 
     def _gpu_utilization_callback(self, options):
         """Callback for GPU utilization metric."""
+        if not self._nvml_initialized:
+            return
         try:
-            import pynvml
-            from opentelemetry.metrics import Observation
-
-            pynvml.nvmlInit()
             device_count = pynvml.nvmlDeviceGetCount()
             for i in range(device_count):
                 handle = pynvml.nvmlDeviceGetHandleByIndex(i)
                 util = pynvml.nvmlDeviceGetUtilizationRates(handle)
                 yield Observation(int(util.gpu), {"gpu_id": str(i)})
-            pynvml.nvmlShutdown()
-        except Exception:
-            pass
+        except pynvml.NVMLError as e:
+            logger.debug("Failed to get GPU utilization: %s", e)
 
     def _gpu_memory_used_callback(self, options):
         """Callback for GPU memory used metric."""
+        if not self._nvml_initialized:
+            return
         try:
-            import pynvml
-            from opentelemetry.metrics import Observation
-
-            pynvml.nvmlInit()
             device_count = pynvml.nvmlDeviceGetCount()
             for i in range(device_count):
                 handle = pynvml.nvmlDeviceGetHandleByIndex(i)
                 mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
                 yield Observation(int(mem_info.used), {"gpu_id": str(i)})
-            pynvml.nvmlShutdown()
-        except Exception:
-            pass
+        except pynvml.NVMLError as e:
+            logger.debug("Failed to get GPU memory used: %s", e)
 
     def _gpu_memory_total_callback(self, options):
         """Callback for GPU total memory metric."""
+        if not self._nvml_initialized:
+            return
         try:
-            import pynvml
-            from opentelemetry.metrics import Observation
-
-            pynvml.nvmlInit()
             device_count = pynvml.nvmlDeviceGetCount()
             for i in range(device_count):
                 handle = pynvml.nvmlDeviceGetHandleByIndex(i)
                 mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
                 yield Observation(int(mem_info.total), {"gpu_id": str(i)})
-            pynvml.nvmlShutdown()
-        except Exception:
-            pass
+        except pynvml.NVMLError as e:
+            logger.debug("Failed to get GPU memory total: %s", e)
 
     def _process_memory_callback(self, options):
         """Callback for process memory metric."""
-        try:
-            import psutil
-            from opentelemetry.metrics import Observation
-
-            process = psutil.Process()
-            yield Observation(process.memory_info().rss)
-        except ImportError:
-            pass
+        process = psutil.Process()
+        yield Observation(process.memory_info().rss)
 
     @classmethod
     def start(cls, checkpoint_dir: str | None = None) -> "ResourceMetricsCollector":
@@ -391,3 +323,12 @@ class ResourceMetricsCollector:
                 if cls._instance is None:
                     cls._instance = cls(checkpoint_dir)
         return cls._instance
+
+    @classmethod
+    def shutdown(cls) -> None:
+        """Shutdown the resource metrics collector."""
+        if cls._instance is not None:
+            with cls._lock:
+                if cls._instance is not None:
+                    cls._instance._shutdown_gpu()
+                    cls._instance = None

@@ -13,7 +13,9 @@ from .base_backend import BaseSamplingBackend
 
 
 logger = getLogger(__name__)
-_tracer = get_tracer("tuft.sampling_backend")
+
+# Use lazy getter for tracer to avoid issues with Ray actors re-executing module-level code.
+_get_tracer = lambda: get_tracer("tuft.sampling_backend")  # noqa: E731
 
 
 class VLLMSamplingBackend(BaseSamplingBackend):
@@ -92,7 +94,7 @@ class VLLMSamplingBackend(BaseSamplingBackend):
         lora_id: Optional[str] = None,
     ) -> types.SampleResponse:
         """Sampling using vLLM engine."""
-        with _tracer.start_as_current_span("sampling_backend.sample") as span:
+        with _get_tracer().start_as_current_span("sampling_backend.sample") as span:
             span.set_attribute("tuft.num_samples", num_samples)
             span.set_attribute("tuft.has_lora", lora_id is not None)
 
@@ -113,7 +115,7 @@ class VLLMSamplingBackend(BaseSamplingBackend):
     async def add_adapter(self, lora_id: str, adapter_path: Path) -> None:
         from vllm.lora.request import LoRARequest
 
-        with _tracer.start_as_current_span("sampling_backend.add_adapter") as span:
+        with _get_tracer().start_as_current_span("sampling_backend.add_adapter") as span:
             span.set_attribute("tuft.lora_id", lora_id)
 
             async with self._lock:
@@ -125,7 +127,7 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                 )
 
     async def remove_adapter(self, lora_id: str) -> None:
-        with _tracer.start_as_current_span("sampling_backend.remove_adapter") as span:
+        with _get_tracer().start_as_current_span("sampling_backend.remove_adapter") as span:
             span.set_attribute("tuft.lora_id", lora_id)
 
             async with self._lock:

@@ -13,7 +13,9 @@ from tuft.telemetry.tracing import get_tracer, inject_context
 
 
 logger = logging.getLogger(__name__)
-_tracer = get_tracer("tuft.training_backend")
+
+# Use lazy getter for tracer to avoid issues with Ray actors re-executing module-level code.
+_get_tracer = lambda: get_tracer("tuft.training_backend")  # noqa: E731
 
 
 class HFTrainingBackend(BaseTrainingBackend):
@@ -31,7 +33,7 @@ class HFTrainingBackend(BaseTrainingBackend):
 
     async def create_adapter(self, lora_id: str, lora_config: types.LoraConfig) -> None:
         """Create a LoRA adapter with the given ID and configuration."""
-        with _tracer.start_as_current_span("training_backend.create_adapter") as span:
+        with _get_tracer().start_as_current_span("training_backend.create_adapter") as span:
             span.set_attribute("tuft.lora_id", lora_id)
             span.set_attribute("tuft.lora_rank", lora_config.rank)
             # Inject trace context for Ray actor
@@ -40,7 +42,7 @@ class HFTrainingBackend(BaseTrainingBackend):
             await self.model.create_adapter.remote(lora_id, lora_config, trace_context)
 
     async def remove_adapter(self, lora_id: str) -> None:
-        with _tracer.start_as_current_span("training_backend.remove_adapter") as span:
+        with _get_tracer().start_as_current_span("training_backend.remove_adapter") as span:
             span.set_attribute("tuft.lora_id", lora_id)
             await self.model.remove_adapter.remote(lora_id)
 
@@ -65,7 +67,7 @@ class HFTrainingBackend(BaseTrainingBackend):
             ForwardBackwardOutput: The output of the forward (and backward) pass.
         """
         span_name = "training_backend.forward_backward" if backward else "training_backend.forward"
-        with _tracer.start_as_current_span(span_name) as span:
+        with _get_tracer().start_as_current_span(span_name) as span:
             span.set_attribute("tuft.lora_id", lora_id)
             span.set_attribute("tuft.backward", backward)
             span.set_attribute("tuft.data_count", len(data))
@@ -92,7 +94,7 @@ class HFTrainingBackend(BaseTrainingBackend):
         Returns:
             OptimStepResponse: The response containing optimization metrics.
         """
-        with _tracer.start_as_current_span("training_backend.optim_step") as span:
+        with _get_tracer().start_as_current_span("training_backend.optim_step") as span:
             span.set_attribute("tuft.lora_id", lora_id)
             # Inject trace context for Ray actor
             trace_context: dict[str, str] = {}
@@ -103,7 +105,7 @@ class HFTrainingBackend(BaseTrainingBackend):
         self, lora_id: str, checkpoint_record: "CheckpointRecord", optimizer: bool
     ) -> None:
         """Save the state of the specified LoRA adapter."""
-        with _tracer.start_as_current_span("training_backend.save_state") as span:
+        with _get_tracer().start_as_current_span("training_backend.save_state") as span:
             span.set_attribute("tuft.lora_id", lora_id)
             span.set_attribute("tuft.optimizer", optimizer)
             # Inject trace context for Ray actor
@@ -120,7 +122,7 @@ class HFTrainingBackend(BaseTrainingBackend):
         self, lora_id: str, checkpoint_record: "CheckpointRecord", optimizer: bool
     ) -> None:
         """Load the state of the specified LoRA adapter from the given path."""
-        with _tracer.start_as_current_span("training_backend.load_state") as span:
+        with _get_tracer().start_as_current_span("training_backend.load_state") as span:
             span.set_attribute("tuft.lora_id", lora_id)
             span.set_attribute("tuft.optimizer", optimizer)
             # Inject trace context for Ray actor

@@ -35,7 +35,9 @@ from .telemetry.tracing import get_tracer
 
 
 logger = logging.getLogger(__name__)
-_tracer = get_tracer("tuft.training_controller")
+
+# Use lazy getter for tracer to avoid issues with Ray actors re-executing module-level code.
+_get_tracer = lambda: get_tracer("tuft.training_controller")  # noqa: E731
 
 T = TypeVar("T")
 
@@ -288,7 +290,7 @@ class TrainingController:
         user_metadata: dict[str, str] | None,
     ) -> TrainingRunRecord:
         model_id = str(uuid.uuid4())
-        with _tracer.start_as_current_span("training_controller.create_model") as span:
+        with _get_tracer().start_as_current_span("training_controller.create_model") as span:
             span.set_attribute("tuft.training_run_id", model_id)
             span.set_attribute("tuft.session_id", session_id)
             span.set_attribute("tuft.base_model", base_model)
@@ -359,7 +361,7 @@ class TrainingController:
             if backward
             else "training_controller.run_forward"
         )
-        with _tracer.start_as_current_span(span_name) as span:
+        with _get_tracer().start_as_current_span(span_name) as span:
             span.set_attribute("tuft.training_run_id", model_id)
             span.set_attribute("tuft.session_id", record.session_id)
             span.set_attribute("tuft.backward", backward)
@@ -389,7 +391,7 @@ class TrainingController:
         record = self.get_run_record(model_id, user_id)
         self.update_activity(model_id, user_id)
 
-        with _tracer.start_as_current_span("training_controller.run_optim_step") as span:
+        with _get_tracer().start_as_current_span("training_controller.run_optim_step") as span:
             span.set_attribute("tuft.training_run_id", model_id)
             span.set_attribute("tuft.session_id", record.session_id)
             span.set_attribute("tuft.learning_rate", params.learning_rate)
@@ -469,7 +471,7 @@ class TrainingController:
         """Save a checkpoint for the given training run."""
         training_run = self.get_run_record(model_id=model_id, user_id=user_id)
 
-        with _tracer.start_as_current_span("training_controller.save_checkpoint") as span:
+        with _get_tracer().start_as_current_span("training_controller.save_checkpoint") as span:
             span.set_attribute("tuft.training_run_id", model_id)
             span.set_attribute("tuft.session_id", training_run.session_id)
             span.set_attribute("tuft.checkpoint_type", checkpoint_type)

@@ -12,7 +12,7 @@ def configure_otel_logging(log_level: str = "INFO") -> None:
     """Configure logging with OpenTelemetry integration.
 
     Sets up Python logging to include trace_id and span_id in log records
-    when available.
+    when available. Only adds OTel handler, does not remove existing handlers.
 
     Args:
         log_level: Logging level (default: INFO).
@@ -37,11 +37,7 @@ def configure_otel_logging(log_level: str = "INFO") -> None:
     handler = logging.StreamHandler()
     handler.setFormatter(OTelFormatter(log_format))
 
-    # Configure root logger
+    # Configure root logger level and add the OTel handler
     root_logger = logging.getLogger()
     root_logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
-
-    # Remove existing handlers and add our configured one
-    for existing_handler in root_logger.handlers[:]:
-        root_logger.removeHandler(existing_handler)
     root_logger.addHandler(handler)

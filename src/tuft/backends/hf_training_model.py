@@ -17,7 +17,8 @@ from tuft.loss_fn import get_loss_fn
 from tuft.telemetry.tracing import extract_context, get_tracer
 
 
-_tracer = get_tracer("tuft.hf_training_model")
+# Use lazy getter for tracer to avoid issues with Ray actors re-executing module-level code.
+_get_tracer = lambda: get_tracer("tuft.hf_training_model")  # noqa: E731
 
 
 MODULE_MAP = {
@@ -72,7 +73,7 @@ class HFTrainingModel:
         trace_context: dict[str, str] | None = None,
     ):
         ctx = extract_context(trace_context or {})
-        with _tracer.start_as_current_span("hf_model.create_adapter", context=ctx) as span:
+        with _get_tracer().start_as_current_span("hf_model.create_adapter", context=ctx) as span:
             span.set_attribute("tuft.lora_id", lora_id)
             if lora_id in self.adapter_optimizer:
                 raise ValueError(f"Adapter {lora_id} already exists.")
@@ -106,7 +107,7 @@ class HFTrainingModel:
             trace_context: Optional trace context for distributed tracing.
         """
         ctx = extract_context(trace_context or {})
-        with _tracer.start_as_current_span("hf_model.save_state", context=ctx) as span:
+        with _get_tracer().start_as_current_span("hf_model.save_state", context=ctx) as span:
             span.set_attribute("tuft.lora_id", lora_id)
             span.set_attribute("tuft.optimizer", optimizer)
 
@@ -155,7 +156,7 @@ class HFTrainingModel:
             trace_context: Optional trace context for distributed tracing.
         """
         ctx = extract_context(trace_context or {})
-        with _tracer.start_as_current_span("hf_model.load_state", context=ctx) as span:
+        with _get_tracer().start_as_current_span("hf_model.load_state", context=ctx) as span:
             span.set_attribute("tuft.lora_id", lora_id)
             span.set_attribute("tuft.optimizer", optimizer)
 
@@ -213,7 +214,7 @@ class HFTrainingModel:
         """
         ctx = extract_context(trace_context or {})
         span_name = "hf_model.forward_backward" if backward else "hf_model.forward"
-        with _tracer.start_as_current_span(span_name, context=ctx) as span:
+        with _get_tracer().start_as_current_span(span_name, context=ctx) as span:
             span.set_attribute("tuft.lora_id", lora_id)
             span.set_attribute("tuft.backward", backward)
             span.set_attribute("tuft.data_count", len(data))
@@ -298,7 +299,7 @@ class HFTrainingModel:
             OptimStepResponse: The response containing optimization metrics.
         """
         ctx = extract_context(trace_context or {})
-        with _tracer.start_as_current_span("hf_model.optim_step", context=ctx) as span:
+        with _get_tracer().start_as_current_span("hf_model.optim_step", context=ctx) as span:
             span.set_attribute("tuft.lora_id", lora_id)
 
             optimizer = self.adapter_optimizer[lora_id]
