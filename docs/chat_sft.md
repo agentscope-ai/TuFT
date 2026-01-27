@@ -1,6 +1,6 @@
 # TuFT — Chat Supervised Fine-Tuning (SFT)
 
-This tutorial demonstrates **supervised fine-tuning (SFT)** on **chat-formatted data** using a **running Tuft server**. Full runnable code is in **`examples/chat_sft.ipynb`**.
+This tutorial demonstrates **supervised fine-tuning (SFT)** on **chat-formatted data** using a **running Tuft server**. Full runnable code is in **[chat_sft.ipynb](../examples/chat_sft.ipynb)**.
 
 ---
 
@@ -23,8 +23,8 @@ This tutorial demonstrates **supervised fine-tuning (SFT)** on **chat-formatted 
    - [Loss Masking (Assistant-only)](#42-loss-masking-assistant-only)  
    - [Tuft Datum Format](#43-tuft-datum-format)  
    - [loss_fn and Masked NLL Metric](#44-loss_fn-and-masked-nll-metric)  
-6. [Parameter Selection](#5-parameter-selection)  
-7. [Q&A](#6-qa)
+5. [Parameter Selection](#5-parameter-selection)  
+6. [Q&A](#6-qa)
 
 ---
 
@@ -32,23 +32,23 @@ This tutorial demonstrates **supervised fine-tuning (SFT)** on **chat-formatted 
 
 ### SFT vs. RL (high-level comparison)
 
-| Topic | SFT (Supervised Fine-Tuning) | RL (Reinforcement Learning) |
-|---|---|---|
-| Training signal | Demonstrations (target responses) | Reward / preferences (scalar or ranking) |
-| Best for | Style, format, instruction following, domain behavior from curated answers | Aligning behavior to preferences/constraints, safety policies, multi-objective trade-offs |
-| Data required | High-quality assistant responses | Reward model, preference pairs, or evaluators |
-| Stability | Typically stable and predictable | More sensitive; requires careful tuning/monitoring |
-| Typical workflow | Often the first stage | Often follows SFT (SFT → RL) |
+| Topic | SFT (Supervised Fine-Tuning)                                                                       | RL (Reinforcement Learning)                                                              |
+|---|----------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------|
+| Training signal | Demonstrations (target responses)                                                                  | Reward / preferences (scalar or ranking)                                                 |
+| Best for | Style, format, instruction following, domain behavior from curated answers                         | Aligning behavior to preferences/constraints, safety policies, multi-objective trade-offs |
+| Data required | High-quality assistant responses                                                                   | Reward model, preference pairs, or evaluators                                            |
+| Typical workflow | Often the first stage                                                                              | Often follows SFT (SFT → RL)                                                             |
+| Examples of training data / signal | Input-output pairs, e.g. prompt: "Rewrite as a polite email ..." → target: "Dear ... Sincerely ..." | LLM-as-judge: rank A vs B or score responses                                             |
 
 **Rule of thumb**
-- Use **SFT** when you can provide good “gold” assistant responses.
-- Use **RL** when there is no single correct response, but you can define what is “better” via a reward/preference signal.
+- Use **SFT** when you can provide good “gold” assistant responses and want the model to imitate a clear target output.
+- Use **RL** when there is no single correct response, but you can define what is “better” via a reward or preference signal, often based on task requirements like helpfulness, safety, style, formatting, or tool-use behavior.
 
 ---
 
 ## 2. Datasets
 
-This notebook uses **`no_robots`**.
+This notebook uses **[`no_robots`](https://huggingface.co/datasets/HuggingFaceH4/no_robots)**.
 
 | Dataset | Source | Size | Train On | Use Case |
 |---|---|---|---|---|
@@ -69,10 +69,11 @@ Each sample is a list of chat messages:
 ```
 
 ---
-
 ## 3. Minimal Training Example (SFT)
 
-Key Tuft calls (full code in `examples/chat_sft.ipynb`):
+**TuFT** (Tenant-unified FineTuning) is a multi-tenant system that provides a unified service API for fine-tuning large language models (LLMs). Unlike the Tinker SDK, TuFT must run on local GPUs; the experiments below were conducted on a local **2× NVIDIA A100-SXM4-80GB** setup (Driver 550.54.15, CUDA 12.9). Before running the example, follow [README.md](../README.md) to start the TuFT server locally.
+
+Key TuFT calls (full code in [chat_sft.ipynb](../examples/chat_sft.ipynb)):
 ```python
 import tinker
 from tinker import types
@@ -97,7 +98,8 @@ training_client.optim_step(types.AdamParams(learning_rate=LEARNING_RATE)).result
 
 ### 4.1 Chat Formatting & Templates
 
-We use the base model’s chat template to ensure formatting matches pretraining/instruction tuning conventions:
+We use the base model’s chat template so the prompt follows the same role/marker format seen during training.
+
 ```python
 text = tokenizer.apply_chat_template(
     messages,
@@ -107,14 +109,40 @@ text = tokenizer.apply_chat_template(
 tokens = tokenizer.encode(text, add_special_tokens=False)
 ```
 
+- **`tokenize=False`**: return rendered **text** (string), not token IDs; we tokenize explicitly in the next line.  
+- **`add_generation_prompt=False`**: don’t append the final “assistant start” marker; useful for training/encoding existing turns. (For inference, often set `True` to prompt the model to generate the next assistant reply.)  
+- **`add_special_tokens=False`**: avoid duplicating special tokens since the chat template already includes the needed markers.
+
 ### 4.2 Loss Masking (Assistant-only)
 
-For chat SFT, we usually want the model to learn to produce **assistant responses**, not to predict the user prompt. We therefore build per-token weights:
+For chat SFT, we usually want the model to learn to produce **assistant responses**, not to predict the **user prompt**. We therefore build per-token weights:
 
-- tokens from `assistant` turns → weight = `1.0`
-- tokens from `user` turns → weight = `0.0`
+- tokens from **assistant** turns → `weight = 1.0`
+- tokens from **user** turns → `weight = 0.0`
 
-This mask is aligned to **next-token targets**.
+Because training is **next-token prediction**, the mask must be aligned to the **target tokens** (the tokens being predicted). If we build weights for the original token stream `tokens[0..N-1]`, then the loss at step `t` predicts `tokens[t+1]`, so we use `weights[1:]` to align with `target_tokens = tokens[1:]`.
+
+```python
+def build_sft_example(messages, tokenizer, max_length=2048):
+    # Build token stream + per-token weights (assistant=1, user=0)
+    tokens, weights = [], []
+    for msg in messages:
+        turn_tokens = tokenizer.encode(msg["content"], add_special_tokens=False)
+        tokens += turn_tokens
+        weights += [1.0 if msg["role"] == "assistant" else 0.0] * len(turn_tokens)
+
+    # Optional truncation
+    tokens, weights = tokens[:max_length], weights[:max_length]
+
+    # Next-token prediction: input[t] -> target[t] = tokens[t+1]
+    input_tokens  = tokens[:-1]
+    target_tokens = tokens[1:]
+
+    # Align mask to targets (the predicted tokens)
+    target_weights = weights[1:]
+
+    return input_tokens, target_tokens, target_weights
+```
 
 ### 4.3 Tuft Datum Format
 
@@ -136,15 +164,16 @@ datum = types.Datum(
     },
 )
 ```
+---
 
-### 4.4 loss_fn and Masked NLL Metric
+### 4.4 Loss Function and Masked Negative Log-Likelihood (NLL) Metric
 
-Training uses:
+Training uses the following loss function:
 - `loss_fn="cross_entropy"`
 
-Tuft returns per-token log probabilities (`logprobs`). The notebook computes **masked NLL**:
+Tuft returns per-token log probabilities (`logprobs`). The notebook computes **masked Negative Log-Likelihood (NLL)**:
 
-NLL = (Σ<sub>t</sub> (-log p(y<sub>t</sub>)) · w<sub>t</sub>) / (Σ<sub>t</sub> w<sub>t</sub>)
+NLL = (sum over t of ( -log p(y_t) ) * w_t) / (sum over t of w_t)
 
 Minimal computation:
 ```python
@@ -156,12 +185,11 @@ def masked_nll(loss_fn_outputs, datums):
             total_w += w
     return total_loss / max(total_w, 1.0)
 ```
-
 ---
 
 ## 5. Parameter Selection
 
-This section explains how to choose `lora_rank` and `learning_rate`, and summarizes conclusions from the provided experiment results.
+This section explains how to choose `lora_rank` and `learning_rate`, and summarizes conclusions from the provided experiment results. The following experiments use the [Qwen/Qwen3-4B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507).
 
 ### What do `lora_rank` and `learning_rate` do?
 
@@ -202,7 +230,7 @@ Based on **Figure 1** (train mean NLL) and **Figure 2** (test NLL):
 - Strong default: `lora_rank = 8 or 32`, `learning_rate = 1e-4`  
 - Faster early progress (riskier): `lora_rank = 8 or 32`, `learning_rate = 1e-3`  
 - If unstable/overfitting: lower LR (`1e-4 → 5e-5 → 1e-5`) or lower rank (`32 → 8`)  
-- If task is harder: try `32` before `128`, keep LR `1e-4`, increase steps before rank if possible  
+- If task is harder: try `32` before `128`, keep LR `1e-4`, increase steps before rank if possible. “Harder” means the learning problem is intrinsically more difficult (more complex input→output mapping), such as stricter output constraints/format, longer context, more reasoning steps, or higher output diversity/ambiguity. It does not simply mean “more data”; more data usually just requires more training steps, not a higher LoRA rank.
 
 ---
 
@@ -290,4 +318,4 @@ python -m ipykernel install --user --name=myproject --display-name "Python (mypr
 ```
 
 4) **Select the kernel in Jupyter**
-- In Jupyter Notebook/Lab: **Kernel → Change Kernel → Python (myproject)**
+- In Jupyter Notebook/Lab: **Kernel → Change Kernel → Python (myproject)** 
