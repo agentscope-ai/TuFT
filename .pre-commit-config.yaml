@@ -1,13 +1,13 @@
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.10
+    rev: v0.14.14
     hooks:
       - id: ruff
         args: ["--fix"]
       - id: ruff-format
 
   - repo: https://github.com/RobertCraigie/pyright-python
-    rev: v1.1.407
+    rev: v1.1.408
     hooks:
       - id: pyright
         additional_dependencies:
@@ -27,11 +27,11 @@ repos:
         args: ["--fix"]
 
   - repo: https://github.com/hukkin/mdformat
-    rev: 0.7.21
+    rev: 0.7.22
     hooks:
       - id: mdformat
         additional_dependencies:
-          - mdformat-gfm
+          - mdformat-gfm>=1.0.0
           - mdformat-black
 
   - repo: local
