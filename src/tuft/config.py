@@ -39,6 +39,10 @@ class AppConfig:
         model_names = {model.model_name for model in self.supported_models}
         if len(model_names) != len(self.supported_models):
             raise ValueError("Model names in supported_models must be unique.")
+        if len(model_names) > 1 and any(model.colocate for model in self.supported_models):
+            raise ValueError(
+                "Colocate option is only allowed when there is a single supported model."
+            )
 
     def with_supported_models(self, models: Iterable[ModelConfig]) -> "AppConfig":
         updated = list(models)
@@ -67,6 +71,15 @@ class ModelConfig:
     # default lora setting
     max_lora_rank: int = 16  # maximum rank for LoRA adapters
     max_loras: int = 1  # maximum number of LoRA adapters that can be applied simultaneously
+
+    # whether to colocate sampling and training on the same device
+    # only for local testing purposes
+    colocate: bool = False
+    sampling_memory_fraction: float = 0.2  # fraction of GPU memory for sampling
+
+    def __post_init__(self) -> None:
+        if self.colocate and self.tensor_parallel_size != 1:
+            raise ValueError("Colocate option is only supported for tensor_parallel_size=1.")
 
 
 def load_yaml_config(config_path: Path) -> AppConfig:
