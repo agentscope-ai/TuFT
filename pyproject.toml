@@ -55,6 +55,7 @@ known-first-party = ["tuft"]
 known-third-party = ["tinker"]
 lines-after-imports = 2
 combine-as-imports = true
+split-on-trailing-comma = true
 
 [tool.ruff.format]
 docstring-code-format = true
