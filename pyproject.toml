@@ -50,6 +50,11 @@ exclude = [
 select = ["E", "F", "B", "I"]
 per-file-ignores = {"src/tuft/server.py" = ["B008"]}
 
+[tool.ruff.lint.isort]
+known-first-party = ["tuft"]
+force-single-line = true
+lines-after-imports = 2
+
 [tool.ruff.format]
 docstring-code-format = true
 quote-style = "double"

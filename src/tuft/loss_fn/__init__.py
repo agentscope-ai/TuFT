@@ -1,7 +1,10 @@
-from typing import Callable, Dict, Tuple
+from typing import Callable
+from typing import Dict
+from typing import Tuple
 
 from torch import Tensor
 from typing_extensions import TypeAlias
+
 
 LossFnType: TypeAlias = Callable[
     [Dict[str, Tensor], Dict[str, float]], Tuple[Tensor, Dict[str, float]]

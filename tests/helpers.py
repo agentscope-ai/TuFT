@@ -15,6 +15,7 @@ from tinker._exceptions import RequestFailedError
 from tuft.config import AppConfig
 from tuft.server import create_root_app
 
+
 # Test data constants
 PIG_LATIN_EXAMPLES = [
     {"input": "banana split", "output": "anana-bay plit-say"},

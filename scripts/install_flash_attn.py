@@ -5,6 +5,7 @@ import sys
 
 import torch
 
+
 FLASH_VERSION = "2.8.1"
 
 # Get torch version

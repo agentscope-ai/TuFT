@@ -21,9 +21,11 @@ import threading
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any
+from typing import TypeVar
 
 from pydantic import BaseModel
+
 
 logger = logging.getLogger(__name__)
 

@@ -5,9 +5,15 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from datetime import timezone
 from functools import partial
-from typing import Any, Callable
+from typing import Any
+from typing import Callable
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import Depends
+from fastapi import FastAPI
+from fastapi import HTTPException
+from fastapi import Query
+from fastapi import Request
+from fastapi import status
 from fastapi.responses import Response
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
@@ -19,6 +25,7 @@ from .config import AppConfig
 from .exceptions import TuFTException
 from .persistence import get_redis_store
 from .state import ServerState
+
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 

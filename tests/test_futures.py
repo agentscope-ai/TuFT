@@ -7,7 +7,8 @@ import pytest
 from tinker.types.try_again_response import TryAgainResponse
 
 from tinker import types
-from tuft.exceptions import UnknownModelException, UserMismatchException
+from tuft.exceptions import UnknownModelException
+from tuft.exceptions import UserMismatchException
 from tuft.futures import FutureStore
 
 

@@ -15,20 +15,20 @@ import uvicorn
 from tinker.lib.public_interfaces.service_client import ServiceClient
 from transformers import AutoTokenizer
 
-from tuft.config import AppConfig, ModelConfig
+from tuft.config import AppConfig
+from tuft.config import ModelConfig
 from tuft.server import create_root_app
 
-from .helpers import (
-    PIG_LATIN_EXAMPLES,
-    REVERSE_EXAMPLES,
-    REVERSE_PROMPTS,
-    TEST_PROMPTS,
-    _create_reverse_training_data,
-    _create_training_data,
-    _find_free_port,
-    _log,
-    _normalize_text,
-)
+from .helpers import PIG_LATIN_EXAMPLES
+from .helpers import REVERSE_EXAMPLES
+from .helpers import REVERSE_PROMPTS
+from .helpers import TEST_PROMPTS
+from .helpers import _create_reverse_training_data
+from .helpers import _create_training_data
+from .helpers import _find_free_port
+from .helpers import _log
+from .helpers import _normalize_text
+
 
 """
 How to run this test (GPU required):

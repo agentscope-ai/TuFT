@@ -8,13 +8,12 @@ import pytest
 
 from tinker import types
 from tuft.auth import User
-from tuft.config import AppConfig, ModelConfig
-from tuft.exceptions import (
-    CheckpointAccessDeniedException,
-    MissingSequenceIDException,
-    SequenceConflictException,
-    UserMismatchException,
-)
+from tuft.config import AppConfig
+from tuft.config import ModelConfig
+from tuft.exceptions import CheckpointAccessDeniedException
+from tuft.exceptions import MissingSequenceIDException
+from tuft.exceptions import SequenceConflictException
+from tuft.exceptions import UserMismatchException
 from tuft.state import ServerState
 
 

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import threading
-from dataclasses import dataclass, field
-from typing import Any, Sequence
+from dataclasses import dataclass
+from dataclasses import field
+from typing import Any
+from typing import Sequence
 
 import numpy as np
 

@@ -1,5 +1,6 @@
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field
 from typing import Sequence
 
 import numpy as np

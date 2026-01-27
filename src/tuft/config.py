@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Dict
+from typing import Iterable
+from typing import List
 
 from .persistence import PersistenceConfig
 
