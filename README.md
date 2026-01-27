@@ -11,61 +11,30 @@ We welcome open-source collaboration. Join our community for updates and help:
 
 ## Table of Contents
 
-- [Architecture](#architecture)
+- [Quick Install](#quick-install)
 - [Quick Start Example](#quick-start-example)
 - [Installation](#installation)
 - [Use the Pre-built Docker Image](#use-the-pre-built-docker-image)
 - [Persistence](#persistence)
+- [Architecture](#architecture)
 - [Roadmap](#roadmap)
 - [Development](#development)
 
-## Architecture
+## Quick Install
 
-TuFT provides a unified service API for agentic model training and sampling. The system supports multiple LoRA adapters per base model and checkpoint management.
+> **Note**: This script supports **Linux**, **macOS**, and **Windows WSL 2** only. For other platforms, see [Installation](#installation).
 
-```mermaid
-graph TB
-    subgraph Client["Client Layer"]
-        SDK[Tinker SDK Client]
-    end
-    
-    subgraph API["TuFT Service API"]
-        REST[Service API<br/>REST/HTTP]
-        Session[Session Management]
-    end
-    
-    subgraph Backend["Backend Layer"]
-        Training[Training Backend<br/>Forward/Backward/Optim Step]
-        Sampling[Sampling Backend<br/>Token Generation]
-    end
-    
-    subgraph Models["Model Layer"]
-        BaseModel[Base LLM Model]
-        LoRA[LoRA Adapters<br/>Multiple per Base Model]
-    end
-    
-    subgraph Storage["Storage"]
-        Checkpoint[Model Checkpoints<br/>& LoRA Weights]
-    end
-    
-    SDK --> REST
-    REST --> Session
-    Session --> Training
-    Session --> Sampling
-    Training --> BaseModel
-    Training --> LoRA
-    Sampling --> BaseModel
-    Sampling --> LoRA
-    Training --> Checkpoint
-    Sampling --> Checkpoint
+Install TuFT with a single command:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install.sh)"
 ```
 
-### Key Components
+This installs TuFT with a bundled Python environment to `~/.tuft`. After installation, restart your terminal and run:
 
-- **Service API**: RESTful interface for training and sampling operations
-- **Training Backend**: Handles forward/backward passes and optimizer steps for LoRA fine-tuning
-- **Sampling Backend**: Generates tokens from trained models
-- **Checkpoint Storage**: Manages model checkpoints and LoRA weights
+```bash
+tuft launch
+```
 
 ## Quick Start Example
 
@@ -205,6 +174,8 @@ Sample tokens: [101, 57, 12, 7, 42, 102]
 > **Note**: Replace fake token IDs with actual tokenizer calls when you have a tokenizer available locally.
 
 ## Installation
+
+> **Tip**: For a quick one-command setup, see [Quick Install](#quick-install). This section is for users who prefer to manage their own Python environment or need more control over the installation.
 
 We recommend using [uv](https://github.com/astral-sh/uv) for dependency management.
 
@@ -388,6 +359,56 @@ persistence:
   file_path: "~/.cache/tuft/file_redis.json"
   namespace: "tuft"
 ```
+
+## Architecture
+
+TuFT provides a unified service API for agentic model training and sampling. The system supports multiple LoRA adapters per base model and checkpoint management.
+
+```mermaid
+graph TB
+    subgraph Client["Client Layer"]
+        SDK[Tinker SDK Client]
+    end
+    
+    subgraph API["TuFT Service API"]
+        REST[Service API<br/>REST/HTTP]
+        Session[Session Management]
+    end
+    
+    subgraph Backend["Backend Layer"]
+        Training[Training Backend<br/>Forward/Backward/Optim Step]
+        Sampling[Sampling Backend<br/>Token Generation]
+    end
+    
+    subgraph Models["Model Layer"]
+        BaseModel[Base LLM Model]
+        LoRA[LoRA Adapters<br/>Multiple per Base Model]
+    end
+    
+    subgraph Storage["Storage"]
+        Checkpoint[Model Checkpoints<br/>& LoRA Weights]
+    end
+    
+    SDK --> REST
+    REST --> Session
+    Session --> Training
+    Session --> Sampling
+    Training --> BaseModel
+    Training --> LoRA
+    Sampling --> BaseModel
+    Sampling --> LoRA
+    Training --> Checkpoint
+    Sampling --> Checkpoint
+```
+
+### Key Components
+
+- **Service API**: RESTful interface for training and sampling operations
+- **Training Backend**: Handles forward/backward passes and optimizer steps for LoRA fine-tuning
+- **Sampling Backend**: Generates tokens from trained models
+- **Checkpoint Storage**: Manages model checkpoints and LoRA weights
+
+
 
 ## Roadmap
 
