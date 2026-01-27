@@ -72,16 +72,16 @@ jobs:
         env:
           TUFT_HOME: ${{ runner.temp }}/tuft
 
-  test-install-with-backend:
+  test-install-default-with-backend:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Run install script with backend (local source)
+      - name: Run install script (default includes backend)
         run: |
-          bash scripts/install.sh --local-source "$GITHUB_WORKSPACE" --with-backend
+          bash scripts/install.sh --local-source "$GITHUB_WORKSPACE"
         env:
           TUFT_HOME: ${{ runner.temp }}/tuft
 
@@ -89,6 +89,33 @@ jobs:
         run: |
           "${TUFT_HOME}/venv/bin/python" -c "import peft; print('peft imported successfully')"
           "${TUFT_HOME}/venv/bin/python" -c "import redis; print('redis imported successfully')"
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+      - name: Clean up installation
+        run: rm -rf "${TUFT_HOME}"
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+  test-install-without-backend:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run install script without backend
+        run: |
+          bash scripts/install.sh --local-source "$GITHUB_WORKSPACE" --without-backend
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+      - name: Verify minimal install (no peft)
+        run: |
+          # peft should NOT be installed in minimal mode
+          "${TUFT_HOME}/venv/bin/python" -c "import peft" 2>&1 && exit 1 || echo "peft not installed (expected)"
+          # tuft should still be importable
+          "${TUFT_HOME}/venv/bin/python" -c "import tuft; print('tuft imported successfully')"
         env:
           TUFT_HOME: ${{ runner.temp }}/tuft
 

@@ -18,7 +18,7 @@ TUFT_VENV="$TUFT_HOME/venv"
 PYTHON_VERSION="3.12"
 TUFT_PYPI_PACKAGE="tuft"
 TUFT_GIT_REPO="https://github.com/agentscope-ai/tuft.git"
-INSTALL_BACKEND=false
+INSTALL_BACKEND=true
 INSTALL_FROM_SOURCE=false
 LOCAL_SOURCE_PATH=""
 
@@ -44,7 +44,12 @@ parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --with-backend)
+                # Default behavior, kept for backwards compatibility
                 INSTALL_BACKEND=true
+                shift
+                ;;
+            --without-backend)
+                INSTALL_BACKEND=false
                 shift
                 ;;
             --from-source)
@@ -61,10 +66,13 @@ parse_args() {
                 echo "Usage: install.sh [options]"
                 echo ""
                 echo "Options:"
-                echo "  --with-backend        Install all extras (GPU backend, persistence, flash-attn)"
+                echo "  --without-backend     Skip GPU backend and install minimal dependencies only"
                 echo "  --from-source         Install from GitHub instead of PyPI"
                 echo "  --local-source PATH   Install from local source directory (for development/CI)"
                 echo "  --help, -h            Show this help message"
+                echo ""
+                echo "By default, the script installs TuFT with all extras (GPU backend, persistence,"
+                echo "flash-attn) for full functionality. Use --without-backend for minimal install."
                 echo ""
                 echo "Environment Variables:"
                 echo "  TUFT_HOME             Installation directory (default: ~/.tuft)"
@@ -559,7 +567,9 @@ main() {
     echo ""
 
     if [ "$INSTALL_BACKEND" = true ]; then
-        print_step "Installing with GPU backend support"
+        print_step "Installing with full backend support (GPU, persistence, flash-attn)"
+    else
+        print_step "Installing minimal dependencies (no GPU backend)"
     fi
 
     if [ -n "$LOCAL_SOURCE_PATH" ]; then

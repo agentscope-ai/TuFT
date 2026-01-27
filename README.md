@@ -30,7 +30,7 @@ Install TuFT with a single command:
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install.sh)"
 ```
 
-This installs TuFT with a bundled Python environment to `~/.tuft`. After installation, restart your terminal and run:
+This installs TuFT with full backend support (GPU dependencies, persistence, flash-attn) and a bundled Python environment to `~/.tuft`. After installation, restart your terminal and run:
 
 ```bash
 tuft launch
