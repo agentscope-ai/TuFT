@@ -1,8 +1,13 @@
 # TuFT
 
-TuFT( **T**enant-**u**nified **F**ine**T**uning) is a framework that provides a unified
-API for finetuning large language models (LLMs) across multiple tenants.
-Users can access TuFT via compatible clients such as [Tinker](https://github.com/thinking-machine-lab/tinker).
+TuFT( **T**enant-**u**nified **F**ine**T**uning) is a multi-tenant system that provides a unified
+service API for finetuning large language models (LLMs).
+Users can use TuFT via compatible clients such as [Tinker SDK](https://github.com/thinking-machine-lab/tinker).
+
+Please read our [roadmap](#roadmap) for our goals and up-coming features.
+We welcome open-source collaboration. Join our community for updates and help:
+- [DingTalk Group](https://qr.dingtalk.com/action/joingroup?code=v1,k1,UWvzO6HHSeuvRQ5WXCOMJEijadQV+hDjhMIpiVr8qCs=&_dt_no_comment=1&origin=11?)
+- [Discord](https://discord.gg/wEahC7ZJ)
 
 ## Installation
 
@@ -311,7 +316,7 @@ We focus on post-training for agentic models. The rollout phase in RL training i
 This roadmap is not fixed, but rather a starting point for our journey with the open source community. Every feature design will be implemented through GitHub Issue discussions, PRs, and prototype validation. We sincerely welcome you to propose real-world use cases, performance bottlenecks, or innovative ideas—it is these voices that will collectively define the future of Agent post-training.
 
 We welcome suggestions and contributions from the community! Join us on:
-- [DingTalk Group](https://qr.dingtalk.com/action/joingroup?code=v1,k1,UWvzO6HHSeuvRQ5WXCOMJEijadQV+hDjhMIpiVr8qCs=&_dt_no_comment=1&origin=11? TuFT invites you to join DingTalk group chat 【客】Opensource TuFT. Please tap to view more.)
+- [DingTalk Group](https://qr.dingtalk.com/action/joingroup?code=v1,k1,UWvzO6HHSeuvRQ5WXCOMJEijadQV+hDjhMIpiVr8qCs=&_dt_no_comment=1&origin=11?)
 - [Discord](https://discord.gg/wEahC7ZJ) (on AgentScope's Server)
 
 ## Development
