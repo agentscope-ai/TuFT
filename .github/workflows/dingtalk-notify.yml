@@ -1,0 +1,113 @@
+name: DingTalk Notifications
+
+on:
+  pull_request:
+    types: [opened, closed]
+  issues:
+    types: [opened]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send PR Opened Notification
+        if: github.event_name == 'pull_request' && github.event.action == 'opened'
+        shell: bash
+        env:
+          WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
+          REPO: ${{ github.repository }}
+          TITLE: ${{ github.event.pull_request.title }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          HEAD: ${{ github.event.pull_request.head.ref }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+          URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          CONTENT=$(cat <<EOF
+          🔀 New Pull Request
+
+          Repository: $REPO
+          Title: $TITLE
+          Author: $AUTHOR
+          Branch: $HEAD → $BASE
+          URL: $URL
+          EOF
+          )
+
+          jq -n --arg content "$CONTENT" '{msgtype: "text", text: {content: $content}}' | \
+            curl -X POST "$WEBHOOK" -H 'Content-Type: application/json' -d @-
+
+      - name: Send PR Merged Notification
+        if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true
+        shell: bash
+        env:
+          WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
+          REPO: ${{ github.repository }}
+          TITLE: ${{ github.event.pull_request.title }}
+          MERGER: ${{ github.event.pull_request.merged_by.login }}
+          HEAD: ${{ github.event.pull_request.head.ref }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+          URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          CONTENT=$(cat <<EOF
+          ✅ Pull Request Merged
+
+          Repository: $REPO
+          Title: $TITLE
+          Merged by: $MERGER
+          Branch: $HEAD → $BASE
+          URL: $URL
+          EOF
+          )
+
+          jq -n --arg content "$CONTENT" '{msgtype: "text", text: {content: $content}}' | \
+            curl -X POST "$WEBHOOK" -H 'Content-Type: application/json' -d @-
+
+      - name: Send Issue Opened Notification
+        if: github.event_name == 'issues' && github.event.action == 'opened'
+        shell: bash
+        env:
+          WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
+          REPO: ${{ github.repository }}
+          TITLE: ${{ github.event.issue.title }}
+          AUTHOR: ${{ github.event.issue.user.login }}
+          URL: ${{ github.event.issue.html_url }}
+        run: |
+          CONTENT=$(cat <<EOF
+          🐛 New Issue
+
+          Repository: $REPO
+          Title: $TITLE
+          Author: $AUTHOR
+          URL: $URL
+          EOF
+          )
+
+          jq -n --arg content "$CONTENT" '{msgtype: "text", text: {content: $content}}' | \
+            curl -X POST "$WEBHOOK" -H 'Content-Type: application/json' -d @-
+
+      - name: Send PR Review Notification
+        if: github.event_name == 'pull_request_review' && github.event.action == 'submitted'
+        shell: bash
+        env:
+          WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
+          REPO: ${{ github.repository }}
+          TITLE: ${{ github.event.pull_request.title }}
+          REVIEWER: ${{ github.event.review.user.login }}
+          STATE: ${{ github.event.review.state }}
+          URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          CONTENT=$(cat <<EOF
+          👀 Pull Request Review
+
+          Repository: $REPO
+          PR: $TITLE
+          Reviewer: $REVIEWER
+          State: $STATE
+          URL: $URL
+          EOF
+          )
+
+          jq -n --arg content "$CONTENT" '{msgtype: "text", text: {content: $content}}' | \
+            curl -X POST "$WEBHOOK" -H 'Content-Type: application/json' -d @-
