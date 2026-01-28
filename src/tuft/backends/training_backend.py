@@ -12,10 +12,9 @@ from tuft.config import ModelConfig
 from tuft.telemetry.tracing import get_tracer, inject_context
 
 
-logger = logging.getLogger(__name__)
-
-# Use lazy getter for tracer to avoid issues with Ray actors re-executing module-level code.
 _get_tracer = lambda: get_tracer("tuft.training_backend")  # noqa: E731
+
+logger = logging.getLogger(__name__)
 
 
 class HFTrainingBackend(BaseTrainingBackend):

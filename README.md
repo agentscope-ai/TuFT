@@ -16,6 +16,7 @@ We welcome open-source collaboration. Join our community for updates and help:
 - [Installation](#installation)
 - [Use the Pre-built Docker Image](#use-the-pre-built-docker-image)
 - [Persistence](#persistence)
+- [Observability (OpenTelemetry)](#observability-opentelemetry)
 - [Roadmap](#roadmap)
 - [Development](#development)
 
@@ -394,17 +395,9 @@ persistence:
 TuFT supports optional OpenTelemetry integration for distributed tracing, metrics, and logging.
 This allows you to monitor your TuFT server using observability tools like SigNoz, Jaeger, or Grafana.
 
-### Installation
-
-Install the optional OpenTelemetry dependency:
-
-```bash
-uv pip install tuft[otel]
-```
-
 ### Configuration
 
-Add the following to your configuration file:
+Add the following `telemetry` section to your server configuration file (the same YAML file used for model configuration, e.g., `models.yaml`):
 
 ```yaml
 telemetry:
@@ -421,8 +414,8 @@ telemetry:
 Alternatively, use environment variables:
 
 ```bash
-export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
-export OTEL_DEBUG=1  # Enable console exporter for debugging
+export TUFT_OTLP_ENDPOINT=http://localhost:4317
+export TUFT_OTEL_DEBUG=1  # Enable console exporter for debugging
 ```
 
 ## Roadmap

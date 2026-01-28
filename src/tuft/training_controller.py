@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable, Dict, List, TypeVar
 
+from opentelemetry.trace import StatusCode
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from tinker import types
 
@@ -34,10 +36,10 @@ from .telemetry.metrics import get_metrics
 from .telemetry.tracing import get_tracer
 
 
-logger = logging.getLogger(__name__)
-
-# Use lazy getter for tracer to avoid issues with Ray actors re-executing module-level code.
 _get_tracer = lambda: get_tracer("tuft.training_controller")  # noqa: E731
+
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
@@ -295,28 +297,32 @@ class TrainingController:
             span.set_attribute("tuft.session_id", session_id)
             span.set_attribute("tuft.base_model", base_model)
             span.set_attribute("tuft.lora_rank", lora_config.rank)
+            try:
+                logger.info("Creating model %s", model_id)
 
-            logger.info("Creating model %s", model_id)
+                if base_model not in self.training_backends:
+                    raise UnknownModelException(model_name=base_model)
+                backend = self.training_backends[base_model]
+                record = TrainingRunRecord(
+                    training_run_id=model_id,
+                    base_model=base_model,
+                    lora_rank=lora_config.rank,
+                    session_id=session_id,
+                    model_owner=model_owner,
+                    user_metadata=user_metadata,
+                    backend=backend,
+                )
+                await backend.create_adapter(model_id, lora_config)
+                self.training_runs[model_id] = record
+                self._save_training_run(model_id)
 
-            if base_model not in self.training_backends:
-                raise UnknownModelException(model_name=base_model)
-            backend = self.training_backends[base_model]
-            record = TrainingRunRecord(
-                training_run_id=model_id,
-                base_model=base_model,
-                lora_rank=lora_config.rank,
-                session_id=session_id,
-                model_owner=model_owner,
-                user_metadata=user_metadata,
-                backend=backend,
-            )
-            await backend.create_adapter(model_id, lora_config)
-            self.training_runs[model_id] = record
-            self._save_training_run(model_id)
-
-            # Update metrics
-            get_metrics().training_models_active.add(1, {"base_model": base_model})
-            return record
+                # Update metrics
+                get_metrics().training_models_active.add(1, {"base_model": base_model})
+                return record
+            except Exception as e:
+                span.record_exception(e)
+                span.set_status(StatusCode.ERROR)
+                raise
 
     def get_run_record(
         self,
@@ -369,6 +375,10 @@ class TrainingController:
             span.set_attribute("tuft.loss_fn", loss_fn)
 
             logger.info("Forward/backward begin for %s", model_id)
+            start_time = time.perf_counter()
+
+            # Count total input tokens for metrics
+            total_tokens = sum(len(datum.model_input.to_ints()) for datum in data)
 
             async def _operation() -> types.ForwardBackwardOutput:
                 if record.backend is None:
@@ -383,7 +393,17 @@ class TrainingController:
                 logger.info("Forward/backward completed for %s", model_id)
                 return result
 
-            return await self._with_sequence_guard(record, seq_id, _operation)
+            result = await self._with_sequence_guard(record, seq_id, _operation)
+
+            # Record tokens per second metric
+            duration = time.perf_counter() - start_time
+            if total_tokens > 0 and duration > 0:
+                tokens_per_second = total_tokens / duration
+                get_metrics().training_tokens_per_second.record(
+                    tokens_per_second, {"base_model": record.base_model}
+                )
+
+            return result
 
     async def run_optim_step(
         self, model_id: str, user_id: str, params: types.AdamParams, seq_id: int | None

@@ -24,7 +24,7 @@ class TelemetryConfig:
     Attributes:
         enabled: Whether telemetry is enabled.
         service_name: Name of the service for tracing.
-        otlp_endpoint: OTLP exporter endpoint. If None, uses OTEL_EXPORTER_OTLP_ENDPOINT env var.
+        otlp_endpoint: OTLP exporter endpoint. If None, uses TUFT_OTLP_ENDPOINT env var.
         resource_attributes: Additional resource attributes as key-value pairs.
     """
 

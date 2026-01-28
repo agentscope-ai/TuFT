@@ -39,15 +39,15 @@ _tel_initialized = False
 
 
 def _is_debug_mode() -> bool:
-    """Check if debug mode is enabled via OTEL_DEBUG environment variable."""
-    return os.getenv("OTEL_DEBUG", "0") == "1"
+    """Check if debug mode is enabled via TUFT_OTEL_DEBUG environment variable."""
+    return os.getenv("TUFT_OTEL_DEBUG", "0") == "1"
 
 
 def _get_otlp_endpoint(config: TelemetryConfig) -> str | None:
     """Get OTLP endpoint from config or environment variable."""
     if config.otlp_endpoint:
         return config.otlp_endpoint
-    return os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+    return os.getenv("TUFT_OTLP_ENDPOINT")
 
 
 def init_telemetry(config: TelemetryConfig) -> None:
@@ -105,7 +105,7 @@ def _init_console_exporters(resource: Resource) -> None:
     trace.set_tracer_provider(tracer_provider)
 
     # Metrics
-    reader = PeriodicExportingMetricReader(ConsoleMetricExporter(), export_interval_millis=10000)
+    reader = PeriodicExportingMetricReader(ConsoleMetricExporter())
     meter_provider = MeterProvider(resource=resource, metric_readers=[reader])
     metrics.set_meter_provider(meter_provider)
 
@@ -130,7 +130,7 @@ def _init_otlp_exporters(resource: Resource, endpoint: str | None) -> None:
 
     # Metrics
     metric_exporter = OTLPMetricExporter(**exporter_kwargs)
-    reader = PeriodicExportingMetricReader(metric_exporter, export_interval_millis=10000)
+    reader = PeriodicExportingMetricReader(metric_exporter)
     meter_provider = MeterProvider(resource=resource, metric_readers=[reader])
     metrics.set_meter_provider(meter_provider)
 

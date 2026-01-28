@@ -7,12 +7,13 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Iterable
 from typing import Any
 
 import psutil
 import pynvml
 from opentelemetry import metrics
-from opentelemetry.metrics import Observation
+from opentelemetry.metrics import CallbackOptions, Observation
 
 
 logger = logging.getLogger(__name__)
@@ -255,23 +256,23 @@ class ResourceMetricsCollector:
             unit="bytes",
         )
 
-    def _cpu_utilization_callback(self, options):
+    def _cpu_utilization_callback(self, options: CallbackOptions) -> Iterable[Observation]:
         """Callback for CPU utilization metric."""
         yield Observation(psutil.cpu_percent(interval=None))
 
-    def _memory_used_callback(self, options):
+    def _memory_used_callback(self, options: CallbackOptions) -> Iterable[Observation]:
         """Callback for memory used metric."""
         yield Observation(psutil.virtual_memory().used)
 
-    def _memory_total_callback(self, options):
+    def _memory_total_callback(self, options: CallbackOptions) -> Iterable[Observation]:
         """Callback for total memory metric."""
         yield Observation(psutil.virtual_memory().total)
 
-    def _memory_utilization_callback(self, options):
+    def _memory_utilization_callback(self, options: CallbackOptions) -> Iterable[Observation]:
         """Callback for memory utilization metric."""
         yield Observation(psutil.virtual_memory().percent)
 
-    def _gpu_utilization_callback(self, options):
+    def _gpu_utilization_callback(self, options: CallbackOptions) -> Iterable[Observation]:
         """Callback for GPU utilization metric."""
         if not self._nvml_initialized:
             return
@@ -284,7 +285,7 @@ class ResourceMetricsCollector:
         except pynvml.NVMLError as e:
             logger.debug("Failed to get GPU utilization: %s", e)
 
-    def _gpu_memory_used_callback(self, options):
+    def _gpu_memory_used_callback(self, options: CallbackOptions) -> Iterable[Observation]:
         """Callback for GPU memory used metric."""
         if not self._nvml_initialized:
             return
@@ -297,7 +298,7 @@ class ResourceMetricsCollector:
         except pynvml.NVMLError as e:
             logger.debug("Failed to get GPU memory used: %s", e)
 
-    def _gpu_memory_total_callback(self, options):
+    def _gpu_memory_total_callback(self, options: CallbackOptions) -> Iterable[Observation]:
         """Callback for GPU total memory metric."""
         if not self._nvml_initialized:
             return
@@ -310,7 +311,7 @@ class ResourceMetricsCollector:
         except pynvml.NVMLError as e:
             logger.debug("Failed to get GPU memory total: %s", e)
 
-    def _process_memory_callback(self, options):
+    def _process_memory_callback(self, options: CallbackOptions) -> Iterable[Observation]:
         """Callback for process memory metric."""
         process = psutil.Process()
         yield Observation(process.memory_info().rss)

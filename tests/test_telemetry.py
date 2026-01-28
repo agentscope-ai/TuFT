@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-# Set up tracer provider BEFORE importing tuft modules
 import gc
 import os
 from pathlib import Path
@@ -14,24 +13,41 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from tinker import types
+from tinker.lib.public_interfaces.service_client import ServiceClient
+
+from tuft.auth import User
+from tuft.config import AppConfig, ModelConfig, TelemetryConfig
+from tuft.state import ServerState
+from tuft.telemetry.tracing import clear_tracers
+
+from .helpers import _find_free_port, _start_server, _stop_server
 
 
-# Set up test tracer provider at module load time
-_MODULE_SPAN_EXPORTER = InMemorySpanExporter()
-_MODULE_TRACER_PROVIDER = TracerProvider(resource=Resource.create({"service.name": "tuft-test"}))
-_MODULE_TRACER_PROVIDER.add_span_processor(SimpleSpanProcessor(_MODULE_SPAN_EXPORTER))
-if not isinstance(trace.get_tracer_provider(), TracerProvider):
-    trace.set_tracer_provider(_MODULE_TRACER_PROVIDER)
+# =============================================================================
+# Session-scoped Tracer Provider Fixture
+# =============================================================================
 
-from tinker import types  # noqa: E402
-from tinker.lib.public_interfaces.service_client import ServiceClient  # noqa: E402
 
-from tuft.auth import User  # noqa: E402
-from tuft.config import AppConfig, ModelConfig, TelemetryConfig  # noqa: E402
-from tuft.state import ServerState  # noqa: E402
-from tuft.telemetry.tracing import clear_tracers  # noqa: E402
+@pytest.fixture(scope="session")
+def session_tracer_provider():
+    """Set up a test tracer provider once per session.
 
-from .helpers import _find_free_port, _start_server, _stop_server  # noqa: E402
+    This fixture sets up the OpenTelemetry tracer provider at session scope
+    to avoid issues with pytest not being process-isolated.
+    """
+    span_exporter = InMemorySpanExporter()
+    tracer_provider = TracerProvider(resource=Resource.create({"service.name": "tuft-test"}))
+    tracer_provider.add_span_processor(SimpleSpanProcessor(span_exporter))
+
+    # Only set if not already configured
+    if not isinstance(trace.get_tracer_provider(), TracerProvider):
+        trace.set_tracer_provider(tracer_provider)
+
+    yield {"provider": tracer_provider, "exporter": span_exporter}
+
+    # Cleanup: shutdown the tracer provider
+    tracer_provider.shutdown()
 
 
 # =============================================================================
@@ -40,17 +56,19 @@ from .helpers import _find_free_port, _start_server, _stop_server  # noqa: E402
 
 
 @pytest.fixture(scope="function")
-def span_exporter():
-    """Get the module-level span exporter and clear it for each test."""
-    _MODULE_SPAN_EXPORTER.clear()
+def span_exporter(session_tracer_provider):
+    """Get the session-level span exporter and clear it for each test."""
+    exporter = session_tracer_provider["exporter"]
+    exporter.clear()
     clear_tracers()
-    yield _MODULE_SPAN_EXPORTER
-    _MODULE_SPAN_EXPORTER.clear()
+    yield exporter
+    exporter.clear()
 
 
 @pytest.fixture(scope="function")
-def setup_tracer_provider(span_exporter):
-    yield _MODULE_TRACER_PROVIDER
+def setup_tracer_provider(session_tracer_provider, span_exporter):
+    """Provide the tracer provider for tests."""
+    yield session_tracer_provider["provider"]
 
 
 @pytest.fixture(scope="function")

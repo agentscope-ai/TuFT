@@ -4,6 +4,7 @@ from typing import Dict
 
 import ray
 import torch
+from opentelemetry.trace import StatusCode
 from peft import LoraConfig, get_peft_model
 from ray.actor import ActorProxy
 from tinker import types
@@ -17,7 +18,6 @@ from tuft.loss_fn import get_loss_fn
 from tuft.telemetry.tracing import extract_context, get_tracer
 
 
-# Use lazy getter for tracer to avoid issues with Ray actors re-executing module-level code.
 _get_tracer = lambda: get_tracer("tuft.hf_training_model")  # noqa: E731
 
 
@@ -75,21 +75,26 @@ class HFTrainingModel:
         ctx = extract_context(trace_context or {})
         with _get_tracer().start_as_current_span("hf_model.create_adapter", context=ctx) as span:
             span.set_attribute("tuft.lora_id", lora_id)
-            if lora_id in self.adapter_optimizer:
-                raise ValueError(f"Adapter {lora_id} already exists.")
-            peft_config = LoraConfig(
-                r=lora_config.rank,
-                target_modules=get_target_modules(str(self.config.model_path), lora_config),
-                # TODO: here we set lora_alpha equal to rank for common practice,
-                # but we may expose it in the future if needed.
-                lora_alpha=lora_config.rank,
-            )
+            try:
+                if lora_id in self.adapter_optimizer:
+                    raise ValueError(f"Adapter {lora_id} already exists.")
+                peft_config = LoraConfig(
+                    r=lora_config.rank,
+                    target_modules=get_target_modules(str(self.config.model_path), lora_config),
+                    # TODO: here we set lora_alpha equal to rank for common practice,
+                    # but we may expose it in the future if needed.
+                    lora_alpha=lora_config.rank,
+                )
 
-            self.model.add_adapter(adapter_name=lora_id, peft_config=peft_config)
-            async with self._lock:
-                self.model.set_adapter(lora_id)
-                params = [p for p in self.model.parameters() if p.requires_grad]
-                self.adapter_optimizer[lora_id] = torch.optim.AdamW(params)
+                self.model.add_adapter(adapter_name=lora_id, peft_config=peft_config)
+                async with self._lock:
+                    self.model.set_adapter(lora_id)
+                    params = [p for p in self.model.parameters() if p.requires_grad]
+                    self.adapter_optimizer[lora_id] = torch.optim.AdamW(params)
+            except Exception as e:
+                span.record_exception(e)
+                span.set_status(StatusCode.ERROR)
+                raise
 
     async def save_state(
         self,
@@ -110,35 +115,39 @@ class HFTrainingModel:
         with _get_tracer().start_as_current_span("hf_model.save_state", context=ctx) as span:
             span.set_attribute("tuft.lora_id", lora_id)
             span.set_attribute("tuft.optimizer", optimizer)
+            try:
+                if lora_id not in self.adapter_optimizer:
+                    raise ValueError(f"Adapter {lora_id} not found.")
 
-            if lora_id not in self.adapter_optimizer:
-                raise ValueError(f"Adapter {lora_id} not found.")
+                # 1. Save adapter (LoRA weights)
+                adapter_dir = checkpoint_record.adapter_path
+                adapter_dir.mkdir(parents=True, exist_ok=True)
+                # peft automatically creates a subdirectory with adapter name inside the given path
+                self.model.save_pretrained(str(adapter_dir), selected_adapters=[lora_id])
+                # move the files out of the subdirectory
+                lora_subdir = adapter_dir / lora_id
+                if lora_subdir.exists() and lora_subdir.is_dir():
+                    for item in lora_subdir.iterdir():
+                        dest = adapter_dir / item.name
+                        if dest.exists():
+                            if dest.is_file():
+                                dest.unlink()
+                            elif dest.is_dir():
+                                shutil.rmtree(dest)
+                        shutil.move(str(item), str(dest))
+                    lora_subdir.rmdir()
 
-            # 1. Save adapter (LoRA weights)
-            adapter_dir = checkpoint_record.adapter_path
-            adapter_dir.mkdir(parents=True, exist_ok=True)
-            # peft automatically creates a subdirectory with adapter name inside the given path
-            self.model.save_pretrained(str(adapter_dir), selected_adapters=[lora_id])
-            # move the files out of the subdirectory
-            lora_subdir = adapter_dir / lora_id
-            if lora_subdir.exists() and lora_subdir.is_dir():
-                for item in lora_subdir.iterdir():
-                    dest = adapter_dir / item.name
-                    if dest.exists():
-                        if dest.is_file():
-                            dest.unlink()
-                        elif dest.is_dir():
-                            shutil.rmtree(dest)
-                    shutil.move(str(item), str(dest))
-                lora_subdir.rmdir()
-
-            # 2. Save optimizer state
-            if optimizer:
-                opt_dir = checkpoint_record.optimizer_path
-                opt_dir.mkdir(parents=True, exist_ok=True)
-                opt_state = self.adapter_optimizer[lora_id].state_dict()
-                opt_path = opt_dir / (f"{lora_id}.pt")
-                torch.save(opt_state, opt_path)
+                # 2. Save optimizer state
+                if optimizer:
+                    opt_dir = checkpoint_record.optimizer_path
+                    opt_dir.mkdir(parents=True, exist_ok=True)
+                    opt_state = self.adapter_optimizer[lora_id].state_dict()
+                    opt_path = opt_dir / (f"{lora_id}.pt")
+                    torch.save(opt_state, opt_path)
+            except Exception as e:
+                span.record_exception(e)
+                span.set_status(StatusCode.ERROR)
+                raise
 
     async def load_state(
         self,
@@ -159,7 +168,6 @@ class HFTrainingModel:
         with _get_tracer().start_as_current_span("hf_model.load_state", context=ctx) as span:
             span.set_attribute("tuft.lora_id", lora_id)
             span.set_attribute("tuft.optimizer", optimizer)
-
             # 1. Load adapter
             # find lora adapter name from the directory
             self.model.load_adapter(
@@ -218,7 +226,6 @@ class HFTrainingModel:
             span.set_attribute("tuft.lora_id", lora_id)
             span.set_attribute("tuft.backward", backward)
             span.set_attribute("tuft.data_count", len(data))
-
             # Prepare input tensors
             input_ids = [
                 torch.tensor(datum.model_input.to_ints(), dtype=torch.long) for datum in data
@@ -301,7 +308,6 @@ class HFTrainingModel:
         ctx = extract_context(trace_context or {})
         with _get_tracer().start_as_current_span("hf_model.optim_step", context=ctx) as span:
             span.set_attribute("tuft.lora_id", lora_id)
-
             optimizer = self.adapter_optimizer[lora_id]
             for param_group in optimizer.param_groups:
                 param_group["lr"] = adam_params.learning_rate

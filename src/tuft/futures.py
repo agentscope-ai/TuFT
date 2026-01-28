@@ -20,7 +20,9 @@ from .telemetry.tracing import get_tracer
 
 
 logger = logging.getLogger(__name__)
-_tracer = get_tracer("tuft.futures")
+
+
+_get_tracer = lambda: get_tracer("tuft.futures")  # noqa: E731
 
 QueueState = Literal["active", "paused_capacity", "paused_rate_limit"]
 
@@ -237,7 +239,7 @@ class FutureStore:
             start_time = time.perf_counter()
             wait_time = start_time - enqueue_time
 
-            with _tracer.start_as_current_span("future_store.execute_operation") as span:
+            with _get_tracer().start_as_current_span("future_store.execute_operation") as span:
                 span.set_attribute("tuft.request_id", record.request_id)
                 span.set_attribute("tuft.operation_type", operation_type or "unknown")
                 if model_id:

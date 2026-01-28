@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+from opentelemetry.trace import StatusCode
 from pydantic import BaseModel, Field
 from tinker import types
 
@@ -29,8 +30,10 @@ from .telemetry.metrics import get_metrics
 from .telemetry.tracing import get_tracer
 
 
+_get_tracer = lambda: get_tracer("tuft.sampling_controller")  # noqa: E731
+
+
 logger = logging.getLogger(__name__)
-_tracer = get_tracer("tuft.sampling_controller")
 
 
 def _now() -> datetime:
@@ -167,61 +170,67 @@ class SamplingController:
         adapter_path: Path | None = None
         sampling_session_id = str(uuid.uuid4())
 
-        with _tracer.start_as_current_span("sampling_controller.create_sampling_session") as span:
+        with _get_tracer().start_as_current_span(
+            "sampling_controller.create_sampling_session"
+        ) as span:
             span.set_attribute("tuft.session_id", session_id)
             span.set_attribute("tuft.sampling_session_id", sampling_session_id)
             if base_model:
                 span.set_attribute("tuft.base_model", base_model)
-
-            if model_path:
-                # model_path should have higher priority than base_model
-                try:
-                    parsed_checkpoint = CheckpointRecord.from_tinker_path(
-                        model_path, self.config.checkpoint_dir
+            try:
+                if model_path:
+                    # model_path should have higher priority than base_model
+                    try:
+                        parsed_checkpoint = CheckpointRecord.from_tinker_path(
+                            model_path, self.config.checkpoint_dir
+                        )
+                    except FileNotFoundError as exc:
+                        raise CheckpointNotFoundException(checkpoint_id=model_path) from exc
+                    if not parsed_checkpoint.path.exists():
+                        raise CheckpointNotFoundException(
+                            checkpoint_id=parsed_checkpoint.checkpoint_id,
+                        )
+                    metadata = parsed_checkpoint.metadata
+                    base_model_ref = metadata.base_model
+                    is_public = parsed_checkpoint.public
+                    model_owner = parsed_checkpoint.owner_name
+                    if not is_public and model_owner != user_id:
+                        raise CheckpointAccessDeniedException(
+                            checkpoint_id=parsed_checkpoint.checkpoint_id,
+                        )
+                    if base_model_ref not in self._base_backends:
+                        raise UnknownModelException(model_name=base_model_ref)
+                    adapter_path = parsed_checkpoint.adapter_path
+                    sampling_backend = self._base_backends[base_model_ref]
+                    await sampling_backend.add_adapter(
+                        lora_id=sampling_session_id, adapter_path=adapter_path
                     )
-                except FileNotFoundError as exc:
-                    raise CheckpointNotFoundException(checkpoint_id=model_path) from exc
-                if not parsed_checkpoint.path.exists():
-                    raise CheckpointNotFoundException(
-                        checkpoint_id=parsed_checkpoint.checkpoint_id,
-                    )
-                metadata = parsed_checkpoint.metadata
-                base_model_ref = metadata.base_model
-                is_public = parsed_checkpoint.public
-                model_owner = parsed_checkpoint.owner_name
-                if not is_public and model_owner != user_id:
-                    raise CheckpointAccessDeniedException(
-                        checkpoint_id=parsed_checkpoint.checkpoint_id,
-                    )
-                if base_model_ref not in self._base_backends:
-                    raise UnknownModelException(model_name=base_model_ref)
-                adapter_path = parsed_checkpoint.adapter_path
-                sampling_backend = self._base_backends[base_model_ref]
-                await sampling_backend.add_adapter(
-                    lora_id=sampling_session_id, adapter_path=adapter_path
+                    # TODO: remove adapter when session is deleted
+                elif base_model:
+                    base_model_ref = base_model
+                    if base_model_ref not in self._base_backends:
+                        raise UnknownModelException(model_name=base_model_ref)
+                else:
+                    raise UnknownModelException(model_name="None")
+                self.sampling_sessions[sampling_session_id] = SamplingSessionRecord(
+                    sampling_session_id=sampling_session_id,
+                    session_id=session_id,
+                    user_id=user_id,
+                    model_id=sampling_session_id,
+                    base_model=base_model_ref,
+                    model_path=str(adapter_path) if adapter_path else None,
+                    session_seq_id=session_seq_id,
                 )
-                # TODO: remove adapter when session is deleted
-            elif base_model:
-                base_model_ref = base_model
-                if base_model_ref not in self._base_backends:
-                    raise UnknownModelException(model_name=base_model_ref)
-            else:
-                raise UnknownModelException(model_name="None")
-            self.sampling_sessions[sampling_session_id] = SamplingSessionRecord(
-                sampling_session_id=sampling_session_id,
-                session_id=session_id,
-                user_id=user_id,
-                model_id=sampling_session_id,
-                base_model=base_model_ref,
-                model_path=str(adapter_path) if adapter_path else None,
-                session_seq_id=session_seq_id,
-            )
-            self._save_session(sampling_session_id)
+                self._save_session(sampling_session_id)
 
-            # Update metrics
-            get_metrics().sampling_sessions_active.add(1, {"base_model": base_model_ref or ""})
-            logger.info("Sampling session created: %s", sampling_session_id)
-            return sampling_session_id
+                # Update metrics
+                get_metrics().sampling_sessions_active.add(1, {"base_model": base_model_ref or ""})
+                logger.info("Sampling session created: %s", sampling_session_id)
+                return sampling_session_id
+            except Exception as e:
+                span.record_exception(e)
+                span.set_status(StatusCode.ERROR)
+                raise
 
     def _hash_prompt(self, prompt: types.ModelInput) -> str:
         tokens = ",".join(str(token) for token in prompt.to_ints())
@@ -275,7 +284,7 @@ class SamplingController:
         request: types.SampleRequest,
         user_id: str,
     ) -> types.SampleResponse:
-        with _tracer.start_as_current_span("sampling_controller.run_sample") as span:
+        with _get_tracer().start_as_current_span("sampling_controller.run_sample") as span:
             sampling_session_id = request.sampling_session_id or ""
             span.set_attribute("tuft.sampling_session_id", sampling_session_id)
             # Get session_id from sampling session record if available
@@ -317,9 +326,18 @@ class SamplingController:
             metrics.sampling_duration.record(duration, {"base_model": base_model})
 
             # Record output tokens for each sequence
+            total_output_tokens = 0
             for seq in response.sequences:
                 if seq.tokens:
                     metrics.sampling_output_tokens.record(len(seq.tokens))
+                    total_output_tokens += len(seq.tokens)
+
+            # Record tokens per second if we have output tokens and positive duration
+            if total_output_tokens > 0 and duration > 0:
+                tokens_per_second = total_output_tokens / duration
+                metrics.sampling_tokens_per_second.record(
+                    tokens_per_second, {"base_model": base_model}
+                )
 
             return response
 
