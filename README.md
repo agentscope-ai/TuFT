@@ -15,6 +15,7 @@ We welcome open-source collaboration. Join our community for updates and help:
 - [Quick Start Example](#quick-start-example)
 - [Installation](#installation)
 - [Use the Pre-built Docker Image](#use-the-pre-built-docker-image)
+- [User Guide](#user-guide)
 - [Persistence](#persistence)
 - [Architecture](#architecture)
 - [Roadmap](#roadmap)
@@ -298,7 +299,15 @@ you can use the pre-built Docker image.
         tensor_parallel_size: 2
     ```
 
+## User Guide
 
+- **[no_robots](https://huggingface.co/datasets/HuggingFaceH4/no_robots) Dataset (SFT)** — Run **supervised fine-tuning (SFT)** on **chat-formatted** data from **no_robots** dataset using a **running TuFT server**.  
+  - Guide: [chat_sft.md](docs/chat_sft.md)  
+  - Example: [chat_sft.ipynb](examples/chat_sft.ipynb)
+
+- **[Countdown](https://huggingface.co/datasets/Jiayi-Pan/Countdown-Tasks-3to4) Dataset (RL)** — Run **reinforcement learning (RL)** fine-tuning on the **Countdown** dataset using a **running TuFT server**.  
+  - Guide: [countdown_rl.md](docs/countdown_rl.md)  
+  - Example: [countdown_rl.ipynb](examples/countdown_rl.ipynb)
 
 ## Persistence
 
