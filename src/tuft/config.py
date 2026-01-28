@@ -40,7 +40,7 @@ def _default_telemetry_config() -> TelemetryConfig:
 
 @dataclass
 class AppConfig:
-    """Runtime configuration for the FastAPI service."""
+    """Runtime configuration for the TuFT server."""
 
     checkpoint_dir: Path = field(default_factory=_default_checkpoint_dir)
     supported_models: List[ModelConfig] = field(default_factory=list)

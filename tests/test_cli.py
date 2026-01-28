@@ -31,7 +31,7 @@ def test_start_passes_config(monkeypatch, tmp_path) -> None:
             "9999",
             "--log-level",
             "warning",
-            "--model-config",
+            "--config",
             str(Path(__file__).parent / "data" / "models.yaml"),
             "--checkpoint-dir",
             str(tmp_path),
@@ -48,12 +48,12 @@ def test_start_passes_config(monkeypatch, tmp_path) -> None:
     assert server_state.config.model_owner == "tester"
     assert server_state.config.toy_backend_seed == defaults.toy_backend_seed
     assert len(server_state.config.supported_models) == 2
-    assert server_state.config.supported_models[0].model_name == "Qwen/Qwen3-8B"
-    assert server_state.config.supported_models[1].model_name == "Qwen/Qwen3-32B"
+    assert server_state.config.supported_models[0].model_name == "Qwen/Qwen3-4B"
+    assert server_state.config.supported_models[1].model_name == "Qwen/Qwen3-8B"
     server_state.config.check_validity()  # should not raise
     server_state.config.supported_models.append(
         ModelConfig(
-            model_name="Qwen/Qwen3-8B",
+            model_name="Qwen/Qwen3-4B",
             model_path=Path("/path/to/model"),
             max_model_len=8192,
         )
