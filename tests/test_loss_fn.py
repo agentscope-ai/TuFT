@@ -1,5 +1,11 @@
 import pytest
 
+from tuft.exceptions import (
+    LossFunctionInputShapeMismatchException,
+    LossFunctionMissingInputException,
+    LossFunctionNotFoundException,
+)
+
 
 @pytest.mark.gpu
 def test_get_loss_fn():
@@ -17,7 +23,7 @@ def test_get_loss_fn():
         assert callable(loss_fn), f"Loss function for {name} should be callable."
 
     invalid_name = "invalid_loss_fn"
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(LossFunctionNotFoundException) as exc_info:
         get_loss_fn(invalid_name)
     assert str(exc_info.value) == f"Loss function {invalid_name} not found."
 
@@ -38,6 +44,21 @@ def test_cross_entropy_loss():
     expected_loss = 1.0  # -( -0.2 -0.5 -0.3 ) = 1.0
     assert torch.isclose(loss, torch.tensor(expected_loss)), "Cross-entropy loss mismatch."
     assert metrics["loss:sum"] == expected_loss, "Cross-entropy metric mismatch."
+
+    # shape mismatch
+    loss_fn_inputs_shape = {
+        "target_logprobs": torch.tensor([-0.2, -0.5]),
+        "weights": torch.tensor([1.0, 1.0, 1.0]),
+    }
+    with pytest.raises(LossFunctionInputShapeMismatchException):
+        loss_fn(loss_fn_inputs_shape, loss_fn_config)
+
+    # missing input
+    loss_fn_inputs_missing = {
+        "weights": torch.tensor([1.0, 1.0, 1.0]),
+    }
+    with pytest.raises(LossFunctionMissingInputException):
+        loss_fn(loss_fn_inputs_missing, loss_fn_config)
 
 
 @pytest.mark.gpu
@@ -61,6 +82,23 @@ def test_importance_sampling_loss():
     assert torch.isclose(torch.tensor([metrics["loss:sum"]]), torch.tensor(expected_loss)), (
         "Importance sampling metric mismatch."
     )
+
+    # shape mismatch
+    loss_fn_inputs_shape = {
+        "target_logprobs": torch.tensor([-0.1, -0.4]),
+        "logprobs": torch.tensor([-0.2, -0.5, -0.25]),
+        "advantages": torch.tensor([1.0, -1.0, 0.5]),
+    }
+    with pytest.raises(LossFunctionInputShapeMismatchException):
+        loss_fn(loss_fn_inputs_shape, loss_fn_config)
+
+    # missing input
+    loss_fn_inputs_missing = {
+        "target_logprobs": torch.tensor([-0.1, -0.4, -0.5]),
+        "logprobs": torch.tensor([-0.2, -0.5, -0.25]),
+    }
+    with pytest.raises(LossFunctionMissingInputException):
+        loss_fn(loss_fn_inputs_missing, loss_fn_config)
 
 
 @pytest.mark.gpu
@@ -86,6 +124,23 @@ def test_ppo_loss():
         torch.tensor([metrics["loss:sum"]]), torch.tensor(expected_loss), rtol=0.001
     ), "PPO metric mismatch."
 
+    # shape mismatch
+    loss_fn_inputs_shape = {
+        "target_logprobs": torch.tensor([-0.2, -0.5]),
+        "logprobs": torch.tensor([-0.1, -0.4, -0.2]),
+        "advantages": torch.tensor([1.0, -1.0, 0.5]),
+    }
+    with pytest.raises(LossFunctionInputShapeMismatchException):
+        loss_fn(loss_fn_inputs_shape, loss_fn_config)
+
+    # missing input
+    loss_fn_inputs_missing = {
+        "target_logprobs": torch.tensor([-0.2, -0.5, -0.4]),
+        "logprobs": torch.tensor([-0.1, -0.4, -0.2]),
+    }
+    with pytest.raises(LossFunctionMissingInputException):
+        loss_fn(loss_fn_inputs_missing, loss_fn_config)
+
 
 @pytest.mark.gpu
 def test_cispo_loss():
@@ -110,6 +165,23 @@ def test_cispo_loss():
         torch.tensor([metrics["loss:sum"]]), torch.tensor(expected_loss), rtol=0.001
     ), "CISPO metric mismatch."
 
+    # shape mismatch
+    loss_fn_inputs_shape = {
+        "target_logprobs": torch.tensor([-0.3, -0.6]),
+        "logprobs": torch.tensor([-0.2, -0.5, -0.1]),
+        "advantages": torch.tensor([1.0, -1.0, 0.5]),
+    }
+    with pytest.raises(LossFunctionInputShapeMismatchException):
+        loss_fn(loss_fn_inputs_shape, loss_fn_config)
+
+    # missing input
+    loss_fn_inputs_missing = {
+        "target_logprobs": torch.tensor([-0.3, -0.6, -0.2]),
+        "logprobs": torch.tensor([-0.2, -0.5, -0.1]),
+    }
+    with pytest.raises(LossFunctionMissingInputException):
+        loss_fn(loss_fn_inputs_missing, loss_fn_config)
+
 
 @pytest.mark.gpu
 def test_dro_loss():
@@ -132,3 +204,20 @@ def test_dro_loss():
     assert torch.isclose(
         torch.tensor([metrics["loss:sum"]]), torch.tensor(expected_loss), rtol=0.001
     ), "DRO metric mismatch."
+
+    # shape mismatch
+    loss_fn_inputs_shape = {
+        "target_logprobs": torch.tensor([-0.4, -0.3]),
+        "logprobs": torch.tensor([-0.2, -0.1, -0.4]),
+        "advantages": torch.tensor([1.0, -1.0, 0.5]),
+    }
+    with pytest.raises(LossFunctionInputShapeMismatchException):
+        loss_fn(loss_fn_inputs_shape, loss_fn_config)
+
+    # missing input
+    loss_fn_inputs_missing = {
+        "target_logprobs": torch.tensor([-0.4, -0.3, -0.5]),
+        "logprobs": torch.tensor([-0.2, -0.1, -0.4]),
+    }
+    with pytest.raises(LossFunctionMissingInputException):
+        loss_fn(loss_fn_inputs_missing, loss_fn_config)
