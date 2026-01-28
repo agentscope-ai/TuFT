@@ -277,7 +277,7 @@ case "${1:-}" in
         shift
         # Default configuration
         HOST="${TUFT_HOST:-127.0.0.1}"
-        PORT="${TUFT_PORT:-8000}"
+        PORT="${TUFT_PORT:-10610}"
         CHECKPOINT_DIR="${TUFT_CHECKPOINT_DIR:-$TUFT_HOME/checkpoints}"
         MODEL_CONFIG=""
         LOG_LEVEL="info"
@@ -428,7 +428,7 @@ case "${1:-}" in
         echo ""
         echo "Launch Options:"
         echo "  --host          Host to bind to (default: 127.0.0.1)"
-        echo "  --port, -p      Port to bind to (default: 8000)"
+        echo "  --port, -p      Port to bind to (default: 10610)"
         echo "  --model-config  Path to model configuration YAML (required)"
         echo "  --checkpoint-dir Directory for checkpoints (default: ~/.tuft/checkpoints)"
         echo "  --log-level     Log level: debug, info, warning, error (default: info)"
@@ -441,7 +441,7 @@ case "${1:-}" in
         echo ""
         echo "Examples:"
         echo "  tuft launch --model-config models.yaml"
-        echo "  tuft launch --port 8080 --model-config /path/to/models.yaml"
+        echo "  tuft launch --port 10610 --model-config /path/to/models.yaml"
         echo "  tuft upgrade"
         echo ""
         echo "Documentation: https://github.com/agentscope-ai/tuft"

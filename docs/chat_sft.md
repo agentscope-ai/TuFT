@@ -78,7 +78,7 @@ Key TuFT calls (full code in [chat_sft.ipynb](../examples/chat_sft.ipynb)):
 import tinker
 from tinker import types
 
-service_client = tinker.ServiceClient(base_url="http://localhost:8080", api_key=TINKER_API_KEY)
+service_client = tinker.ServiceClient(base_url="http://localhost:10610", api_key=TINKER_API_KEY)
 
 training_client = service_client.create_lora_training_client(
     base_model=BASE_MODEL,

@@ -42,8 +42,8 @@ tuft launch
 
 ## Quick Start Example
 
-This example demonstrates how to use TuFT for training and sampling with the [Tinker SDK](https://pypi.org/project/tinker/). 
-Make sure the server is running on port 8080 before running the code. See the [Run the server](#run-the-server) section below for instructions on starting the server.
+This example demonstrates how to use TuFT for training and sampling with the [Tinker SDK](https://pypi.org/project/tinker/).
+Make sure the server is running on port 10610 before running the code. See the [Run the server](#run-the-server) section below for instructions on starting the server.
 
 ### 1. Data Preparation
 
@@ -54,7 +54,7 @@ import tinker
 from tinker import types
 
 # Connect to the running TuFT server
-client = tinker.ServiceClient(base_url="http://localhost:8080", api_key="local-dev-key")
+client = tinker.ServiceClient(base_url="http://localhost:10610", api_key="local-dev-key")
 
 # Discover available base models
 capabilities = client.get_server_capabilities()
@@ -237,7 +237,7 @@ uv pip install "tuft[dev,backend,persistence,otel]"
 The CLI starts a FastAPI server:
 
 ```bash
-tuft --port 8080 --checkpoint-dir /path/to/checkpoint/dir --model-config models.yaml
+tuft --port 10610 --checkpoint-dir /path/to/checkpoint/dir --model-config models.yaml
 ```
 
 The config file `models.yaml` specifies available base models. Below is an example.
@@ -265,17 +265,17 @@ you can use the pre-built Docker image.
     docker pull ghcr.io/agentscope-ai/tuft:latest
     ```
 
-2. Run the Docker container and start the TuFT server on port 8080:
+2. Run the Docker container and start the TuFT server on port 10610:
 
     ```bash
     docker run -it \
         --gpus all \
         --shm-size="128g" \
         --rm \
-        -p 8080:8080 \
+        -p 10610:10610 \
         -v <host_dir>:/data \
         ghcr.io/agentscope-ai/tuft:latest \
-        tuft --port 8080 --checkpoint-dir /data/checkpoints --model-config /data/models.yaml
+        tuft --port 10610 --checkpoint-dir /data/checkpoints --model-config /data/models.yaml
     ```
 
     Please replace `<host_dir>` with a directory on your host machine where you want to store model checkpoints and other data.
