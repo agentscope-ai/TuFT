@@ -206,7 +206,7 @@ This section explains how to choose `lora_rank` and `learning_rate`, and summari
 
 ### Experimental conclusions from the plots
 
-Based on **Figure 1** (train mean NLL) and **Figure 2** (test NLL):
+Based on **Figure 1** (test NLL) and **Figure 2** (train mean NLL):
 
 1) Very low LR (`1e-5`) converges much more slowly  
 2) `1e-4` and `1e-3` improve quickly early  
