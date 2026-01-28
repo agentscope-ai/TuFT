@@ -301,11 +301,11 @@ you can use the pre-built Docker image.
 
 ## User Guide
 
-- **[no_robots](https://huggingface.co/datasets/HuggingFaceH4/no_robots) Dataset (SFT)** — Run **supervised fine-tuning (SFT)** on **chat-formatted** data from **no_robots** dataset using a **running TuFT server**.  
+- **[no_robots](https://huggingface.co/datasets/HuggingFaceH4/no_robots) Dataset (SFT)** — Run supervised fine-tuning (SFT) on chat-formatted data from no_robots dataset using a running TuFT server.  
   - Guide: [chat_sft.md](docs/chat_sft.md)  
   - Example: [chat_sft.ipynb](examples/chat_sft.ipynb)
 
-- **[Countdown](https://huggingface.co/datasets/Jiayi-Pan/Countdown-Tasks-3to4) Dataset (RL)** — Run **reinforcement learning (RL)** fine-tuning on the **Countdown** dataset using a **running TuFT server**.  
+- **[Countdown](https://huggingface.co/datasets/Jiayi-Pan/Countdown-Tasks-3to4) Dataset (RL)** — Run reinforcement learning (RL) fine-tuning on the Countdown dataset using a running TuFT server.  
   - Guide: [countdown_rl.md](docs/countdown_rl.md)  
   - Example: [countdown_rl.ipynb](examples/countdown_rl.ipynb)
 

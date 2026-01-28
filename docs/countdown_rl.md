@@ -109,7 +109,7 @@ A common RL practice is to include **reward shaping** to reduce sparsity:
 - If exact match: reward = `1.0`
 - If not exact:
   - either give only a small constant `FORMAT_SCORE` (sparse)
-  - or use **continuous shaping**, e.g.: $r = r_{\mathrm{fmt}} + (1 - r_{\mathrm{fmt}})\,\frac{1}{1 + \lvert y - \mathrm{target}\rvert}$
+  - or use **continuous shaping**, e.g.: $r = r_{\mathrm{fmt}} + \left(1 - r_{\mathrm{fmt}}\right)\frac{1}{1 + \left|y - \mathrm{target}\right|}$
 
 This provides gradients even when the model is "close but not correct".
 
@@ -163,7 +163,7 @@ Then compute **within-group** statistics:
 
 Advantages are normalized **within the same group**:
 
-- For sample i: $A_i=\frac{r_i-\mu}{\sigma+\varepsilon}$
+- For sample $i$: $A_i=\frac{r_i-\mu}{\sigma+\varepsilon}$
 
 This is GRPO-like in spirit:
 
