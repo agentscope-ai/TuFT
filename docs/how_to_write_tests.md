@@ -9,7 +9,7 @@ Run all tests (CPU mode, no GPU tests):
 uv run pytest
 ```
 
-Run tests with verbose output:
+Run tests with verbose output and show print statements:
 ```bash
 uv run pytest -v -s
 ```
@@ -139,7 +139,7 @@ Triggered by `/unittest` comment on pull requests (for collaborators/members):
 - Executes full test suite including GPU tests
 
 ```bash
-pytest tests -v -s --gpu --basetemp /mnt/checkpoints
+uv run pytest tests -v -s --gpu --basetemp /mnt/checkpoints
 ```
 
 ## Test Markers and Fixtures
@@ -228,7 +228,7 @@ uv run pytest -m integration
 # Run GPU tests (requires GPU and model)
 export TUFT_TEST_MODEL=/path/to/model
 ray start --head
-uv run pytest --gpu
+uv run pytest tests -v -s --gpu
 
 # Disable persistence
 uv run pytest --no-persistence
