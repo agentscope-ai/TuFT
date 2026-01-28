@@ -11,21 +11,21 @@ from .config import AppConfig, load_yaml_config
 from .server import create_root_app
 
 
-app = typer.Typer(help="Start the local TuFT server.")
+app = typer.Typer(help="TuFT - Tenant-unified Fine-Tuning Server.")
 
 _HOST_OPTION = typer.Option("127.0.0.1", "--host", help="Interface to bind")
 _PORT_OPTION = typer.Option(8000, "--port", "-p", help="Port to bind")
 _LOG_LEVEL_OPTION = typer.Option("info", "--log-level", help="Uvicorn log level")
 _RELOAD_OPTION = typer.Option(False, "--reload", help="Enable auto-reload (development only)")
-_CHECKPOINT_DIR_OPTION = typer.Option(
-    None,
-    "--checkpoint-dir",
-    help="Directory for storing checkpoints. Defaults to ~/.cache/tuft/checkpoints.",
-)
 _MODEL_CONFIG_OPTION = typer.Option(
     None,
     "--model-config",
     help="Path to a model configuration file (YAML)",
+)
+_CHECKPOINT_DIR_OPTION = typer.Option(
+    None,
+    "--checkpoint-dir",
+    help="Directory for storing checkpoints. Defaults to ~/.cache/tuft/checkpoints.",
 )
 
 
@@ -42,8 +42,8 @@ def _build_config(
     return config
 
 
-@app.callback(invoke_without_command=True)
-def start(
+@app.command()
+def launch(
     host: str = _HOST_OPTION,
     port: int = _PORT_OPTION,
     log_level: str = _LOG_LEVEL_OPTION,
@@ -51,7 +51,7 @@ def start(
     model_config: Path | None = _MODEL_CONFIG_OPTION,
     checkpoint_dir: Path | None = _CHECKPOINT_DIR_OPTION,
 ) -> None:
-    """Start the FastAPI server using uvicorn."""
+    """Launch the TuFT server."""
     config = _build_config(model_config, checkpoint_dir)
     uvicorn.run(
         create_root_app(config),
