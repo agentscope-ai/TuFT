@@ -1,0 +1,241 @@
+name: Install Script
+
+on:
+  push:
+    branches: [main, dev/**, feature/**]
+    paths:
+      - 'scripts/install.sh'
+      - '.github/workflows/install-script.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/install.sh'
+      - '.github/workflows/install-script.yml'
+
+jobs:
+  test-install-script:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Test install script syntax
+        run: bash -n scripts/install.sh
+
+      - name: Test install script help
+        run: bash scripts/install.sh --help
+
+      - name: Run install script (local source)
+        run: |
+          bash scripts/install.sh --local-source "$GITHUB_WORKSPACE"
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+      - name: Verify tuft command exists
+        run: |
+          export PATH="${TUFT_HOME}/bin:$PATH"
+          which tuft
+          tuft --help
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+      - name: Verify tuft version
+        run: |
+          export PATH="${TUFT_HOME}/bin:$PATH"
+          tuft version
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+      - name: Verify Python environment
+        run: |
+          test -f "${TUFT_HOME}/venv/bin/python"
+          "${TUFT_HOME}/venv/bin/python" -c "import tuft; print('tuft imported successfully')"
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+      - name: Test tuft launch (dry run - check config error)
+        run: |
+          export PATH="${TUFT_HOME}/bin:$PATH"
+          # Should fail with config error, not import error
+          tuft launch 2>&1 | grep -q "model-config" || tuft launch 2>&1 | grep -q "model_config"
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+      - name: Clean up installation
+        run: rm -rf "${TUFT_HOME}"
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+  test-install-default-with-backend:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run install script (default includes backend)
+        run: |
+          bash scripts/install.sh --local-source "$GITHUB_WORKSPACE"
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+      - name: Verify backend dependencies installed
+        run: |
+          "${TUFT_HOME}/venv/bin/python" -c "import peft; print('peft imported successfully')"
+          "${TUFT_HOME}/venv/bin/python" -c "import redis; print('redis imported successfully')"
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+      - name: Clean up installation
+        run: rm -rf "${TUFT_HOME}"
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+  test-install-without-backend:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run install script without backend
+        run: |
+          bash scripts/install.sh --local-source "$GITHUB_WORKSPACE" --without-backend
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+      - name: Verify minimal install (no peft)
+        run: |
+          # peft should NOT be installed in minimal mode
+          "${TUFT_HOME}/venv/bin/python" -c "import peft" 2>&1 && exit 1 || echo "peft not installed (expected)"
+          # tuft should still be importable
+          "${TUFT_HOME}/venv/bin/python" -c "import tuft; print('tuft imported successfully')"
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+      - name: Clean up installation
+        run: rm -rf "${TUFT_HOME}"
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+  test-wrapper-commands:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install tuft
+        run: bash scripts/install.sh --local-source "$GITHUB_WORKSPACE"
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+      - name: Test help command
+        run: |
+          export PATH="${TUFT_HOME}/bin:$PATH"
+          tuft help
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+      - name: Test version command
+        run: |
+          export PATH="${TUFT_HOME}/bin:$PATH"
+          tuft version
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+      - name: Test upgrade command
+        run: |
+          export PATH="${TUFT_HOME}/bin:$PATH"
+          tuft upgrade
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+      - name: Clean up installation
+        run: rm -rf "${TUFT_HOME}"
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+  test-clean-install:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Initial install
+        run: |
+          bash scripts/install.sh --local-source "$GITHUB_WORKSPACE" --without-backend
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+      - name: Create marker file to verify clean
+        run: |
+          echo "marker" > "${TUFT_HOME}/marker.txt"
+          test -f "${TUFT_HOME}/marker.txt"
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+      - name: Reinstall with --clean
+        run: |
+          bash scripts/install.sh --local-source "$GITHUB_WORKSPACE" --without-backend --clean
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+      - name: Verify marker file was removed
+        run: |
+          # Marker file should be gone after --clean
+          test ! -f "${TUFT_HOME}/marker.txt"
+          # But tuft should still be installed
+          "${TUFT_HOME}/venv/bin/python" -c "import tuft; print('tuft imported successfully')"
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+      - name: Clean up installation
+        run: rm -rf "${TUFT_HOME}"
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+  test-install-backend-command:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install without backend first
+        run: |
+          bash scripts/install.sh --local-source "$GITHUB_WORKSPACE" --without-backend
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+      - name: Verify peft is NOT installed
+        run: |
+          "${TUFT_HOME}/venv/bin/python" -c "import peft" 2>&1 && exit 1 || echo "peft not installed (expected)"
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+      - name: Run install-backend command
+        run: |
+          export PATH="${TUFT_HOME}/bin:$PATH"
+          tuft install-backend
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+      - name: Verify backend dependencies now installed
+        run: |
+          "${TUFT_HOME}/venv/bin/python" -c "import peft; print('peft imported successfully')"
+          "${TUFT_HOME}/venv/bin/python" -c "import redis; print('redis imported successfully')"
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+      - name: Clean up installation
+        run: rm -rf "${TUFT_HOME}"
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
