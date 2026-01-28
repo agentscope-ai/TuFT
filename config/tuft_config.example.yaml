@@ -1,0 +1,120 @@
+# TuFT Configuration Example
+#
+# This file contains all available configuration options for the TuFT server.
+# Copy this file to your desired location and modify as needed.
+#
+# Usage:
+#   tuft launch --config /path/to/your/tuft_config.yaml
+
+# =============================================================================
+# Checkpoint Directory
+# =============================================================================
+# Directory for storing model checkpoints and LoRA weights.
+# Default: ~/.cache/tuft/checkpoints
+checkpoint_dir: ~/.cache/tuft/checkpoints
+
+# =============================================================================
+# Model Owner
+# =============================================================================
+# Default owner for models created on this server.
+model_owner: local-user
+
+# =============================================================================
+# Supported Models
+# =============================================================================
+# List of base models available for training and sampling.
+# Each model requires:
+#   - model_name: Unique identifier used in API calls
+#   - model_path: Path to model checkpoint (local path or HuggingFace model ID)
+#   - max_model_len: Maximum context length supported by the model
+#
+# Optional model settings:
+#   - tensor_parallel_size: Number of GPUs for tensor parallelism (default: 1)
+#   - temperature: Default sampling temperature (default: 1.0)
+#   - top_p: Default nucleus sampling probability (default: 1.0)
+#   - top_k: Default top-k sampling (default: -1, disabled)
+#   - logprobs: Number of log probabilities to return (default: 0)
+#   - seed: Random seed for reproducibility (default: 42)
+#   - min_response_tokens: Minimum tokens to generate (default: 0)
+#   - max_lora_rank: Maximum LoRA adapter rank (default: 16)
+#   - max_loras: Maximum simultaneous LoRA adapters (default: 1)
+#   - colocate: Colocate sampling and training on same device (default: false)
+#   - sampling_memory_fraction: GPU memory fraction for sampling (default: 0.2)
+
+supported_models:
+  - model_name: Qwen/Qwen3-4B
+    model_path: Qwen/Qwen3-4B
+    max_model_len: 32768
+    tensor_parallel_size: 1
+    temperature: 0.7
+    top_p: 1.0
+    top_k: -1
+    max_lora_rank: 16
+    max_loras: 1
+
+  - model_name: Qwen/Qwen3-8B
+    model_path: Qwen/Qwen3-8B
+    max_model_len: 32768
+    tensor_parallel_size: 1
+    temperature: 1.0
+    top_p: 1.0
+    top_k: -1
+    max_lora_rank: 16
+    max_loras: 1
+
+# =============================================================================
+# Authentication
+# =============================================================================
+# API key to user mapping for authentication.
+# Format: api_key: user_id
+#
+# Note: This is a temporary implementation. Replace with proper auth system
+# for production use.
+
+authorized_users:
+  # Example: my-secret-api-key: admin-user
+  local-dev-key: local-user
+
+# =============================================================================
+# Persistence Configuration
+# =============================================================================
+# Configure state persistence for recovery after server restart.
+#
+# Available modes:
+#   - disabled: No persistence (default)
+#   - redis_url: External Redis server
+#   - file_redis: File-backed store
+
+persistence:
+  mode: disabled  # Options: disabled, redis_url, file_redis
+
+  # For redis_url mode:
+  # redis_url: "redis://localhost:6379/0"
+
+  # For file_redis mode:
+  # file_path: "~/.cache/tuft/file_redis.json"
+
+  # Namespace prefix for Redis keys (optional)
+  # namespace: "tuft"
+
+# =============================================================================
+# Telemetry Configuration (OpenTelemetry)
+# =============================================================================
+# Configure observability with distributed tracing, metrics, and logging.
+#
+# Environment variables (alternative to config):
+#   - TUFT_OTLP_ENDPOINT: OTLP collector endpoint
+#   - TUFT_OTEL_DEBUG: Enable console exporter for debugging
+
+telemetry:
+  enabled: false
+  service_name: tuft
+
+  # OTLP exporter endpoint (gRPC)
+  # otlp_endpoint: http://localhost:4317
+
+  # Additional resource attributes for traces/metrics
+  resource_attributes: {}
+    # deployment.environment: production
+    # service.version: 1.0.0
+    # service.namespace: my-namespace

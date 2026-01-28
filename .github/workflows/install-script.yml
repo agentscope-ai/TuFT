@@ -63,7 +63,7 @@ jobs:
         run: |
           export PATH="${TUFT_HOME}/bin:$PATH"
           # Should fail with config error, not import error
-          tuft launch 2>&1 | grep -q "model-config" || tuft launch 2>&1 | grep -q "model_config"
+          tuft launch 2>&1 | grep -q "\-\-config" || tuft launch 2>&1 | grep -q "config"
         env:
           TUFT_HOME: ${{ runner.temp }}/tuft
 

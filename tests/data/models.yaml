@@ -1,13 +1,13 @@
 model_owner: tester
 supported_models:
-  - model_name: Qwen/Qwen3-8B
+  - model_name: Qwen/Qwen3-4B
     model_path: ${oc.env:TUFT_TEST_MODEL, Qwen/Qwen3-0.6B}
     max_model_len: 32768
     tensor_parallel_size: 1
     temperature: 0.7
     top_p: 1.0
     top_k: -1
-  - model_name: Qwen/Qwen3-32B
+  - model_name: Qwen/Qwen3-8B
     model_path: ${oc.env:TUFT_TEST_MODEL, Qwen/Qwen3-0.6B}
     max_model_len: 32768
     tensor_parallel_size: 1

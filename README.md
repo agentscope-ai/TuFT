@@ -90,8 +90,8 @@ datum = types.Datum(
 **Example Output:**
 ```
 Supported models:
+- Qwen/Qwen3-4B
 - Qwen/Qwen3-8B
-- Qwen/Qwen3-32B
 ```
 
 ### 2. Training
@@ -237,22 +237,24 @@ uv pip install "tuft[dev,backend,persistence,otel]"
 The CLI starts a FastAPI server:
 
 ```bash
-tuft --port 10610 --checkpoint-dir /path/to/checkpoint/dir --model-config models.yaml
+tuft launch --port 10610 --config /path/to/tuft_config.yaml
 ```
 
-The config file `models.yaml` specifies available base models. Below is an example.
+The config file `tuft_config.yaml` specifies server settings including available base models, authentication, persistence, and telemetry. Below is a minimal example.
 
 ```yaml
 supported_models:
+  - model_name: Qwen/Qwen3-4B
+    model_path: Qwen/Qwen3-4B
+    max_model_len: 32768
+    tensor_parallel_size: 1
   - model_name: Qwen/Qwen3-8B
     model_path: Qwen/Qwen3-8B
     max_model_len: 32768
     tensor_parallel_size: 1
-  - model_name: Qwen/Qwen3-32B
-    model_path: Qwen/Qwen3-32B
-    max_model_len: 32768
-    tensor_parallel_size: 2
 ```
+
+See [`config/tuft_config.example.yaml`](config/tuft_config.example.yaml) for a complete example configuration with all available options.
 
 ## Use the Pre-built Docker Image
 
@@ -275,7 +277,7 @@ you can use the pre-built Docker image.
         -p 10610:10610 \
         -v <host_dir>:/data \
         ghcr.io/agentscope-ai/tuft:latest \
-        tuft --port 10610 --checkpoint-dir /data/checkpoints --model-config /data/models.yaml
+        tuft launch --port 10610 --config /data/tuft_config.yaml
     ```
 
     Please replace `<host_dir>` with a directory on your host machine where you want to store model checkpoints and other data.
@@ -284,22 +286,22 @@ you can use the pre-built Docker image.
     ```plaintext
     <host_dir>/
         ├── checkpoints/
+        ├── Qwen3-4B/
         ├── Qwen3-8B/
-        ├── Qwen3-32B/
-        └── models.yaml
+        └── tuft_config.yaml
     ```
 
-    The `models.yaml` file should define the models available to TuFT, for example:
+    The `tuft_config.yaml` file defines the server configuration, for example:
     ```yaml
     supported_models:
+      - model_name: Qwen/Qwen3-4B
+        model_path: /data/Qwen3-4B
+        max_model_len: 32768
+        tensor_parallel_size: 1
       - model_name: Qwen/Qwen3-8B
         model_path: /data/Qwen3-8B
         max_model_len: 32768
         tensor_parallel_size: 1
-      - model_name: Qwen/Qwen3-32B
-        model_path: /data/Qwen3-32B
-        max_model_len: 32768
-        tensor_parallel_size: 2
     ```
 
 ## User Guide
@@ -334,11 +336,14 @@ TuFT provides three persistence modes:
 
 ### Configuration
 
+Add a `persistence` section to your `tuft_config.yaml` configuration file and choose one of the following modes.
+
 #### Mode 1: Disabled (Default)
 
 No configuration needed. All data is stored in memory and lost on restart.
 
 ```yaml
+# tuft_config.yaml
 persistence:
   mode: disabled
 ```
@@ -348,6 +353,7 @@ persistence:
 Use an external Redis server for production deployments:
 
 ```yaml
+# tuft_config.yaml
 persistence:
   mode: redis_url
   redis_url: "redis://localhost:6379/0"
@@ -365,6 +371,7 @@ docker run -d --name TuFT-redis -p 6379:6379 redis:7-alpine
 Use the file-backed store for demos or small-scale testing:
 
 ```yaml
+# tuft_config.yaml
 persistence:
   mode: file_redis
   file_path: "~/.cache/tuft/file_redis.json"
@@ -378,9 +385,10 @@ This allows you to monitor your TuFT server using observability tools like SigNo
 
 ### Configuration
 
-Add the following `telemetry` section to your server configuration file (the same YAML file used for model configuration, e.g., `models.yaml`):
+Add the following `telemetry` section to your `tuft_config.yaml` configuration file:
 
 ```yaml
+# tuft_config.yaml
 telemetry:
   enabled: true
   service_name: tuft
