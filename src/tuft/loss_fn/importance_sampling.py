@@ -2,6 +2,8 @@ from typing import Dict, Tuple
 
 import torch
 
+from . import _check_loss_fn_inputs
+
 
 def importance_sampling_loss(
     loss_fn_inputs: Dict[str, torch.Tensor], loss_fn_config: Dict[str, float]
@@ -16,6 +18,9 @@ def importance_sampling_loss(
     Returns:
         A tuple containing the computed loss and a dictionary of metrics.
     """
+    _check_loss_fn_inputs(
+        loss_fn_inputs, ("target_logprobs", "logprobs", "advantages"), check_shapes=True
+    )
     target_logprobs = loss_fn_inputs["target_logprobs"]
     sampling_logprobs = loss_fn_inputs["logprobs"]
     advantages = loss_fn_inputs["advantages"]

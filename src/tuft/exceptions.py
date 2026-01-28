@@ -29,6 +29,10 @@ class AuthenticationException(TuFTException):
     """Base exception for Authentication related errors."""
 
 
+class LossFunctionException(TuFTException):
+    """Base exception for Loss Function related errors."""
+
+
 class UnknownModelException(ModelException):
     """A model was requested that is not known."""
 
@@ -109,3 +113,26 @@ class UserMismatchException(AuthenticationException):
     def __init__(self):
         detail = "You do not have permission to access this resource."
         super().__init__(detail)
+
+
+class LossFunctionNotFoundException(LossFunctionException):
+    """Loss function not found."""
+
+    def __init__(self, loss_function_name: str):
+        detail = f"Loss function {loss_function_name} not found."
+        super().__init__(detail)
+        self.loss_function_name = loss_function_name
+
+
+class LossFunctionMissingInputException(LossFunctionException):
+    def __init__(self, missing_input_name: str):
+        detail = f"Missing '{missing_input_name}' in loss_fn_inputs."
+        super().__init__(detail)
+        self.input_name = missing_input_name
+
+
+class LossFunctionInputShapeMismatchException(LossFunctionException):
+    def __init__(self, shapes: list):
+        detail = f"Input tensors must have the same shape. Got shapes: {shapes}"
+        super().__init__(detail)
+        self.shapes = shapes
