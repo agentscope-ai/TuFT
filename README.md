@@ -518,6 +518,8 @@ To skip integration tests:
 uv run pytest -m "not integration"
 ```
 
+For detailed testing instructions, including GPU tests, persistence testing, and writing new tests, see the [Testing Guide](docs/how_to_write_tests.md).
+
 ### Linting and Type Checking
 
 Run the linter:
