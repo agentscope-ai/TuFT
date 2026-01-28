@@ -541,6 +541,20 @@ For Jupyter notebooks:
 uv run nbqa ruff notebooks/
 ```
 
+### Secret Detection
+
+Scan and update the secrets baseline:
+
+```bash
+uv run detect-secrets scan > .secrets.baseline
+```
+
+Audit detected secrets to mark false positives:
+
+```bash
+uv run detect-secrets audit .secrets.baseline
+```
+
 ### Contributing
 
 Please ensure all tests pass and pre-commit hooks succeed before creating new PRs.
