@@ -1,6 +1,6 @@
 # TuFT — Chat Supervised Fine-Tuning (SFT)
 
-This guide demonstrates **supervised fine-tuning (SFT)** on **chat-formatted data** using a **running TuFT server**. Full runnable code is in **[chat_sft.ipynb](../examples/chat_sft.ipynb)**.
+This guide demonstrates **supervised fine-tuning (SFT)** on **chat-formatted data** using a **running TuFT server**. Full runnable code is in **[chat_sft.ipynb](../examples/chat_sft.ipynb)**. Although this is a general SFT guide, it also documents common issues users may encounter when using TuFT for SFT and provides step-by-step guidance to help them successfully complete an end-to-end run.
 
 ---
 
@@ -9,7 +9,7 @@ This guide demonstrates **supervised fine-tuning (SFT)** on **chat-formatted dat
 1. How to load **chat datasets** from HuggingFace and extract multi-turn `messages`  
 2. How to format conversations using **model chat templates** (`apply_chat_template`)  
 3. How to implement **assistant-only loss masking** and compute masked negative log-likelihood for evaluation  
-4. How to construct `Datum` objects and run an end-to-end **LoRA SFT** loop  
+4. How to construct `Datum` objects and run an end-to-end **LoRA SFT** loop via TuFT server. 
 5. How to choose and tune **LoRA rank** and **learning rate** based on train/test curves
 
 ---
@@ -191,7 +191,7 @@ def masked_nll(loss_fn_outputs, datums):
 
 ## 5. Parameter Selection
 
-This section explains how to choose `lora_rank` and `learning_rate`, and summarizes conclusions from the provided experiment results. The following experiments use [Qwen/Qwen3-4B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507).
+This section explains how to choose `lora_rank` and `learning_rate`, and summarizes conclusions from the provided experiment results. This documentation is based on [Qwen/Qwen3-4B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507).
 
 ### What do `lora_rank` and `learning_rate` do?
 
@@ -237,7 +237,7 @@ Based on **Figure 1** (test NLL) and **Figure 2** (train mean NLL):
 
 ## 6. Q&A
 
-### (1) Dataset download fails due to network issues (`MaxRetryError` / `Network is unreachable`)
+### (1) Dataset download fails due to network issues when accessing huggingface.co. (`MaxRetryError` / `Network is unreachable`)
 
 If you see an error like:
 ```
@@ -245,7 +245,7 @@ MaxRetryError('HTTPSConnectionPool(host=\'huggingface.co\', port=443): Max retri
 (Caused by NewConnectionError(... [Errno 101] Network is unreachable))')
 ```
 
-Add the following **at the very top of the first cell**:
+For Jupyter notebook users, add the following **at the very top of the first cell**:
 ```python
 import os
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
@@ -257,12 +257,12 @@ Then **Restart Kernel and Clear ALL Outputs**.
 
 ### (2) `invalid Api_key`
 
-In the Tinker SDK, the environment variable `TINKER_API_KEY` (set via `export TINKER_API_KEY=...`) takes precedence over the `api_key=` argument passed here:
+In the Tinker SDK, the environment variable `TINKER_API_KEY` takes precedence over the `api_key=` argument passed here:
 ```python
 service_client = tinker.ServiceClient(base_url=TINKER_BASE_URL, api_key=TINKER_API_KEY)
 ```
 
-So if your code is passing the correct key but you still get `invalid api_key`, clear the environment variable and try again:
+So if your code is passing the correct key but you still get `invalid api_key`, you need to either set the correct environment variable (via `export TINKER_API_KEY=...`) or clear it and rely on the `api_key=` argument:
 ```bash
 unset TINKER_API_KEY
 ```

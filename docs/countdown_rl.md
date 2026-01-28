@@ -1,6 +1,6 @@
 # TuFT — Countdown Reinforcement Learning (RL)
 
-This guide demonstrates **reinforcement learning (RL)** fine-tuning on the **Countdown** dataset using a **running TuFT server**. Full runnable code is in [countdown_rl.ipynb](../examples/countdown_rl.ipynb).
+This guide demonstrates **reinforcement learning (RL)** fine-tuning on the **Countdown** dataset using a **running TuFT server**. Full runnable code is in [countdown_rl.ipynb](../examples/countdown_rl.ipynb). Although this is a general RL guide, it also documents common issues users may encounter when using TuFT for RL and provides step-by-step guidance to help them successfully complete an end-to-end run.
 
 ---
 
@@ -240,7 +240,7 @@ for toks, lps, adv in zip(tokens_G_T, logprobs_G_T, advantages_G):
 
 ## 4. Parameter Selection
 
-This section explains how to choose `lora_rank` and `learning_rate` for the Countdown RL task, and summarizes conclusions based on the provided experiment results. The following experiments use [Qwen/Qwen3-4B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507).
+This section explains how to choose `lora_rank` and `learning_rate` for the Countdown RL task, and summarizes conclusions based on the provided experiment results. This documentation is based on [Qwen/Qwen3-4B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507).
 
 ### What do `lora_rank` and `learning_rate` do?
 

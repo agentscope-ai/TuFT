@@ -300,14 +300,13 @@ you can use the pre-built Docker image.
     ```
 
 ## User Guide
+We provide practical examples to demonstrate how to use TuFT for training and sampling. The guides below cover both Supervised Fine-Tuning and Reinforcement Learning workflows, with links to runnable notebooks.
 
-- **[no_robots](https://huggingface.co/datasets/HuggingFaceH4/no_robots) Dataset (SFT)** — Run supervised fine-tuning (SFT) on chat-formatted data from no_robots dataset using a running TuFT server.  
-  - Guide: [chat_sft.md](docs/chat_sft.md)  
-  - Example: [chat_sft.ipynb](examples/chat_sft.ipynb)
+| Dataset | Task | Guide | Example |
+|---|---|---|---|
+| [no_robots](https://huggingface.co/datasets/HuggingFaceH4/no_robots) | Supervised Fine-Tuning (SFT) | [chat_sft.md](docs/chat_sft.md) | [chat_sft.ipynb](examples/chat_sft.ipynb) |
+| [Countdown](https://huggingface.co/datasets/Jiayi-Pan/Countdown-Tasks-3to4) | Reinforcement Learning (RL) | [countdown_rl.md](docs/countdown_rl.md) | [countdown_rl.ipynb](examples/countdown_rl.ipynb) |
 
-- **[Countdown](https://huggingface.co/datasets/Jiayi-Pan/Countdown-Tasks-3to4) Dataset (RL)** — Run reinforcement learning (RL) fine-tuning on the Countdown dataset using a running TuFT server.  
-  - Guide: [countdown_rl.md](docs/countdown_rl.md)  
-  - Example: [countdown_rl.ipynb](examples/countdown_rl.ipynb)
 
 ## Persistence
 
