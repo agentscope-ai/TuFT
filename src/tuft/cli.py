@@ -16,8 +16,8 @@ from .telemetry.metrics import ResourceMetricsCollector
 
 app = typer.Typer(help="TuFT - Tenant-unified Fine-Tuning Server.")
 
-_HOST_OPTION = typer.Option("127.0.0.1", "--host", help="Interface to bind")
-_PORT_OPTION = typer.Option(10610, "--port", "-p", help="Port to bind")
+_HOST_OPTION = typer.Option("127.0.0.1", "--host", help="Interface to bind", envvar="TUFT_HOST")
+_PORT_OPTION = typer.Option(10610, "--port", "-p", help="Port to bind", envvar="TUFT_PORT")
 _LOG_LEVEL_OPTION = typer.Option("info", "--log-level", help="Uvicorn log level")
 _RELOAD_OPTION = typer.Option(False, "--reload", help="Enable auto-reload (development only)")
 _MODEL_CONFIG_OPTION = typer.Option(
