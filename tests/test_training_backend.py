@@ -12,23 +12,22 @@ from tuft.backends.training_backend import HFTrainingBackend
 from tuft.checkpoints import CheckpointRecord
 from tuft.config import ModelConfig
 
+from .helpers import (
+    PIG_LATIN_EXAMPLES,
+    PIG_LATIN_EXAMPLES_EXTENDED,
+    TEST_PROMPTS,
+    _normalize_text,
+)
 
-def _construct_data() -> List[types.Datum]:
+
+def _construct_data(name: str = "extended") -> List[types.Datum]:
     assert "TUFT_TEST_MODEL" in os.environ, (
         "Environment variable TUFT_TEST_MODEL must be set for this test."
     )
 
     model_path = Path(os.environ.get("TUFT_TEST_MODEL", "Qwen/Qwen3-0.6B"))
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_path)
-    examples = [
-        {"input": "banana split", "output": "anana-bay plit-say"},
-        {"input": "quantum physics", "output": "uantum-qay ysics-phay"},
-        {"input": "donut shop", "output": "onut-day op-shay"},
-        {"input": "pickle jar", "output": "ickle-pay ar-jay"},
-        {"input": "space exploration", "output": "ace-spay exploration-way"},
-        {"input": "rubber duck", "output": "ubber-ray uck-day"},
-        {"input": "coding wizard", "output": "oding-cay izard-way"},
-    ]
+    examples = PIG_LATIN_EXAMPLES_EXTENDED if name == "extended" else PIG_LATIN_EXAMPLES
     data = []
     for example in examples:
         prompt = f"English: {example['input']}\nPig Latin:"
@@ -225,3 +224,84 @@ async def test_training_backend():
 # Loss per token: 0.5762
 # Forward Backward Metrics: {'clock_cycle:unique': 8649643.0, 'loss:sum': 31.11434930562973}
 # Optimization Step Metrics: None
+
+
+@pytest.mark.gpu
+@pytest.mark.asyncio
+async def test_colocate_sampling_and_training():
+    from tuft.backends.sampling_backend import VLLMSamplingBackend
+    from tuft.backends.training_backend import HFTrainingBackend
+
+    assert "TUFT_TEST_MODEL" in os.environ, (
+        "Environment variable TUFT_TEST_MODEL must be set for this test."
+    )
+
+    model_path = Path(os.environ.get("TUFT_TEST_MODEL", "Qwen/Qwen3-0.6B"))
+    model_config = ModelConfig(
+        model_name="Qwen/Qwen3-0.6B",
+        model_path=model_path,
+        max_model_len=2048,
+        tensor_parallel_size=1,
+        colocate=True,
+        sampling_memory_fraction=0.25,
+    )
+    training_backend = HFTrainingBackend(model_config)
+    sampling_backend = VLLMSamplingBackend(model_config)
+    await training_backend.async_init()
+    await sampling_backend.async_init()
+
+    await training_backend.create_adapter("test_lora", types.LoraConfig(rank=8, seed=42))
+
+    data = _construct_data(name="default")
+    weights = np.concatenate([example.loss_fn_inputs["weights"].tolist() for example in data])
+    for step in range(20):
+        # test two separate lora training in turn
+        outputs = await training_backend.forward(
+            data=data,
+            lora_id="test_lora",
+            loss_fn="cross_entropy",
+            loss_fn_config=None,
+            backward=True,
+        )
+
+        await training_backend.optim_step(types.AdamParams(learning_rate=1e-4), lora_id="test_lora")
+        logprobs = np.concatenate(
+            [output["logprobs"].tolist() for output in outputs.loss_fn_outputs]
+        )
+        loss_per_token = -np.dot(logprobs, weights) / weights.sum()
+        print(f"(1) Loss per token at step {step}: {loss_per_token:.4f}")
+
+    tokenizer = transformers.AutoTokenizer.from_pretrained(model_path)
+    with tempfile.TemporaryDirectory() as tmpdirname:
+        temp_dir = Path(tmpdirname)
+        checkpoint = CheckpointRecord(
+            checkpoint_id="test_lora",
+            owner_name="default",
+            checkpoint_type="training",
+            path=temp_dir / "test_lora",
+            training_run_id="test_run",
+            size_bytes=0,
+        )
+        await training_backend.save_state(
+            lora_id="test_lora", checkpoint_record=checkpoint, optimizer=False
+        )
+        await sampling_backend.add_adapter("test_lora", checkpoint.adapter_path)
+
+        for prompt_text, example in zip(TEST_PROMPTS, PIG_LATIN_EXAMPLES, strict=True):
+            prompt_tokens = tokenizer.encode(prompt_text, add_special_tokens=True)
+            sample_res = await sampling_backend.sample(
+                prompt=types.ModelInput.from_ints(prompt_tokens),
+                num_samples=1,
+                sampling_params=types.SamplingParams(
+                    max_tokens=16,
+                    temperature=0.1,
+                    top_p=1.0,
+                    stop=["\n"],
+                ),
+                lora_id="test_lora",
+            )
+            assert sample_res.sequences and sample_res.sequences[0].tokens
+            output_text = tokenizer.decode(sample_res.sequences[0].tokens, skip_special_tokens=True)
+            assert _normalize_text(output_text) == _normalize_text(example["output"]), (
+                f"Expected {_normalize_text(example['output'])}, got {_normalize_text(output_text)}"
+            )

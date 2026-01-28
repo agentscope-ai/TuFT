@@ -35,6 +35,46 @@ class VLLMSamplingBackend(BaseSamplingBackend):
         self._lock = asyncio.Lock()
 
     def _create_engine(self, config: ModelConfig):
+        if config.colocate:
+            return self._create_colocated_engine(config)
+        else:
+            return self._create_standalone_engine(config)
+
+    def _create_colocated_engine(self, config: ModelConfig):
+        import ray
+        from trinity.common.config import InferenceModelConfig
+        from trinity.common.models.vllm_model import vLLMRolloutModel
+
+        return (
+            ray.remote(vLLMRolloutModel)
+            .options(
+                name="sampling_model_" + self.base_model,
+                num_gpus=config.sampling_memory_fraction,
+            )
+            .remote(
+                config=InferenceModelConfig(
+                    model_path=str(config.model_path),
+                    tensor_parallel_size=1,
+                    max_model_len=config.max_model_len,
+                    temperature=config.temperature,
+                    top_p=config.top_p,
+                    top_k=config.top_k,
+                    logprobs=config.logprobs,
+                    min_response_tokens=config.min_response_tokens,
+                    repetition_penalty=1.0,
+                    enable_lora=True,
+                    enable_runtime_lora_updating=True,
+                    lora_kwargs={
+                        "max_lora_rank": config.max_lora_rank,
+                        "max_loras": config.max_loras,
+                    },
+                    # sampling use less memory than training
+                    gpu_memory_utilization=config.sampling_memory_fraction,
+                )
+            )
+        )
+
+    def _create_standalone_engine(self, config: ModelConfig):
         import ray
         from ray.util.placement_group import placement_group
         from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
@@ -125,6 +165,9 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                     lora_name=lora_id,
                     lora_path=str(adapter_path),
                 )
+                if not adapter_path.exists():
+                    raise ValueError(f"LoRA adapter path {adapter_path} does not exist.")
+                await self.engine.add_lora_adapter.remote(self.lora_adapters[lora_id])
 
     async def remove_adapter(self, lora_id: str) -> None:
         with _get_tracer().start_as_current_span("sampling_backend.remove_adapter") as span:
@@ -132,8 +175,8 @@ class VLLMSamplingBackend(BaseSamplingBackend):
 
             async with self._lock:
                 if lora_id in self.lora_adapters:
+                    await self.engine.remove_lora_adapter.remote(lora_id)
                     del self.lora_adapters[lora_id]
-            # TODO: unload LoRA from vLLM engine
 
 
 class DummySamplingBackend(BaseSamplingBackend):

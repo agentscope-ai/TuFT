@@ -392,7 +392,7 @@ class HFTrainingModel:
             ray.remote(cls)
             .options(
                 name="training_model_" + config.model_name,
-                num_gpus=1,
+                num_gpus=1 if not config.colocate else 1 - config.sampling_memory_fraction,
             )
             .remote(config)
         )
