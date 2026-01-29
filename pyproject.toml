@@ -1,9 +1,9 @@
 [project]
 name = "tuft"
 version = "0.1.0"
-description = "A multi-tenant system that provides a unified service API for finetuning large language models (LLMs)"
+description = "A multi-tenant fine-tuning system for LLMs with Tinker-compatible API"
 authors = [
-    { name = "TuFT Developers", email = "erkang.zhu@alibaba-inc.com" }
+    { name = "TuFT Developers", email = "tuft@list.alibaba-inc.com" }
 ]
 readme = "README.md"
 license = { file = "LICENSE" }
