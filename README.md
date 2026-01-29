@@ -198,7 +198,13 @@ We recommend using [uv](https://github.com/astral-sh/uv) for dependency manageme
     uv venv --python 3.12
     ```
 
-3. Install dependencies:
+3. Activate environment:
+
+    ```bash
+    source .venv/bin/activate
+    ```
+
+4. Install dependencies:
 
     ```bash
     # Install minimal dependencies for non-development installs
@@ -215,11 +221,7 @@ We recommend using [uv](https://github.com/astral-sh/uv) for dependency manageme
     # uv pip install flash-attn --no-build-isolation
     ```
 
-4. Activate environment:
 
-    ```bash
-    source .venv/bin/activate
-    ```
 
 ### Install via PyPI
 

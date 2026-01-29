@@ -1,11 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 2 165 56">
-  <!-- 
+  <!--
     TuFT Logo
     Tenant-unified FineTuning
-    
-    Five colorful strands (tenants) converging 
+
+    Five colorful strands (tenants) converging
     and unifying into a single point — like a tuft of grass.
   -->
+
+  <style>
+    .wordmark {
+      fill: #0f172a;
+    }
+    @media (prefers-color-scheme: dark) {
+      .wordmark {
+        fill: #f1f5f9;
+      }
+    }
+  </style>
   
   <!-- Icon: Five converging strands aligned with text baseline -->
   <g transform="translate(8, 10)">
@@ -32,5 +43,5 @@
         font-size="32"
         font-weight="700"
         letter-spacing="-1"
-        fill="#0f172a">TuFT</text>
+        class="wordmark">TuFT</text>
 </svg>

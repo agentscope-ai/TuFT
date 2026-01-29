@@ -42,6 +42,8 @@ dev = [
 backend = [
     "trinity-rft[vllm]>=0.4.1",
     "peft>=0.18.0",
+    "datasets>=4.0.0",
+    "huggingface-hub>=0.20.0,<1.0"
 ]
 persistence = [
     "redis>=5.0.0",
