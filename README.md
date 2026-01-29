@@ -37,7 +37,7 @@ Install TuFT with a single command:
 This installs TuFT with full backend support (GPU dependencies, persistence, flash-attn) and a bundled Python environment to `~/.tuft`. After installation, restart your terminal and run:
 
 ```bash
-tuft launch
+tuft
 ```
 
 ## Quick Start Example
@@ -239,7 +239,7 @@ uv pip install "tuft[dev,backend,persistence]"
 The CLI starts a FastAPI server:
 
 ```bash
-tuft launch --port 10610 --config /path/to/tuft_config.yaml
+tuft --port 10610 --config /path/to/tuft_config.yaml
 ```
 
 The config file `tuft_config.yaml` specifies server settings including available base models, authentication, persistence, and telemetry. Below is a minimal example.
@@ -279,7 +279,7 @@ you can use the pre-built Docker image.
         -p 10610:10610 \
         -v <host_dir>:/data \
         ghcr.io/agentscope-ai/tuft:latest \
-        tuft launch --port 10610 --config /data/tuft_config.yaml
+        tuft --port 10610 --config /data/tuft_config.yaml
     ```
 
     Please replace `<host_dir>` with a directory on your host machine where you want to store model checkpoints and other data.

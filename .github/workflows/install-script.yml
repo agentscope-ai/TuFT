@@ -59,11 +59,11 @@ jobs:
         env:
           TUFT_HOME: ${{ runner.temp }}/tuft
 
-      - name: Test tuft launch (dry run - check config error)
+      - name: Test tuft (dry run - check config error)
         run: |
           export PATH="${TUFT_HOME}/bin:$PATH"
           # Should fail with config error, not import error
-          tuft launch 2>&1 | grep -q "\-\-config" || tuft launch 2>&1 | grep -q "config"
+          tuft 2>&1 | grep -q "\-\-config" || tuft 2>&1 | grep -q "config"
         env:
           TUFT_HOME: ${{ runner.temp }}/tuft
 
