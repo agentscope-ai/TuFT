@@ -182,7 +182,8 @@ class SamplingController:
                     # model_path should have higher priority than base_model
                     try:
                         parsed_checkpoint = CheckpointRecord.from_tinker_path(
-                            model_path, self.config.checkpoint_dir
+                            model_path,
+                            self.config.checkpoint_dir,  # type: ignore[reportArgumentType]
                         )
                     except FileNotFoundError as exc:
                         raise CheckpointNotFoundException(checkpoint_id=model_path) from exc
