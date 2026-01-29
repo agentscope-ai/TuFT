@@ -25,7 +25,7 @@ We're open source and welcome contributions! Join the community:
 
 ## Quick Install
 
-> **Note**: This script supports **Linux**, **macOS**, and **Windows WSL 2** only. For other platforms, see [Installation](#installation).
+> **Note**: This script supports unix platforms. For other platforms, see [Installation](#installation).
 
 Install TuFT with a single command:
 
