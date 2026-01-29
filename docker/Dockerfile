@@ -40,8 +40,8 @@ COPY ./scripts ./scripts
 
 # Install
 RUN bash ./scripts/install.sh --local-source /workspace \
+    && . $HOME/.local/bin/env \
     && . /root/.tuft/venv/bin/activate \
-    && export PATH="$HOME/.local/bin:$PATH" \
     && uv pip install .[dev]
 
 ENTRYPOINT ["/bin/bash", "-c", "source ${VIRTUAL_ENV}/bin/activate && exec \"$@\"", "--"]

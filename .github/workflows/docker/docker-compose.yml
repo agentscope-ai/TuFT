@@ -13,8 +13,8 @@ services:
       && ln -sf /usr/bin/python3 /usr/bin/python \
       && ln -sf /usr/bin/pip3 /usr/bin/pip \
       && bash /workspace/scripts/install.sh --local-source /workspace \
+      && source $HOME/.local/bin/env \
       && source /root/.tuft/venv/bin/activate \
-      && export PATH="$HOME/.local/bin:$PATH" \
       && uv pip install .[dev] \
       && ray start --head --dashboard-host 0.0.0.0 --include-dashboard true --block"
     environment:
@@ -25,6 +25,7 @@ services:
       - TUFT_TEST_MODEL_1=/mnt/models/Qwen3-0.6B
       - TUFT_TEST_MODEL_2=/mnt/models/Qwen3-1.7B
       - TEST_REDIS_URL=redis://tuft-redis:6379
+      - VIRTUAL_ENV=/root/.tuft/venv
     working_dir: /workspace
     networks:
       - tuft-network
