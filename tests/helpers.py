@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import socket
 import threading
@@ -196,3 +197,24 @@ def _create_reverse_training_data(tokenizer) -> list[types.Datum]:
         )
         data.append(datum)
     return data
+
+
+def clear_ray_state() -> None:
+    """Clear Ray state to avoid resource leak between tests."""
+    import gc
+    import signal
+
+    import psutil
+    import ray
+
+    ray.shutdown(_exiting_interpreter=True)
+    gc.collect()
+
+    # check gpu memory and kill stray vllm processes
+    for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+        try:
+            cmdline = proc.info["cmdline"]
+            if cmdline and "VLLM" in " ".join(cmdline):
+                os.kill(proc.info["pid"], signal.SIGKILL)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue

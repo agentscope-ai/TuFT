@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import gc
 import os
 from pathlib import Path
 
@@ -17,6 +16,8 @@ from tuft.exceptions import (
 )
 from tuft.state import ServerState
 
+from .helpers import clear_ray_state
+
 
 @pytest.fixture(scope="function", autouse=True)
 def ray_cluster(request):
@@ -25,8 +26,7 @@ def ray_cluster(request):
 
         ray.init(ignore_reinit_error=True)
         yield
-        ray.shutdown(_exiting_interpreter=True)
-        gc.collect()
+        clear_ray_state()
         return
     yield
 

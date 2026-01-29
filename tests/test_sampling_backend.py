@@ -7,6 +7,8 @@ import pytest
 from tinker import types
 from transformers import AutoTokenizer
 
+from .helpers import clear_ray_state
+
 
 @pytest.fixture(scope="function", autouse=True)
 def ray_cluster():
@@ -14,7 +16,7 @@ def ray_cluster():
 
     ray.init(ignore_reinit_error=True)
     yield
-    ray.shutdown(_exiting_interpreter=True)
+    clear_ray_state()
 
 
 @pytest.mark.gpu

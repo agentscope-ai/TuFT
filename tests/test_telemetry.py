@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import gc
 import os
 from pathlib import Path
 
@@ -21,7 +20,7 @@ from tuft.config import AppConfig, ModelConfig, TelemetryConfig
 from tuft.state import ServerState
 from tuft.telemetry.tracing import clear_tracers
 
-from .helpers import _find_free_port, _start_server, _stop_server
+from .helpers import _find_free_port, _start_server, _stop_server, clear_ray_state
 
 
 # =============================================================================
@@ -76,8 +75,7 @@ def ray_cluster(request):
     if request.config.getoption("--gpu"):
         ray.init(ignore_reinit_error=True)
         yield
-        ray.shutdown(_exiting_interpreter=True)
-        gc.collect()
+        clear_ray_state()
     else:
         yield
 
@@ -436,8 +434,7 @@ def telemetry_server(tmp_path_factory, request, span_exporter, setup_tracer_prov
     _stop_server(server, thread, client)
 
     if request.config.getoption("--gpu"):
-        ray.shutdown(_exiting_interpreter=True)
-        gc.collect()
+        clear_ray_state()
     if saved_api_key is not None:
         os.environ["TINKER_API_KEY"] = saved_api_key
 

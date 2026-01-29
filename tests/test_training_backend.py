@@ -1,3 +1,4 @@
+import gc
 import os
 import tempfile
 from pathlib import Path
@@ -5,6 +6,7 @@ from typing import List
 
 import numpy as np
 import pytest
+import ray
 import transformers
 from tinker import types
 
@@ -18,6 +20,21 @@ from .helpers import (
     TEST_PROMPTS,
     _normalize_text,
 )
+
+
+@pytest.fixture(scope="function")
+def ray_cluster(request):
+    if request.config.getoption("--gpu"):
+        # make sure we start with a fresh ray instance
+        ray.shutdown(_exiting_interpreter=True)
+        gc.collect()
+
+        ray.init(ignore_reinit_error=True)
+        yield
+        ray.shutdown(_exiting_interpreter=True)
+        gc.collect()
+    else:
+        yield
 
 
 def _construct_data(name: str = "extended") -> List[types.Datum]:

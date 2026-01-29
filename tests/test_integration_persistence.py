@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import gc
 import os
 import warnings
 from pathlib import Path
@@ -21,6 +20,7 @@ from .helpers import (
     _log,
     _start_server,
     _stop_server,
+    clear_ray_state,
 )
 
 
@@ -65,8 +65,7 @@ def test_checkpoint_resume_persistence(tmp_path: Path) -> None:
     os.environ.setdefault("WORLD_SIZE", "1")
     os.environ.setdefault("RANK", "0")
     # make sure the resources are released
-    ray.shutdown(_exiting_interpreter=True)
-    gc.collect()
+    clear_ray_state()
     ray.init(
         ignore_reinit_error=True,
         runtime_env={"env_vars": {"TRANSFORMERS_NO_TORCHVISION": "1"}},
@@ -151,8 +150,7 @@ def test_checkpoint_resume_persistence(tmp_path: Path) -> None:
 
         _log("Restarting server...")
         _stop_server(server, thread, client)
-        ray.shutdown(_exiting_interpreter=True)
-        gc.collect()
+        clear_ray_state()
         ray.init(
             ignore_reinit_error=True,
             runtime_env={"env_vars": {"TRANSFORMERS_NO_TORCHVISION": "1"}},
@@ -207,7 +205,6 @@ def test_checkpoint_resume_persistence(tmp_path: Path) -> None:
             service_client.holder.close()
         if server and thread and client:
             _stop_server(server, thread, client)
-        ray.shutdown(_exiting_interpreter=True)
-        gc.collect()
+        clear_ray_state()
         if file_redis_path.exists():
             file_redis_path.unlink()

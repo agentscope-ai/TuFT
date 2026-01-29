@@ -16,6 +16,8 @@ from tinker.lib.public_interfaces.service_client import ServiceClient
 from tuft.config import AppConfig, ModelConfig
 from tuft.server import create_root_app
 
+from .helpers import clear_ray_state
+
 
 pytest.importorskip("h2")
 
@@ -79,7 +81,7 @@ def server_endpoint(tmp_path_factory: pytest.TempPathFactory, request):
     server.should_exit = True
     thread.join(timeout=5)
     client.close()
-    ray.shutdown(_exiting_interpreter=True)
+    clear_ray_state()
     # Restore TINKER_API_KEY if it was set
     if saved_api_key is not None:
         os.environ["TINKER_API_KEY"] = saved_api_key

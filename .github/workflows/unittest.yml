@@ -34,8 +34,7 @@ jobs:
         MAX_RETRIES=20
         RETRY_INTERVAL=5
         for i in $(seq 1 $MAX_RETRIES); do
-          if docker compose exec tuft-node-1 bash -c "source /opt/venv/bin/activate && ray status" \
-            && docker compose exec tuft-node-2 bash -c "source /opt/venv/bin/activate && ray status"; then
+          if docker compose exec tuft-node-1 bash -c "source /root/.tuft/venv/bin/activate && ray status"; then
             break
           fi
           echo "Waiting for ray cluster to be ready... ($i/$MAX_RETRIES)"
@@ -51,7 +50,7 @@ jobs:
       # set a github env variable to indicate tests were run, so that subsequent steps can check it
       run: |
         echo "tests_run=true" >> $GITHUB_ENV
-        docker compose exec tuft-node-1 bash -c "source /opt/venv/bin/activate && pytest tests -v -s --gpu --basetemp /mnt/checkpoints --ctrf report.json"
+        docker compose exec tuft-node-1 bash -c "source /root/.tuft/venv/bin/activate && pytest tests -v -s --gpu --basetemp /mnt/checkpoints --ctrf report.json"
 
     - name: Convert report.json time to ms
       working-directory: tuft-${{ github.run_id }}

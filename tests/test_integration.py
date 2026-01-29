@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import gc
 import os
 import threading
 import time
@@ -28,6 +27,7 @@ from .helpers import (
     _find_free_port,
     _log,
     _normalize_text,
+    clear_ray_state,
 )
 
 
@@ -46,8 +46,7 @@ Notes:
 
 @pytest.fixture(scope="module")
 def server_endpoint(tmp_path_factory: pytest.TempPathFactory):
-    ray.shutdown(_exiting_interpreter=True)
-    gc.collect()
+    clear_ray_state()
     os.environ.setdefault("MASTER_ADDR", "localhost")
     os.environ.setdefault("MASTER_PORT", "29500")
     os.environ.setdefault("WORLD_SIZE", "1")
@@ -126,10 +125,7 @@ def server_endpoint(tmp_path_factory: pytest.TempPathFactory):
     server.should_exit = True
     thread.join(timeout=5)
     client.close()
-    ray.shutdown(_exiting_interpreter=True)
-    # clean up actors,
-    # https://github.com/ray-project/ray/issues/31738
-    gc.collect()
+    clear_ray_state()
 
 
 @pytest.mark.integration
