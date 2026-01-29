@@ -1,7 +1,10 @@
 [project]
 name = "tuft"
 version = "0.1.0"
-description = "Add your description here"
+description = "A multi-tenant system that provides a unified service API for finetuning large language models (LLMs)"
+authors = [
+    { name = "TuFT Developers", email = "erkang.zhu@alibaba-inc.com" }
+]
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
