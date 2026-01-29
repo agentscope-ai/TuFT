@@ -508,12 +508,13 @@ class TrainingController:
                 logger.info("Checkpoint save begin: %s", checkpoint_id)
 
                 setattr(training_run, counter_attr, counter + 1)
+                assert self.config.checkpoint_dir is not None
                 checkpoint = CheckpointRecord.from_training_run(
                     training_run_id=training_run.training_run_id,
                     checkpoint_name=checkpoint_name,
                     owner_name=training_run.model_owner,
                     checkpoint_type=checkpoint_type,
-                    checkpoint_root_dir=self.config.checkpoint_dir,  # type: ignore[reportArgumentType]
+                    checkpoint_root_dir=self.config.checkpoint_dir,
                     exist_ok=True,
                 )
                 checkpoint.future_id = future_id
@@ -567,9 +568,10 @@ class TrainingController:
     ) -> None:
         """Load a checkpoint."""
         try:
+            assert self.config.checkpoint_dir is not None
             parsed_checkpoint = CheckpointRecord.from_tinker_path(
                 path,
-                self.config.checkpoint_dir,  # type: ignore[reportArgumentType]
+                self.config.checkpoint_dir,
             )
         except FileNotFoundError as exc:
             raise CheckpointNotFoundException(checkpoint_id=model_id) from exc

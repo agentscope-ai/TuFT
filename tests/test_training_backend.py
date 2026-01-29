@@ -1,4 +1,3 @@
-import gc
 import os
 import tempfile
 from pathlib import Path
@@ -19,6 +18,7 @@ from .helpers import (
     PIG_LATIN_EXAMPLES_EXTENDED,
     TEST_PROMPTS,
     _normalize_text,
+    clear_ray_state,
 )
 
 
@@ -26,13 +26,11 @@ from .helpers import (
 def ray_cluster(request):
     if request.config.getoption("--gpu"):
         # make sure we start with a fresh ray instance
-        ray.shutdown(_exiting_interpreter=True)
-        gc.collect()
+        clear_ray_state()
 
         ray.init(ignore_reinit_error=True)
         yield
-        ray.shutdown(_exiting_interpreter=True)
-        gc.collect()
+        clear_ray_state()
     else:
         yield
 

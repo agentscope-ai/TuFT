@@ -235,7 +235,6 @@ install_flash_attn() {
     fi
 
     # Run the script and check exit code
-    source "$TUFT_VENV/bin/activate"
     if "$TUFT_VENV/bin/python" "$script_path"; then
         print_success "flash-attn installation complete"
     else

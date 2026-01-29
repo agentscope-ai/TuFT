@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 import socket
 import threading
@@ -200,9 +199,12 @@ def _create_reverse_training_data(tokenizer) -> list[types.Datum]:
 
 
 def clear_ray_state() -> None:
-    """Clear Ray state to avoid resource leak between tests."""
+    """Clear Ray state to avoid resource leak between tests.
+
+    This function shuts down Ray and cleans up any orphaned vLLM worker processes
+    that may have been spawned by the current test process.
+    """
     import gc
-    import signal
 
     import psutil
     import ray
@@ -210,11 +212,34 @@ def clear_ray_state() -> None:
     ray.shutdown(_exiting_interpreter=True)
     gc.collect()
 
-    # check gpu memory and kill stray vllm processes
-    for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+    # Kill stray vLLM processes that are children of the current process.
+    # We only kill our own children to avoid affecting other processes on shared CI.
+    current_process = psutil.Process()
+    try:
+        children = current_process.children(recursive=True)
+    except psutil.NoSuchProcess:
+        children = []
+
+    vllm_procs = []
+    for proc in children:
         try:
-            cmdline = proc.info["cmdline"]
+            cmdline = proc.cmdline()
             if cmdline and "VLLM" in " ".join(cmdline):
-                os.kill(proc.info["pid"], signal.SIGKILL)
+                vllm_procs.append(proc)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+    # Graceful shutdown: SIGTERM first, then SIGKILL after timeout
+    for proc in vllm_procs:
+        try:
+            proc.terminate()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+    # Wait for graceful termination, then force kill survivors
+    _, alive = psutil.wait_procs(vllm_procs, timeout=3)
+    for proc in alive:
+        try:
+            proc.kill()
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue

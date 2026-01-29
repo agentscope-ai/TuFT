@@ -18,6 +18,7 @@ from .telemetry.metrics import ResourceMetricsCollector
 app = typer.Typer(help="TuFT - Tenant-unified Fine-Tuning Server.", no_args_is_help=True)
 
 
+# Required for Typer to recognize subcommands when using no_args_is_help=True
 @app.callback()
 def callback() -> None:
     """TuFT - Tenant-unified Fine-Tuning Server."""
@@ -72,6 +73,8 @@ def _build_config(
         config.checkpoint_dir = checkpoint_dir.expanduser()
     elif config.checkpoint_dir is None:
         config.checkpoint_dir = _DEFAULT_CHECKPOINT_DIR
+    # Guarantee checkpoint_dir is set after resolution
+    assert config.checkpoint_dir is not None, "checkpoint_dir must be set after config resolution"
     config.ensure_directories()
     return config
 
