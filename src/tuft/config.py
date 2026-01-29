@@ -9,8 +9,9 @@ from typing import Dict, Iterable, List
 from .persistence import PersistenceConfig
 
 
-def _default_checkpoint_dir() -> Path:
-    return Path.home() / ".cache" / "tuft" / "checkpoints"
+def _default_checkpoint_dir() -> Path | None:
+    """Return None to let CLI set the default based on TUFT_HOME."""
+    return None
 
 
 def _default_persistence_config() -> PersistenceConfig:
@@ -42,7 +43,7 @@ def _default_telemetry_config() -> TelemetryConfig:
 class AppConfig:
     """Runtime configuration for the TuFT server."""
 
-    checkpoint_dir: Path = field(default_factory=_default_checkpoint_dir)
+    checkpoint_dir: Path | None = field(default_factory=_default_checkpoint_dir)
     supported_models: List[ModelConfig] = field(default_factory=list)
     model_owner: str = "local-user"
     toy_backend_seed: int = 0
@@ -53,7 +54,8 @@ class AppConfig:
     telemetry: TelemetryConfig = field(default_factory=_default_telemetry_config)
 
     def ensure_directories(self) -> None:
-        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        if self.checkpoint_dir is not None:
+            self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
     def check_validity(self) -> None:
         if not self.supported_models:
