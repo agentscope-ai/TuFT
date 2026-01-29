@@ -1,7 +1,7 @@
 [project]
 name = "tuft"
 version = "0.1.0"
-description = "A multi-tenant fine-tuning system for LLMs with Tinker-compatible API"
+description = "A multi-tenant fine-tuning platform for LLMs with Tinker-compatible API"
 authors = [
     { name = "TuFT Developers", email = "tuft@list.alibaba-inc.com" }
 ]

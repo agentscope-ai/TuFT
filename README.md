@@ -2,12 +2,11 @@
   <img src="assets/tuft-logo-colorful.svg" alt="TuFT Logo" width="400"/>
 </div>
 
-TuFT (**T**enant-**u**nified **F**ine**T**uning) is a multi-tenant system that provides a unified
-service API for finetuning large language models (LLMs).
-Users can use TuFT via compatible client SDKs such as the Tinker SDK.
+TuFT (**T**enant-**u**nified **F**ine**T**uning) is a multi-tenant platform that lets multiple users fine-tune LLMs on shared infrastructure through a unified API. Access it via the Tinker SDK or compatible clients.
 
-Please read our [roadmap](#roadmap) for our goals and upcoming features.
-We welcome open-source collaboration. Join our community for updates and help:
+Check out our [roadmap](#roadmap) to see what we're building next.
+
+We're open source and welcome contributions! Join the community:
 - [DingTalk Group](https://qr.dingtalk.com/action/joingroup?code=v1,k1,UWvzO6HHSeuvRQ5WXCOMJEijadQV+hDjhMIpiVr8qCs=&_dt_no_comment=1&origin=11?)
 - [Discord](https://discord.gg/wEahC7ZJ)
 
