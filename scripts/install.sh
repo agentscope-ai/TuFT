@@ -275,79 +275,8 @@ fi
 case "${1:-}" in
     launch)
         shift
-        # Default configuration
-        CHECKPOINT_DIR="${TUFT_CHECKPOINT_DIR:-$TUFT_HOME/checkpoints}"
-        MODEL_CONFIG=""
-        LOG_LEVEL="info"
-        EXTRA_ARGS=()
-
-        # Parse arguments
-        while [[ $# -gt 0 ]]; do
-            case "$1" in
-                --host)
-                    EXTRA_ARGS+=("--host" "$2")
-                    shift 2
-                    ;;
-                --port|-p)
-                    EXTRA_ARGS+=("--port" "$2")
-                    shift 2
-                    ;;
-                --model-config)
-                    MODEL_CONFIG="$2"
-                    shift 2
-                    ;;
-                --checkpoint-dir)
-                    CHECKPOINT_DIR="$2"
-                    shift 2
-                    ;;
-                --log-level)
-                    LOG_LEVEL="$2"
-                    shift 2
-                    ;;
-                *)
-                    EXTRA_ARGS+=("$1")
-                    shift
-                    ;;
-            esac
-        done
-
-        # Check for model config
-        if [ -z "$MODEL_CONFIG" ]; then
-            # Check for default config
-            if [ -f "$TUFT_HOME/configs/models.yaml" ]; then
-                MODEL_CONFIG="$TUFT_HOME/configs/models.yaml"
-            else
-                echo "Error: No model configuration provided."
-                echo ""
-                echo "Please provide a model configuration file:"
-                echo "  tuft --model-config /path/to/models.yaml"
-                echo ""
-                echo "Or create a default configuration at:"
-                echo "  $TUFT_HOME/configs/models.yaml"
-                echo ""
-                echo "Example models.yaml:"
-                echo "  model_owner: local"
-                echo "  supported_models:"
-                echo "    - model_name: Qwen/Qwen3-8B"
-                echo "      model_path: Qwen/Qwen3-8B"
-                echo "      max_model_len: 32768"
-                echo "      tensor_parallel_size: 1"
-                echo "  authorized_users:"
-                echo "    my-api-key: default"
-                exit 1
-            fi
-        fi
-
-        echo "Starting TuFT server..."
-        echo "  Model Config: $MODEL_CONFIG"
-        echo "  Checkpoint Dir: $CHECKPOINT_DIR"
-        echo ""
-
-        exec "$TUFT_PYTHON" -m tuft \
-            --model-config "$MODEL_CONFIG" \
-            --checkpoint-dir "$CHECKPOINT_DIR" \
-            --log-level "$LOG_LEVEL" \
-            "${EXTRA_ARGS[@]}"
+        # Pass all arguments directly to the CLI (single source of truth)
+        exec "$TUFT_PYTHON" -m tuft launch "$@"
         ;;
 
     version|--version|-v)
@@ -420,22 +349,20 @@ case "${1:-}" in
         echo "  uninstall         Remove TuFT installation"
         echo "  help              Show this help message"
         echo ""
-        echo "Launch Options:"
-        echo "  --host          Host to bind to"
-        echo "  --port, -p      Port to bind to"
-        echo "  --model-config  Path to model configuration YAML (required)"
-        echo "  --checkpoint-dir Directory for checkpoints (default: ~/.tuft/checkpoints)"
-        echo "  --log-level     Log level: debug, info, warning, error (default: info)"
+        echo "Launch options: Run 'tuft launch --help' for all available options."
         echo ""
         echo "Environment Variables:"
         echo "  TUFT_HOME            Installation directory (default: ~/.tuft)"
+        echo "  TUFT_CONFIG          Default config file path"
         echo "  TUFT_HOST            Default host for launch command"
         echo "  TUFT_PORT            Default port for launch command"
         echo "  TUFT_CHECKPOINT_DIR  Default checkpoint directory"
+        echo "  TUFT_LOG_LEVEL       Default log level"
         echo ""
         echo "Examples:"
-        echo "  tuft --model-config models.yaml"
-        echo "  tuft --port 10610 --model-config /path/to/models.yaml"
+        echo "  tuft launch --config tuft_config.yaml"
+        echo "  tuft launch --port 10610 --config /path/to/tuft_config.yaml"
+        echo "  tuft launch  # uses default config at ~/.tuft/configs/tuft_config.yaml"
         echo "  tuft upgrade"
         echo ""
         echo "Documentation: https://github.com/agentscope-ai/tuft"
@@ -459,11 +386,11 @@ WRAPPER_EOF
 
 # Create example configuration
 create_example_config() {
-    if [ ! -f "$TUFT_HOME/configs/models.yaml.example" ]; then
+    if [ ! -f "$TUFT_HOME/configs/tuft_config.yaml.example" ]; then
         print_step "Creating example configuration..."
-        cat > "$TUFT_HOME/configs/models.yaml.example" << 'CONFIG_EOF'
-# TuFT Model Configuration Example
-# Copy this file to models.yaml and customize for your setup
+        cat > "$TUFT_HOME/configs/tuft_config.yaml.example" << 'CONFIG_EOF'
+# TuFT Server Configuration Example
+# Copy this file to tuft_config.yaml and customize for your setup
 
 model_owner: local
 
@@ -565,12 +492,12 @@ print_completion() {
     echo "  1. Restart your terminal or run:"
     echo "     source ~/.$(basename "$SHELL")rc"
     echo ""
-    echo "  2. Create a model configuration file:"
-    echo "     cp $TUFT_HOME/configs/models.yaml.example $TUFT_HOME/configs/models.yaml"
+    echo "  2. Create a server configuration file:"
+    echo "     cp $TUFT_HOME/configs/tuft_config.yaml.example $TUFT_HOME/configs/tuft_config.yaml"
     echo "     # Edit the file to configure your models and API keys"
     echo ""
     echo "  3. Launch the TuFT server:"
-    echo "     tuft"
+    echo "     tuft launch"
     echo ""
     echo "For more information:"
     echo "  tuft help"

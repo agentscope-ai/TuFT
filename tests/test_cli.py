@@ -25,6 +25,7 @@ def test_start_passes_config(monkeypatch, tmp_path) -> None:
     result = runner.invoke(
         cli.app,
         [
+            "launch",
             "--host",
             "0.0.0.0",
             "--port",
