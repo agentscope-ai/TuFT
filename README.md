@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/tuft-logo-colorful.svg" alt="TuFT Logo" width="300"/>
+  <img src="assets/tuft-logo-colorful.svg" alt="TuFT Logo" width="65%"/>
 </div>
 
 # TuFT
