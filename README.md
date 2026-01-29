@@ -231,7 +231,7 @@ You can also install TuFT directly from PyPI:
 uv pip install tuft
 
 # Install optional dependencies as needed
-uv pip install "tuft[dev,backend,persistence,otel]"
+uv pip install "tuft[dev,backend,persistence]"
 ```
 
 ### Run the server
