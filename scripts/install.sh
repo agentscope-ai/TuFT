@@ -18,7 +18,6 @@ TUFT_VENV="$TUFT_HOME/venv"
 PYTHON_VERSION="3.12"
 TUFT_PYPI_PACKAGE="tuft"
 TUFT_GIT_REPO="https://github.com/agentscope-ai/tuft.git"
-INSTALL_BACKEND=true
 INSTALL_FROM_SOURCE=false
 LOCAL_SOURCE_PATH=""
 CLEAN_INSTALL=false
@@ -44,15 +43,6 @@ print_error() {
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --with-backend)
-                # Default behavior, kept for backwards compatibility
-                INSTALL_BACKEND=true
-                shift
-                ;;
-            --without-backend)
-                INSTALL_BACKEND=false
-                shift
-                ;;
             --from-source)
                 INSTALL_FROM_SOURCE=true
                 shift
@@ -71,14 +61,12 @@ parse_args() {
                 echo "Usage: install.sh [options]"
                 echo ""
                 echo "Options:"
-                echo "  --without-backend     Skip GPU backend and install minimal dependencies only"
                 echo "  --from-source         Install from GitHub instead of PyPI"
                 echo "  --local-source PATH   Install from local source directory (for development/CI)"
                 echo "  --clean               Remove existing installation before installing"
                 echo "  --help, -h            Show this help message"
                 echo ""
-                echo "By default, the script installs TuFT with all extras (GPU backend, persistence,"
-                echo "flash-attn) for full functionality. Use --without-backend for minimal install."
+                echo "The script installs TuFT with full backend support (GPU, persistence, flash-attn)."
                 echo ""
                 echo "Environment Variables:"
                 echo "  TUFT_HOME             Installation directory (default: ~/.tuft)"
@@ -196,14 +184,8 @@ install_tuft() {
         PACKAGE_SPEC="$TUFT_PYPI_PACKAGE"
     fi
 
-    # Install with or without extras
-    if [ "$INSTALL_BACKEND" = true ]; then
-        # Install tuft with all extras (backend, persistence)
-        uv pip install --python "$TUFT_VENV/bin/python" "${PACKAGE_SPEC}[backend,persistence]"
-    else
-        # Install tuft with minimal dependencies
-        uv pip install --python "$TUFT_VENV/bin/python" "$PACKAGE_SPEC"
-    fi
+    # Install tuft with all extras (backend, persistence)
+    uv pip install --python "$TUFT_VENV/bin/python" "${PACKAGE_SPEC}[backend,persistence]"
 
     print_success "TuFT installed successfully"
 }
@@ -214,10 +196,6 @@ FLASH_ATTN_SCRIPT_URL="https://raw.githubusercontent.com/agentscope-ai/tuft/main
 # Install flash-attn from precompiled wheels (avoids lengthy compilation)
 # Also stores the script locally for later use by install-backend command
 install_flash_attn() {
-    if [ "$INSTALL_BACKEND" != true ]; then
-        return
-    fi
-
     print_step "Installing flash-attn from precompiled wheels..."
 
     local script_path="$TUFT_HOME/scripts/install_flash_attn.py"
@@ -285,43 +263,56 @@ case "${1:-}" in
         ;;
 
     upgrade)
+        shift
+        # Parse upgrade options
+        UPGRADE_FROM_SOURCE=false
+        UPGRADE_LOCAL_SOURCE=""
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --from-source)
+                    UPGRADE_FROM_SOURCE=true
+                    shift
+                    ;;
+                --local-source)
+                    UPGRADE_LOCAL_SOURCE="$2"
+                    shift 2
+                    ;;
+                *)
+                    echo "Unknown option: $1"
+                    echo "Usage: tuft upgrade [--from-source | --local-source PATH]"
+                    exit 1
+                    ;;
+            esac
+        done
+
         echo "Upgrading TuFT..."
-        uv pip install --python "$TUFT_PYTHON" --upgrade tuft
-        echo "TuFT upgraded successfully!"
-        ;;
+        if [ -n "$UPGRADE_LOCAL_SOURCE" ]; then
+            echo "Upgrading from local source: $UPGRADE_LOCAL_SOURCE"
+            uv pip install --python "$TUFT_PYTHON" --upgrade "${UPGRADE_LOCAL_SOURCE}[backend,persistence]"
+        elif [ "$UPGRADE_FROM_SOURCE" = true ]; then
+            echo "Upgrading from GitHub..."
+            uv pip install --python "$TUFT_PYTHON" --upgrade "git+https://github.com/agentscope-ai/tuft.git#egg=tuft[backend,persistence]"
+        else
+            uv pip install --python "$TUFT_PYTHON" --upgrade "tuft[backend,persistence]"
+        fi
 
-    install-backend)
-        echo "Installing GPU backend dependencies..."
-        echo "This includes trinity-rft, peft, vLLM, flash-attn, and Redis persistence"
+        # Also update flash-attn
         echo ""
-
-        # Install all extras (backend + persistence)
-        uv pip install --python "$TUFT_PYTHON" "tuft[backend,persistence]"
-
-        # Install flash-attn from precompiled wheels using local script
-        echo ""
-        echo "Installing flash-attn from precompiled wheels..."
+        echo "Updating flash-attn..."
         FLASH_SCRIPT_PATH="$TUFT_HOME/scripts/install_flash_attn.py"
-
-        # Download script if not present locally
-        if [ ! -f "$FLASH_SCRIPT_PATH" ]; then
+        if [ -n "$UPGRADE_LOCAL_SOURCE" ] && [ -f "$UPGRADE_LOCAL_SOURCE/scripts/install_flash_attn.py" ]; then
+            cp "$UPGRADE_LOCAL_SOURCE/scripts/install_flash_attn.py" "$FLASH_SCRIPT_PATH"
+        elif [ ! -f "$FLASH_SCRIPT_PATH" ]; then
             FLASH_SCRIPT_URL="https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install_flash_attn.py"
             mkdir -p "$TUFT_HOME/scripts"
-            if ! curl -fsSL "$FLASH_SCRIPT_URL" -o "$FLASH_SCRIPT_PATH"; then
-                echo "Warning: Could not download flash-attn install script, skipping"
-                echo ""
-                echo "Backend installation complete (flash-attn skipped)!"
-                exit 0
-            fi
+            curl -fsSL "$FLASH_SCRIPT_URL" -o "$FLASH_SCRIPT_PATH" 2>/dev/null || true
+        fi
+        if [ -f "$FLASH_SCRIPT_PATH" ]; then
+            "$TUFT_PYTHON" "$FLASH_SCRIPT_PATH" || echo "Warning: flash-attn update failed (optional)"
         fi
 
-        if "$TUFT_PYTHON" "$FLASH_SCRIPT_PATH"; then
-            echo "flash-attn installation complete"
-        else
-            echo "Warning: flash-attn installation failed. This is optional, so installation will continue."
-        fi
         echo ""
-        echo "Backend installation complete!"
+        echo "TuFT upgraded successfully!"
         ;;
 
     uninstall)
@@ -345,7 +336,7 @@ case "${1:-}" in
         echo "  launch            Start the TuFT server"
         echo "  version           Show TuFT version"
         echo "  upgrade           Upgrade TuFT to the latest version"
-        echo "  install-backend   Install all extras (GPU backend, persistence, flash-attn)"
+        echo "                    Options: --from-source, --local-source PATH"
         echo "  uninstall         Remove TuFT installation"
         echo "  help              Show this help message"
         echo ""
@@ -461,18 +452,19 @@ update_shell_config() {
     fi
 
     # Add to shell config
+    # Use $HOME literal so the config remains portable
     if [ -n "$SHELL_CONFIG" ]; then
         if [ "$SHELL_NAME" = "fish" ]; then
             mkdir -p "$(dirname "$SHELL_CONFIG")"
             echo "" >> "$SHELL_CONFIG"
             echo "# TuFT" >> "$SHELL_CONFIG"
-            echo "set -gx TUFT_HOME $TUFT_HOME" >> "$SHELL_CONFIG"
-            echo "fish_add_path $TUFT_BIN" >> "$SHELL_CONFIG"
+            echo 'set -gx TUFT_HOME $HOME/.tuft' >> "$SHELL_CONFIG"
+            echo 'fish_add_path $TUFT_HOME/bin' >> "$SHELL_CONFIG"
         else
             echo "" >> "$SHELL_CONFIG"
             echo "# TuFT" >> "$SHELL_CONFIG"
-            echo "export TUFT_HOME=\"$TUFT_HOME\"" >> "$SHELL_CONFIG"
-            echo "export PATH=\"\$TUFT_HOME/bin:\$PATH\"" >> "$SHELL_CONFIG"
+            echo 'export TUFT_HOME="$HOME/.tuft"' >> "$SHELL_CONFIG"
+            echo 'export PATH="$TUFT_HOME/bin:$PATH"' >> "$SHELL_CONFIG"
         fi
         print_success "Added TuFT to PATH in $SHELL_CONFIG"
     fi
@@ -516,11 +508,7 @@ main() {
     echo -e "${BLUE}============================================${NC}"
     echo ""
 
-    if [ "$INSTALL_BACKEND" = true ]; then
-        print_step "Installing with full backend support (GPU, persistence, flash-attn)"
-    else
-        print_step "Installing minimal dependencies (no GPU backend)"
-    fi
+    print_step "Installing with full backend support (GPU, persistence, flash-attn)"
 
     if [ -n "$LOCAL_SOURCE_PATH" ]; then
         print_step "Installing from local source: $LOCAL_SOURCE_PATH"
