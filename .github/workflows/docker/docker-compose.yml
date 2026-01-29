@@ -31,7 +31,7 @@ services:
   tuft-node-2:
     image: tuft-unittest:20260123
     pull_policy: never
-    command: bash -c "source /opt/venv/bin/activate && uv pip install -e .[dev] && ray start --address=tuft-node-1:6379 --block"
+    command: bash -c "source /opt/venv/bin/activate && uv pip install -e .[dev,backend,persistence] && ray start --address=tuft-node-1:6379 --block"
     environment:
       - HF_ENDPOINT=https://hf-mirror.com
       - TUFT_CHECKPOINT_DIR=/mnt/checkpoints
