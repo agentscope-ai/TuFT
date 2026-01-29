@@ -27,9 +27,9 @@
   </g>
   
   <!-- Wordmark (baseline at y=50, aligns with icon convergence at 10+40=50) -->
-  <text x="56" y="50"
+  <text x="56" y="48"
         font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
-        font-size="40"
+        font-size="32"
         font-weight="700"
         letter-spacing="-1"
         fill="#0f172a">TuFT</text>
