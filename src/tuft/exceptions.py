@@ -161,18 +161,11 @@ class ConfigMismatchError(PersistenceException):
         # Build detailed diff message
         diff_parts = []
         for field_name, field_diff in diff.items():
-            # Handle list fields (added/removed)
-            added = field_diff.get("added")
-            removed = field_diff.get("removed")
             # Handle scalar fields (current/stored)
             current = field_diff.get("current")
             stored = field_diff.get("stored")
 
             parts = []
-            if added is not None:
-                parts.append(f"added: {added}")
-            if removed is not None:
-                parts.append(f"removed: {removed}")
             if current is not None or stored is not None:
                 parts.append(f"current: {current}, stored: {stored}")
 

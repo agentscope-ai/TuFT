@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 from pathlib import Path
 
 import typer
@@ -178,12 +177,12 @@ def _validate_persistence_config(
         validate_config_signature(config)
     except ConfigMismatchError as e:
         typer.secho(
-            "\n🚫 FATAL ERROR: Configuration Mismatch Detected 🚫",
+            "\n 🚫 FATAL ERROR: Configuration Mismatch Detected 🚫",
             fg=typer.colors.RED,
             bold=True,
         )
         typer.echo(f"\n{e}\n")
-        sys.exit(1)
+        raise typer.Exit(1) from e
 
 
 def _init_telemetry(config: AppConfig, log_level: str) -> None:

@@ -99,7 +99,7 @@ class AppConfig(BaseModel):
     def with_supported_models(self, models: Iterable[ModelConfig]) -> "AppConfig":
         updated = list(models)
         if updated:
-            self.supported_models = list(updated)
+            self.supported_models = updated
         return self
 
     def get_config_for_persistence(self) -> dict[str, Any]:
