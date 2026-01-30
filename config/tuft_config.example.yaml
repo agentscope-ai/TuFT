@@ -4,7 +4,7 @@
 # Copy this file to your desired location and modify as needed.
 #
 # Usage:
-#   tuft --config /path/to/your/tuft_config.yaml
+#   tuft launch --config /path/to/your/tuft_config.yaml
 
 # =============================================================================
 # Checkpoint Directory
