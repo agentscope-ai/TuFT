@@ -331,22 +331,22 @@ TuFT provides three persistence modes:
 
 | Mode | Description | Use Case |
 |------|-------------|----------|
-| `disabled` | No persistence, data in-memory only | Development, testing without state recovery |
-| `redis_url` | External Redis server | Production, multi-instance deployments |
-| `file_redis` | File-backed store | Demos, small-scale testing |
+| `DISABLE` | No persistence, data in-memory only | Development, testing without state recovery |
+| `REDIS_URL` | External Redis server | Production, multi-instance deployments |
+| `FILE_REDIS` | File-backed store | Demos, small-scale testing |
 
 ### Configuration
 
 Add a `persistence` section to your `tuft_config.yaml` configuration file and choose one of the following modes.
 
-#### Mode 1: Disabled (Default)
+#### Mode 1: DISABLE (Default)
 
 No configuration needed. All data is stored in memory and lost on restart.
 
 ```yaml
 # tuft_config.yaml
 persistence:
-  mode: disabled
+  mode: DISABLE
 ```
 
 #### Mode 2: External Redis Server
@@ -356,9 +356,9 @@ Use an external Redis server for production deployments:
 ```yaml
 # tuft_config.yaml
 persistence:
-  mode: redis_url
+  mode: REDIS_URL
   redis_url: "redis://localhost:6379/0"
-  namespace: "tuft"
+  namespace: "tuft"  # Default: "tuft".
 ```
 
 You can start a local Redis instance using Docker:
@@ -374,10 +374,36 @@ Use the file-backed store for demos or small-scale testing:
 ```yaml
 # tuft_config.yaml
 persistence:
-  mode: file_redis
+  mode: FILE_REDIS
   file_path: "~/.cache/tuft/file_redis.json"
-  namespace: "tuft"
+  namespace: "tuft"  # Default: "tuft"
 ```
+
+### Configuration Validation
+
+When persistence is enabled, TuFT validates the current configuration against the stored signature on restart. This prevents data corruption when configuration changes. By default, only `supported_models` is checked.
+
+You can configure which fields to validate:
+
+```yaml
+persistence:
+  mode: REDIS_URL
+  redis_url: "redis://localhost:6379/0"
+  check_fields:  # Default: ["SUPPORTED_MODELS"]
+    - SUPPORTED_MODELS  # Always checked (mandatory)
+    - CHECKPOINT_DIR    # Optional
+    - MODEL_OWNER       # Optional
+```
+
+Available check fields: `SUPPORTED_MODELS`, `CHECKPOINT_DIR`, `MODEL_OWNER`, `TOY_BACKEND_SEED`, `AUTHORIZED_USERS`, `TELEMETRY`.
+
+If a mismatch is detected, use `--refresh-persistence` to clear existing data and start fresh:
+
+```bash
+tuft --config config.yaml --refresh-persistence
+```
+
+Use `--force-refresh-persistence` to skip the confirmation prompt.
 
 ## Observability (OpenTelemetry)
 

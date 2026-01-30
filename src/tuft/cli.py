@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from pathlib import Path
 
 import typer
 import uvicorn
 
 from .config import AppConfig, load_yaml_config
+from .exceptions import ConfigMismatchError
+from .persistence import (
+    flush_all_data,
+    get_current_namespace,
+    get_redis_store,
+    validate_config_signature,
+)
 from .server import create_root_app
 from .telemetry import init_telemetry
 from .telemetry.metrics import ResourceMetricsCollector
@@ -62,6 +70,21 @@ def _resolve_config_path(config_path: Path | None) -> Path:
     )
 
 
+_REFRESH_PERSISTENCE_OPTION = typer.Option(
+    False,
+    "--refresh-persistence",
+    help=(
+        "Clear all existing persistence data and start fresh. "
+        "Use when config has changed and you want to discard old data."
+    ),
+)
+_FORCE_REFRESH_PERSISTENCE_OPTION = typer.Option(
+    False,
+    "--force-refresh-persistence",
+    help="Skip confirmation prompts when using --refresh-persistence.",
+)
+
+
 def _build_config(
     config_path: Path | None,
     checkpoint_dir: Path | None,
@@ -77,6 +100,90 @@ def _build_config(
     assert config.checkpoint_dir is not None, "checkpoint_dir must be set after config resolution"
     config.ensure_directories()
     return config
+
+
+def _handle_refresh_persistence(force_refresh: bool) -> None:
+    """Handle the --refresh-persistence flag.
+
+    Prompts for confirmation unless --force-refresh is provided,
+    then clears all persistence data in the current namespace.
+    """
+    namespace = get_current_namespace()
+
+    if not force_refresh:
+        typer.secho(
+            "\n🚨🚨🚨 CRITICAL WARNING 🚨🚨🚨\n",
+            fg=typer.colors.RED,
+            bold=True,
+        )
+        typer.secho(
+            "--refresh-persistence will PERMANENTLY DELETE ALL persistence data!\n",
+            fg=typer.colors.RED,
+            bold=True,
+        )
+        typer.secho(
+            f"📦 Target namespace: '{namespace}'\n",
+            fg=typer.colors.YELLOW,
+            bold=True,
+        )
+        typer.echo(
+            f"This IRREVERSIBLE action will destroy ALL data in namespace '{namespace}':\n"
+            "  ❌ All saved sessions\n"
+            "  ❌ All training run records and checkpoint metadata (NOT local checkpoint files)\n"
+            "  ❌ All future records\n"
+            "  ❌ All sampling session records\n"
+            "  ❌ Configuration signature\n"
+            "\n"
+            "⚠️  The server will start fresh with NO previous state.\n"
+            "⚠️  This action CANNOT be undone!\n"
+            "⚠️  Local checkpoint files on disk are NOT affected.\n"
+            f"⚠️  Only data in namespace '{namespace}' will be affected.\n"
+        )
+        confirmed = typer.confirm(
+            f"Do you REALLY want to delete all data in namespace '{namespace}'?",
+            default=False,
+        )
+        if not confirmed:
+            typer.echo("Aborted. No data was cleared.")
+            raise typer.Exit(0)
+
+    deleted_count, cleared_namespace = flush_all_data()
+    typer.secho(
+        f"✅ Cleared {deleted_count} keys from namespace '{cleared_namespace}'.",
+        fg=typer.colors.GREEN,
+    )
+    typer.echo("Server will start with fresh state.\n")
+
+
+def _validate_persistence_config(
+    config: AppConfig, refresh_persistence: bool, force_refresh_persistence: bool
+) -> None:
+    """Validate that persistence config matches stored config.
+
+    If refresh_persistence is True, clears existing data instead of validating.
+    If config mismatch is detected, exits with an error message.
+    """
+    if not config.persistence.enabled:
+        return
+
+    # Configure the Redis store first
+    store = get_redis_store()
+    store.configure(config.persistence)
+
+    if refresh_persistence:
+        _handle_refresh_persistence(force_refresh_persistence)
+        return
+
+    try:
+        validate_config_signature(config)
+    except ConfigMismatchError as e:
+        typer.secho(
+            "\n🚫 FATAL ERROR: Configuration Mismatch Detected 🚫",
+            fg=typer.colors.RED,
+            bold=True,
+        )
+        typer.echo(f"\n{e}\n")
+        sys.exit(1)
 
 
 def _init_telemetry(config: AppConfig, log_level: str) -> None:
@@ -101,9 +208,15 @@ def launch(
     reload: bool = _RELOAD_OPTION,
     config_path: Path | None = _CONFIG_OPTION,
     checkpoint_dir: Path | None = _CHECKPOINT_DIR_OPTION,
+    refresh_persistence: bool = _REFRESH_PERSISTENCE_OPTION,
+    force_refresh_persistence: bool = _FORCE_REFRESH_PERSISTENCE_OPTION,
 ) -> None:
     """Launch the TuFT server."""
     app_config = _build_config(config_path, checkpoint_dir)
+
+    # Validate persistence configuration before starting
+    _validate_persistence_config(app_config, refresh_persistence, force_refresh_persistence)
+
     # Initialize telemetry before starting the server
     _init_telemetry(app_config, log_level)
     logging.getLogger("tuft").info("Server starting on %s:%s", host, port)

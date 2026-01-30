@@ -92,7 +92,7 @@ def configure_persistence(request):
     no_persistence = request.config.getoption("--no-persistence", default=False)
 
     if no_persistence:
-        store.configure(PersistenceConfig.disabled(namespace="tuft_test"))
+        store.configure(PersistenceConfig(namespace="tuft_test"))  # mode=disabled by default
     else:
         # Persistence enabled - use Redis if available, otherwise FileRedis
         if _redis_available() and TEST_REDIS_URL is not None:

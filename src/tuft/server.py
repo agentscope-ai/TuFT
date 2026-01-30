@@ -18,7 +18,7 @@ from tinker import types
 from .auth import User
 from .config import AppConfig
 from .exceptions import TuFTException
-from .persistence import get_redis_store
+from .persistence import get_redis_store, save_config_signature
 from .state import ServerState
 from .telemetry import shutdown_telemetry
 
@@ -76,11 +76,19 @@ def _instrument_fastapi(app: FastAPI) -> None:
 
 
 def create_root_app(config: AppConfig | None = None) -> FastAPI:
+    resolved_config = config or AppConfig()
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         try:
             await app.state.server_state.async_init()
             logger.info("Server initialized successfully")
+
+            # After successful init/restore, save the current config signature
+            if resolved_config.persistence.enabled:
+                save_config_signature(resolved_config)
+                logger.debug("Config signature saved after successful initialization")
+
             yield
         finally:
             logger.info("Server shutting down")
@@ -95,7 +103,6 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
             route.dependencies = getattr(route, "dependencies", []) + [Depends(_get_user)]
         return route
 
-    resolved_config = config or AppConfig()
     if resolved_config.persistence.enabled:
         store = get_redis_store()
         store.configure(resolved_config.persistence)

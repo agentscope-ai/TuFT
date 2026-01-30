@@ -1,5 +1,7 @@
 """Some custom exceptions."""
 
+from typing import Any
+
 
 class TuFTException(Exception):
     """Base exception for TuFT errors."""
@@ -136,3 +138,57 @@ class LossFunctionInputShapeMismatchException(LossFunctionException):
         detail = f"Input tensors must have the same shape. Got shapes: {shapes}"
         super().__init__(detail)
         self.shapes = shapes
+
+
+class PersistenceException(TuFTException):
+    """Base exception for Persistence related errors."""
+
+
+class ConfigMismatchError(PersistenceException):
+    """Raised when current config doesn't match the stored config in Redis.
+
+    This error occurs during server startup when persistence is enabled and
+    the configuration has changed since the last run. This can cause data
+    corruption when restoring persisted state.
+    """
+
+    def __init__(
+        self,
+        diff: dict[str, dict[str, Any]],
+    ):
+        self.diff = diff
+
+        # Build detailed diff message
+        diff_parts = []
+        for field_name, field_diff in diff.items():
+            # Handle list fields (added/removed)
+            added = field_diff.get("added")
+            removed = field_diff.get("removed")
+            # Handle scalar fields (current/stored)
+            current = field_diff.get("current")
+            stored = field_diff.get("stored")
+
+            parts = []
+            if added is not None:
+                parts.append(f"added: {added}")
+            if removed is not None:
+                parts.append(f"removed: {removed}")
+            if current is not None or stored is not None:
+                parts.append(f"current: {current}, stored: {stored}")
+
+            if parts:
+                diff_parts.append(f"{field_name} ({', '.join(parts)})")
+
+        diff_str = "; ".join(diff_parts) if diff_parts else "unknown difference"
+
+        message = (
+            f"Configuration mismatch detected: {diff_str}.\n"
+            "The current configuration does not match the stored configuration in Redis.\n"
+            "This can cause data corruption when restoring persisted state.\n\n"
+            "Options:\n"
+            "  1. Use a different Redis database (change redis_url in config)\n"
+            "  2. Use --refresh-persistence to clear existing data and start fresh\n"
+            "     (WARNING: This will delete all persisted sessions, training runs, etc.)\n"
+            "  3. Restore the original configuration that matches the stored data"
+        )
+        super().__init__(message)

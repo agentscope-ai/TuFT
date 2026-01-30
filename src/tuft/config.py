@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Any, Iterable
+
+from pydantic import BaseModel, Field, model_validator
 
 from .persistence import PersistenceConfig
 
@@ -14,12 +15,7 @@ def _default_checkpoint_dir() -> Path | None:
     return None
 
 
-def _default_persistence_config() -> PersistenceConfig:
-    return PersistenceConfig()
-
-
-@dataclass
-class TelemetryConfig:
+class TelemetryConfig(BaseModel):
     """Configuration for OpenTelemetry integration.
 
     Attributes:
@@ -32,52 +28,11 @@ class TelemetryConfig:
     enabled: bool = False
     service_name: str = "tuft"
     otlp_endpoint: str | None = None
-    resource_attributes: Dict[str, str] = field(default_factory=dict)
+    resource_attributes: dict[str, str] = Field(default_factory=dict)
 
 
-def _default_telemetry_config() -> TelemetryConfig:
-    return TelemetryConfig()
-
-
-@dataclass
-class AppConfig:
-    """Runtime configuration for the TuFT server."""
-
-    checkpoint_dir: Path | None = field(default_factory=_default_checkpoint_dir)
-    supported_models: List[ModelConfig] = field(default_factory=list)
-    model_owner: str = "local-user"
-    toy_backend_seed: int = 0
-    # TODO: Temporary implementation for user authorization,
-    # replace with proper auth system later
-    authorized_users: Dict[str, str] = field(default_factory=dict)
-    persistence: PersistenceConfig = field(default_factory=_default_persistence_config)
-    telemetry: TelemetryConfig = field(default_factory=_default_telemetry_config)
-
-    def ensure_directories(self) -> None:
-        if self.checkpoint_dir is not None:
-            self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-
-    def check_validity(self) -> None:
-        if not self.supported_models:
-            raise ValueError("At least one supported model must be configured.")
-        model_names = {model.model_name for model in self.supported_models}
-        if len(model_names) != len(self.supported_models):
-            raise ValueError("Model names in supported_models must be unique.")
-        if len(model_names) > 1 and any(model.colocate for model in self.supported_models):
-            raise ValueError(
-                "Colocate option is only allowed when there is a single supported model."
-            )
-
-    def with_supported_models(self, models: Iterable[ModelConfig]) -> "AppConfig":
-        updated = list(models)
-        if updated:
-            self.supported_models = updated
-        return self
-
-
-@dataclass
-class ModelConfig:
-    """Configuration for a specific model."""
+class ModelConfig(BaseModel):
+    model_config = {"arbitrary_types_allowed": True}
 
     model_name: str  # name used in APIs
     model_path: Path  # path to model checkpoint
@@ -101,23 +56,67 @@ class ModelConfig:
     colocate: bool = False
     sampling_memory_fraction: float = 0.2  # fraction of GPU memory for sampling
 
-    def __post_init__(self) -> None:
+    @model_validator(mode="after")
+    def validate_colocate(self) -> "ModelConfig":
         if self.colocate and self.tensor_parallel_size != 1:
             raise ValueError("Colocate option is only supported for tensor_parallel_size=1.")
+        return self
+
+
+class AppConfig(BaseModel):
+    """Runtime configuration for the TuFT server.
+
+    This is a Pydantic model that can be serialized/deserialized for persistence.
+    """
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    checkpoint_dir: Path | None = Field(default_factory=_default_checkpoint_dir)
+    supported_models: list[ModelConfig] = Field(default_factory=list)
+    model_owner: str = "local-user"
+    toy_backend_seed: int = 0
+    # TODO: Temporary implementation for user authorization,
+    # replace with proper auth system later
+    authorized_users: dict[str, str] = Field(default_factory=dict)
+    persistence: PersistenceConfig = Field(default_factory=PersistenceConfig)
+    telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
+
+    def ensure_directories(self) -> None:
+        if self.checkpoint_dir is not None:
+            self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    def check_validity(self) -> None:
+        if not self.supported_models:
+            raise ValueError("At least one supported model must be configured.")
+        model_names = {model.model_name for model in self.supported_models}
+        if len(model_names) != len(self.supported_models):
+            raise ValueError("Model names in supported_models must be unique.")
+        if len(model_names) > 1 and any(model.colocate for model in self.supported_models):
+            raise ValueError(
+                "Colocate option is only allowed when there is a single supported model."
+            )
+
+    def with_supported_models(self, models: Iterable[ModelConfig]) -> "AppConfig":
+        updated = list(models)
+        if updated:
+            self.supported_models = list(updated)
+        return self
+
+    def get_config_for_persistence(self) -> dict[str, Any]:
+        """Get config fields for persistence signature (excludes persistence config itself)."""
+        return self.model_dump(mode="json", exclude={"persistence"})
 
 
 def load_yaml_config(config_path: Path) -> AppConfig:
     """Loads an AppConfig from a YAML file."""
     from omegaconf import OmegaConf
 
-    schema = OmegaConf.structured(AppConfig)
     loaded = OmegaConf.load(config_path)
     try:
-        config = OmegaConf.merge(schema, loaded)
-        app_config = OmegaConf.to_object(config)
-        assert isinstance(app_config, AppConfig), (
-            "Loaded config is not of type AppConfig, which should not happen."
-        )
-        return app_config
+        # Convert OmegaConf to plain dict for Pydantic
+        config_dict = OmegaConf.to_container(loaded, resolve=True)
+        if not isinstance(config_dict, dict):
+            raise ValueError("Config file must contain a dictionary at root level")
+        return AppConfig.model_validate(config_dict)
     except Exception as e:
         raise ValueError(f"Failed to load config from {config_path}: {e}") from e
