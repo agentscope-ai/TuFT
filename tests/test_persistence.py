@@ -11,10 +11,23 @@ from tinker import types
 from tinker.types.try_again_response import TryAgainResponse
 
 from tuft.auth import User
-from tuft.config import AppConfig, ModelConfig
-from tuft.exceptions import UnknownModelException
+from tuft.config import AppConfig, ModelConfig, TelemetryConfig
+from tuft.exceptions import ConfigMismatchError, UnknownModelException
 from tuft.futures import FutureStore
-from tuft.persistence import get_redis_store, is_persistence_enabled
+from tuft.persistence import (
+    ConfigCheckField,
+    flush_all_data,
+    get_redis_store,
+    is_persistence_enabled,
+    save_config_signature,
+    validate_config_signature,
+)
+from tuft.persistence.redis_store import (
+    DEFAULT_CHECK_FIELDS,
+    ConfigSignature,
+    has_existing_data,
+    load_config_signature,
+)
 from tuft.sampling_controller import SamplingController, SamplingSessionRecord
 from tuft.state import ServerState, SessionManager
 from tuft.training_controller import TrainingController, TrainingRunRecord
@@ -725,3 +738,370 @@ class TestServerStatePersistence:
         assert "loss:sum" in new_forward.metrics
 
         await state3.future_store.shutdown()
+
+
+# =============================================================================
+# Config Signature Validation Tests
+# =============================================================================
+
+
+def _create_config_with_models(
+    checkpoint_dir: Path,
+    model_names: list[str],
+    telemetry_enabled: bool = False,
+    check_fields: list[str] | None = None,
+) -> AppConfig:
+    """Create a test config with specified model names and optional telemetry."""
+    from tuft.persistence import PersistenceConfig, PersistenceMode
+    from tuft.persistence.redis_store import DEFAULT_CHECK_FIELDS
+
+    return AppConfig(
+        checkpoint_dir=checkpoint_dir,
+        supported_models=[
+            ModelConfig(
+                model_name=name,
+                model_path=Path(f"/dummy/{name}"),
+                max_model_len=2048,
+            )
+            for name in model_names
+        ],
+        telemetry=TelemetryConfig(enabled=telemetry_enabled),
+        persistence=PersistenceConfig(
+            mode=PersistenceMode.FILE_REDIS,
+            check_fields=check_fields if check_fields is not None else DEFAULT_CHECK_FIELDS.copy(),
+        ),
+    )
+
+
+@pytest.mark.persistence
+class TestConfigSignatureValidation:
+    """Test configuration signature validation for persistence safety."""
+
+    @pytest.fixture
+    def setup(self, tmp_path):
+        """Setup file-based persistence for testing."""
+        _skip_if_no_persistence()
+        store = get_redis_store()
+        yield store, tmp_path
+
+        # Cleanup after test
+        flush_all_data()
+
+    def test_config_signature_creation(self, setup):
+        """Test that ConfigSignature is created correctly from AppConfig."""
+        _, tmp_path = setup
+        checkpoint_dir = tmp_path / "checkpoints"
+        checkpoint_dir.mkdir()
+
+        config = _create_config_with_models(checkpoint_dir, ["ModelA", "ModelB", "ModelC"])
+
+        signature = ConfigSignature.from_app_config(config)
+
+        models = signature.config_data.get("supported_models", [])
+        model_names = sorted([m["model_name"] for m in models])
+        assert model_names == ["ModelA", "ModelB", "ModelC"]
+        assert signature.created_at is not None
+
+        # Verify other fields are also stored
+        assert "checkpoint_dir" in signature.config_data
+        assert "model_owner" in signature.config_data
+        assert "telemetry" in signature.config_data
+
+    def test_save_and_load_config_signature(self, setup):
+        """Test that config signature can be saved and loaded from Redis."""
+        _, tmp_path = setup
+        checkpoint_dir = tmp_path / "checkpoints"
+        checkpoint_dir.mkdir()
+
+        config = _create_config_with_models(checkpoint_dir, ["ModelA", "ModelB"])
+
+        # Save signature
+        result = save_config_signature(config)
+        assert result is True
+
+        # Load signature
+        loaded = load_config_signature()
+        assert loaded is not None
+        models = loaded.config_data.get("supported_models", [])
+        model_names = sorted([m["model_name"] for m in models])
+        assert model_names == ["ModelA", "ModelB"]
+
+    def test_validate_config_signature_matching(self, setup):
+        """Test that validation succeeds when configs match."""
+        _, tmp_path = setup
+        checkpoint_dir = tmp_path / "checkpoints"
+        checkpoint_dir.mkdir()
+
+        config = _create_config_with_models(checkpoint_dir, ["ModelA", "ModelB"])
+
+        save_config_signature(config)
+
+        is_fresh = validate_config_signature(config)
+        assert is_fresh is False
+
+    def test_validate_config_signature_mismatch_raises(self, setup):
+        """Test that validation raises ConfigMismatchError on mismatch."""
+        _, tmp_path = setup
+        checkpoint_dir = tmp_path / "checkpoints"
+        checkpoint_dir.mkdir()
+
+        config1 = _create_config_with_models(checkpoint_dir, ["ModelA", "ModelB"])
+        config2 = _create_config_with_models(checkpoint_dir, ["ModelC"])
+
+        save_config_signature(config1)
+
+        with pytest.raises(ConfigMismatchError) as exc_info:
+            validate_config_signature(config2)
+
+        error = exc_info.value
+        assert "supported_models" in str(error).lower() or "mismatch" in str(error).lower()
+
+        model_diff = error.diff.get(ConfigCheckField.SUPPORTED_MODELS)
+        assert model_diff is not None
+        current_names = [m["model_name"] for m in model_diff["current"]]
+        stored_names = [m["model_name"] for m in model_diff["stored"]]
+        assert "ModelC" in current_names
+        assert "ModelA" in stored_names
+        assert "ModelB" in stored_names
+
+    def test_flush_all_data_clears_signature(self, setup):
+        """Test that flush_all_data clears the config signature."""
+        _, tmp_path = setup
+        checkpoint_dir = tmp_path / "checkpoints"
+        checkpoint_dir.mkdir()
+
+        config = _create_config_with_models(checkpoint_dir, ["ModelA"])
+
+        save_config_signature(config)
+        assert load_config_signature() is not None
+
+        flush_all_data()
+
+        assert load_config_signature() is None
+
+    def test_config_mismatch_prevents_silent_corruption(self, setup):
+        """Test the full scenario: config mismatch is detected before corruption.
+
+        This test verifies the fix for the original issue:
+        1. Create training run with ModelA
+        2. Try to restart with config that only has ModelC
+        3. ConfigMismatchError should be raised BEFORE any corruption happens
+        """
+        store, tmp_path = setup
+        checkpoint_dir = tmp_path / "checkpoints"
+        checkpoint_dir.mkdir()
+
+        # === Phase 1: Create training run with ModelA ===
+        config1 = _create_config_with_models(checkpoint_dir, ["ModelA", "ModelB"])
+        config1.ensure_directories()
+
+        # Validate (first run - returns True for fresh start)
+        is_fresh = validate_config_signature(config1)
+        assert is_fresh is True
+
+        controller1 = TrainingController(config1)
+
+        # Create a training run
+        training_run_id = "test-run-validation"
+        record = TrainingRunRecord(
+            training_run_id=training_run_id,
+            base_model="ModelA",
+            lora_rank=8,
+            session_id="session-001",
+            model_owner="user1",
+        )
+        record.backend = controller1.training_backends.get("ModelA")
+        controller1.training_runs[training_run_id] = record
+        controller1._save_training_run(training_run_id)
+
+        # Simulate successful init - save signature
+        save_config_signature(config1)
+
+        del controller1
+
+        # === Phase 2: Try to restart with different config ===
+        config2 = _create_config_with_models(checkpoint_dir, ["ModelC"])
+        config2.ensure_directories()
+
+        # This should raise ConfigMismatchError BEFORE TrainingController is created
+        with pytest.raises(ConfigMismatchError):
+            validate_config_signature(config2)
+
+    def test_refresh_persistence_allows_restart_with_new_config(self, setup):
+        """Test that after flush_all_data, a new config can be used."""
+        _, tmp_path = setup
+        checkpoint_dir = tmp_path / "checkpoints"
+        checkpoint_dir.mkdir()
+
+        config1 = _create_config_with_models(checkpoint_dir, ["ModelA"])
+        config2 = _create_config_with_models(checkpoint_dir, ["ModelC"])
+
+        save_config_signature(config1)
+
+        with pytest.raises(ConfigMismatchError):
+            validate_config_signature(config2)
+
+        flush_all_data()
+
+        is_fresh = validate_config_signature(config2)
+        assert is_fresh is True
+
+        save_config_signature(config2)
+
+        loaded = load_config_signature()
+        assert loaded is not None
+        models = loaded.config_data.get("supported_models", [])
+        model_names = [m["model_name"] for m in models]
+        assert model_names == ["ModelC"]
+
+    def test_matches_with_custom_check_fields(self, setup):
+        """Test matches() with custom check_fields parameter."""
+        _, tmp_path = setup
+        checkpoint_dir = tmp_path / "checkpoints"
+        checkpoint_dir.mkdir()
+
+        # Same models, different telemetry
+        config1 = _create_config_with_models(checkpoint_dir, ["ModelA"], telemetry_enabled=False)
+        config2 = _create_config_with_models(checkpoint_dir, ["ModelA"], telemetry_enabled=True)
+
+        sig1 = ConfigSignature.from_app_config(config1)
+        sig2 = ConfigSignature.from_app_config(config2)
+
+        # With default check_fields (only model names), they should match
+        assert sig1.matches(sig2, check_fields=DEFAULT_CHECK_FIELDS)
+
+        # With telemetry check included, they should NOT match
+        check_with_telemetry = [
+            ConfigCheckField.SUPPORTED_MODELS,
+            ConfigCheckField.TELEMETRY,
+        ]
+        assert not sig1.matches(sig2, check_fields=check_with_telemetry)
+
+    def test_get_diff_with_custom_check_fields(self, setup):
+        """Test get_diff() with custom check_fields parameter."""
+        _, tmp_path = setup
+        checkpoint_dir = tmp_path / "checkpoints"
+        checkpoint_dir.mkdir()
+
+        # Different models AND different telemetry
+        config1 = _create_config_with_models(checkpoint_dir, ["ModelA"], telemetry_enabled=False)
+        config2 = _create_config_with_models(checkpoint_dir, ["ModelB"], telemetry_enabled=True)
+
+        sig1 = ConfigSignature.from_app_config(config1)
+        sig2 = ConfigSignature.from_app_config(config2)
+
+        # With default check_fields, only model diff is returned
+        diff_default = sig1.get_diff(sig2, check_fields=DEFAULT_CHECK_FIELDS)
+        assert ConfigCheckField.SUPPORTED_MODELS in diff_default
+        assert ConfigCheckField.TELEMETRY not in diff_default
+
+        # With telemetry check included, both diffs are returned
+        check_with_telemetry = [
+            ConfigCheckField.SUPPORTED_MODELS,
+            ConfigCheckField.TELEMETRY,
+        ]
+        diff_full = sig1.get_diff(sig2, check_fields=check_with_telemetry)
+        assert ConfigCheckField.SUPPORTED_MODELS in diff_full
+        assert ConfigCheckField.TELEMETRY in diff_full
+
+        # Check telemetry diff values (telemetry is a dict with 'enabled' field)
+        telemetry_diff = diff_full[ConfigCheckField.TELEMETRY]
+        assert telemetry_diff["current"]["enabled"] is False  # current value
+        assert telemetry_diff["stored"]["enabled"] is True  # stored value
+
+    def test_model_names_always_checked(self, setup):
+        """Test that SUPPORTED_MODELS is always checked even if not in check_fields."""
+        _, tmp_path = setup
+        checkpoint_dir = tmp_path / "checkpoints"
+        checkpoint_dir.mkdir()
+
+        config1 = _create_config_with_models(checkpoint_dir, ["ModelA"])
+        config2 = _create_config_with_models(checkpoint_dir, ["ModelB"])
+
+        sig1 = ConfigSignature.from_app_config(config1)
+        sig2 = ConfigSignature.from_app_config(config2)
+
+        # Even with only telemetry in check_fields, model names should be checked
+        # because it's mandatory
+        check_only_telemetry = [ConfigCheckField.TELEMETRY]
+        assert not sig1.matches(sig2, check_fields=check_only_telemetry)
+
+        diff = sig1.get_diff(sig2, check_fields=check_only_telemetry)
+        # Model names should still be in the diff
+        assert ConfigCheckField.SUPPORTED_MODELS in diff
+
+    def test_validate_with_custom_check_fields(self, setup):
+        """Test validate_config_signature with custom check_fields from persistence config."""
+        _, tmp_path = setup
+        checkpoint_dir = tmp_path / "checkpoints"
+        checkpoint_dir.mkdir()
+
+        # Ensure clean state
+        flush_all_data()
+
+        # First run with telemetry disabled - save signature after successful init
+        config1 = _create_config_with_models(checkpoint_dir, ["ModelA"], telemetry_enabled=False)
+        save_config_signature(config1)
+
+        # Second run with same model but telemetry enabled (default check_fields)
+        config2_default = _create_config_with_models(
+            checkpoint_dir, ["ModelA"], telemetry_enabled=True
+        )
+
+        # With default check_fields, should pass (only model names checked)
+        validate_config_signature(config2_default)
+
+        # With telemetry check in persistence config, should fail
+        check_with_telemetry = [
+            ConfigCheckField.SUPPORTED_MODELS,
+            ConfigCheckField.TELEMETRY,
+        ]
+        config2_with_telemetry_check = _create_config_with_models(
+            checkpoint_dir, ["ModelA"], telemetry_enabled=True, check_fields=check_with_telemetry
+        )
+        with pytest.raises(ConfigMismatchError):
+            validate_config_signature(config2_with_telemetry_check)
+
+    def test_has_existing_data_detects_data(self, setup):
+        """Test that has_existing_data correctly detects existing data."""
+        store, tmp_path = setup
+        checkpoint_dir = tmp_path / "checkpoints"
+        checkpoint_dir.mkdir()
+
+        # Ensure clean state
+        flush_all_data()
+
+        # Should be empty initially
+        assert has_existing_data() is False
+
+        # Save some data
+        config = _create_config_with_models(checkpoint_dir, ["ModelA"])
+        save_config_signature(config)
+
+        # Now should have data
+        assert has_existing_data() is True
+
+        # Flush and check again
+        flush_all_data()
+        assert has_existing_data() is False
+
+    def test_validate_detects_corrupted_state(self, setup):
+        """Test that validation detects when data exists but no signature."""
+        store, tmp_path = setup
+        checkpoint_dir = tmp_path / "checkpoints"
+        checkpoint_dir.mkdir()
+
+        # Ensure clean state
+        flush_all_data()
+
+        # Manually add some data without signature (simulating corrupted state)
+        store.set(store.build_key("session", "test-session"), '{"test": "data"}')
+
+        # Now validation should fail with corrupted state error
+        config = _create_config_with_models(checkpoint_dir, ["ModelA"])
+        with pytest.raises(ConfigMismatchError) as exc_info:
+            validate_config_signature(config)
+
+        error = exc_info.value
+        assert "_state" in error.diff
+        assert "missing signature" in str(error).lower() or "corrupted" in str(error).lower()

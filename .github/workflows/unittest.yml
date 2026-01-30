@@ -31,8 +31,8 @@ jobs:
     - name: Check ray status
       working-directory: tuft-${{ github.run_id }}/.github/workflows/docker
       run: |
-        MAX_RETRIES=20
-        RETRY_INTERVAL=5
+        MAX_RETRIES=60
+        RETRY_INTERVAL=30
         for i in $(seq 1 $MAX_RETRIES); do
           if docker compose exec tuft-node-1 bash -c "source /root/.tuft/venv/bin/activate && ray status"; then
             break
