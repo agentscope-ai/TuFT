@@ -1,6 +1,6 @@
 # TuFT — Chat Supervised Fine-Tuning (SFT)
 
-This guide demonstrates **supervised fine-tuning (SFT)** on **chat-formatted data** using a **running TuFT server**. Full runnable code is in **[chat_sft.ipynb](../examples/chat_sft.ipynb)**. Although this is a general SFT guide, it also documents common issues users may encounter when using TuFT for SFT and provides step-by-step guidance to help them successfully complete an end-to-end run.
+This guide demonstrates **supervised fine-tuning (SFT)** on **chat-formatted data** using a **running TuFT server**. Full runnable code is in **[chat_sft.ipynb](../examples/chat_sft/chat_sft.ipynb)**. Although this is a general SFT guide, it also documents common issues users may encounter when using TuFT for SFT and provides step-by-step guidance to help them successfully complete an end-to-end run.
 
 ---
 
@@ -73,7 +73,7 @@ Each sample is a list of chat messages:
 
 **TuFT** (Tenant-unified FineTuning) is a multi-tenant system that provides a unified service API for fine-tuning large language models (LLMs). It supports the Tinker service API and can be used with the Tinker SDK. Unlike the Tinker, TuFT can run on local GPUs; the experiments below were conducted on a local **2× NVIDIA A100-SXM4-80GB** setup (Driver 550.54.15, CUDA 12.9). Before running the example, follow [README.md](../README.md) to start the TuFT server locally.
 
-Key TuFT calls (full code in [chat_sft.ipynb](../examples/chat_sft.ipynb)):
+Key TuFT calls (full code in [chat_sft.ipynb](../examples/chat_sft/chat_sft.ipynb)):
 ```python
 import tinker
 from tinker import types

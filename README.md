@@ -230,7 +230,7 @@ You can also install TuFT directly from PyPI:
 uv pip install tuft
 
 # Install optional dependencies as needed
-uv pip install "tuft[dev,backend,persistence]"
+uv pip install "tuft[dev,backend,persistence,examples]"
 ```
 
 ### Run the server
@@ -310,8 +310,8 @@ We provide practical examples to demonstrate how to use TuFT for training and sa
 
 | Dataset | Task | Guide | Example |
 |---|---|---|---|
-| [no_robots](https://huggingface.co/datasets/HuggingFaceH4/no_robots) | Supervised Fine-Tuning (SFT) | [chat_sft.md](docs/chat_sft.md) | [chat_sft.ipynb](examples/chat_sft.ipynb) |
-| [Countdown](https://huggingface.co/datasets/Jiayi-Pan/Countdown-Tasks-3to4) | Reinforcement Learning (RL) | [countdown_rl.md](docs/countdown_rl.md) | [countdown_rl.ipynb](examples/countdown_rl.ipynb) |
+| [no_robots](https://huggingface.co/datasets/HuggingFaceH4/no_robots) | Supervised Fine-Tuning (SFT) | [chat_sft.md](docs/chat_sft.md) | [chat_sft.ipynb](examples/chat_sft/chat_sft.ipynb) |
+| [Countdown](https://huggingface.co/datasets/Jiayi-Pan/Countdown-Tasks-3to4) | Reinforcement Learning (RL) | [countdown_rl.md](docs/countdown_rl.md) | [countdown_rl.ipynb](examples/countdown_rl/countdown_rl.ipynb) |
 
 
 ## Persistence

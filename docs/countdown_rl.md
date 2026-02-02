@@ -1,6 +1,6 @@
 # TuFT — Countdown Reinforcement Learning (RL)
 
-This guide demonstrates **reinforcement learning (RL)** fine-tuning on the **Countdown** dataset using a **running TuFT server**. Full runnable code is in [countdown_rl.ipynb](../examples/countdown_rl.ipynb). Although this is a general RL guide, it also documents common issues users may encounter when using TuFT for RL and provides step-by-step guidance to help them successfully complete an end-to-end run.
+This guide demonstrates **reinforcement learning (RL)** fine-tuning on the **Countdown** dataset using a **running TuFT server**. Full runnable code is in [countdown_rl.ipynb](../examples/countdown_rl/countdown_rl.ipynb). Although this is a general RL guide, it also documents common issues users may encounter when using TuFT for RL and provides step-by-step guidance to help them successfully complete an end-to-end run.
 
 ---
 
@@ -46,7 +46,7 @@ This makes runs reproducible and avoids the need for a predefined "test" split.
 
 Unlike the Tinker, TuFT can run on local GPUs; the experiments below were conducted on a local 2× NVIDIA A100-SXM4-80GB setup (Driver 550.54.15, CUDA 12.9). Before running the example, follow [README.md](../README.md) to start the TuFT server locally.
 
-Key TuFT calls (full code in [countdown_rl.ipynb](../examples/countdown_rl.ipynb)):
+Key TuFT calls (full code in [countdown_rl.ipynb](../examples/countdown_rl/countdown_rl.ipynb)):
 ```python
 import tinker
 from tinker import types
