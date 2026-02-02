@@ -136,3 +136,9 @@ class LossFunctionInputShapeMismatchException(LossFunctionException):
         detail = f"Input tensors must have the same shape. Got shapes: {shapes}"
         super().__init__(detail)
         self.shapes = shapes
+
+class LossFunctionUnknownMetricReductionException(LossFunctionException):
+    def __init__(self, reduction_type: str):
+        detail = f"Unknown metric reduction type: {reduction_type}"
+        super().__init__(detail)
+        self.reduction_type = reduction_type

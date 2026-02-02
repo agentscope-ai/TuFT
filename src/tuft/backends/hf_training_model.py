@@ -1,6 +1,7 @@
 import asyncio
+import logging
 import shutil
-from typing import Dict
+from typing import Callable, Dict
 
 import ray
 import torch
@@ -14,12 +15,11 @@ from transformers import AutoModelForCausalLM
 
 from tuft.checkpoints import CheckpointRecord
 from tuft.config import ModelConfig
-from tuft.loss_fn import get_loss_fn
+from tuft.loss_fn import get_loss_fn, metrics_reduction
 from tuft.telemetry.tracing import extract_context, get_tracer
 
 
 _get_tracer = lambda: get_tracer("tuft.hf_training_model")  # noqa: E731
-
 
 MODULE_MAP = {
     "llama": {
@@ -58,6 +58,8 @@ class HFTrainingModel:
         self.model = self._init_peft_model(config)
         self.adapter_optimizer: Dict[str, torch.optim.AdamW] = {}
         self._lock = asyncio.Lock()
+        self.logger = logging.getLogger()
+        self.micro_batch_size = config.micro_batch_size
 
     async def async_init(self) -> None:
         """Do nothing for now. Just used to make sure the actor is ready."""
@@ -193,7 +195,9 @@ class HFTrainingModel:
         async with self._lock:
             if lora_id in self.adapter_optimizer:
                 self.model.delete_adapter(lora_id)
-                self.adapter_optimizer.pop(lora_id)
+                optimizer = self.adapter_optimizer.pop(lora_id)
+                del optimizer
+                torch.cuda.empty_cache()
 
     # --------------------------------
     # Training methods
@@ -207,7 +211,7 @@ class HFTrainingModel:
         backward: bool = False,
         trace_context: dict[str, str] | None = None,
     ) -> types.ForwardBackwardOutput:
-        """Forward pass (and backward if specified).
+        """Forward pass with micro-batch gradient accumulation.
 
         Args:
             data: List of Datum objects containing input data.
@@ -222,72 +226,182 @@ class HFTrainingModel:
         """
         ctx = extract_context(trace_context or {})
         span_name = "hf_model.forward_backward" if backward else "hf_model.forward"
+
         with _get_tracer().start_as_current_span(span_name, context=ctx) as span:
             span.set_attribute("tuft.lora_id", lora_id)
             span.set_attribute("tuft.backward", backward)
             span.set_attribute("tuft.data_count", len(data))
-            # Prepare input tensors
-            input_ids = [
-                torch.tensor(datum.model_input.to_ints(), dtype=torch.long) for datum in data
-            ]
-            input_ids_padded = pad_sequence(input_ids, batch_first=True, padding_value=0)
-            attention_mask = (input_ids_padded != 0).long()
-            position_ids = (
-                torch.arange(input_ids_padded.size(1), dtype=torch.long)
-                .unsqueeze(0)
-                .expand(input_ids_padded.size(0), -1)
-            )
-            # Move tensors to model device
-            device = next(self.model.parameters()).device
-            input_ids_padded = input_ids_padded.to(device)
-            attention_mask = attention_mask.to(device)
-            position_ids = position_ids.to(device)
 
-            # Activate the correct adapter
+            batch_size = len(data)
+            micro_batch_size = self.config.micro_batch_size
+
+            num_micro_batches = (batch_size + micro_batch_size - 1) // micro_batch_size
+            span.set_attribute("tuft.num_micro_batches", num_micro_batches)
+
+            if num_micro_batches > 1:
+                self.logger.info(
+                    f"[MICRO_BATCH] Splitting batch_size={batch_size} into "
+                    f"{num_micro_batches} micro-batches of size {micro_batch_size}"
+                )
+
+            loss_fn_callable = get_loss_fn(loss_fn)
+            all_loss_fn_outputs = []
+            micro_batch_weights = []
+            metric_list = []
+            total_loss = 0.0
+
             async with self._lock:
                 self._activate_adapter(lora_id)
 
-                # Forward pass
-                outputs = self.model(
-                    input_ids=input_ids_padded,
-                    attention_mask=attention_mask,
-                    position_ids=position_ids,
-                    return_dict=True,
-                )
+                for micro_idx in range(num_micro_batches):
+                    start_idx = micro_idx * micro_batch_size
+                    end_idx = min(start_idx + micro_batch_size, batch_size)
+                    micro_data = data[start_idx:end_idx]
 
-                # Compute loss
-                if loss_fn_config is None:
-                    loss_fn_config = {}
-                loss_fn_callable = get_loss_fn(loss_fn)
-                logits = outputs.logits
-                if "temperature" in loss_fn_config:
-                    temperature = loss_fn_config["temperature"]
-                    logits.div_(temperature)
+                    torch.cuda.reset_peak_memory_stats()
+                    self.logger.debug(
+                        f"[GPU-micro_batch_{micro_idx}] before_forward: "
+                        f"allocated={torch.cuda.memory_allocated() / 1e9:.2f}GB, "
+                        f"reserved={torch.cuda.memory_reserved() / 1e9:.2f}GB"
+                    )
 
-                loss_fn_inputs = self._prepare_loss_fn_inputs(data)
+                    micro_loss, micro_metrics, micro_outputs = await self._forward_micro_batch(
+                        micro_data,
+                        loss_fn_callable,
+                        loss_fn_config,
+                        backward=backward,
+                    )
 
-                ## compute target_logprobs from logits and target_tokens
-                target_tokens = loss_fn_inputs["target_tokens"]
-                target_logprobs = self._compute_logprobs_from_target_tokens(logits, target_tokens)
-                loss_fn_inputs["target_logprobs"] = target_logprobs
+                    total_loss += micro_loss
+                    all_loss_fn_outputs.extend(micro_outputs)
+                    micro_batch_weights.append(len(micro_outputs))
 
-                loss, metric = loss_fn_callable(loss_fn_inputs, loss_fn_config)
+                    metric_list.append(micro_metrics)
 
-                # Backward pass if needed
-                if backward:
-                    loss.backward()
+                    self.logger.debug(
+                        f"[GPU-micro_batch_{micro_idx}] after_forward: "
+                        f"allocated={torch.cuda.memory_allocated() / 1e9:.2f}GB, "
+                        f"reserved={torch.cuda.memory_reserved() / 1e9:.2f}GB, "
+                        f"max_allocated={torch.cuda.max_memory_allocated() / 1e9:.2f}GB"
+                    )
 
-            unpaded_logprobs = self._unpad_tensor(
-                target_logprobs, [len(datum.model_input.to_ints()) for datum in data]
+                    torch.cuda.empty_cache()
+
+            avg_loss = total_loss / num_micro_batches
+            self.logger.info(f"Average loss: {avg_loss}")
+            metric_list = metrics_reduction(metric_list, micro_batch_weights)
+
+            self.logger.debug(
+                f"[GPU-after_micro_batches] allocated={torch.cuda.memory_allocated() / 1e9:.2f}GB"
+                f", reserved={torch.cuda.memory_reserved() / 1e9:.2f}GB"
             )
+
             return types.ForwardBackwardOutput(
                 loss_fn_output_type=loss_fn,
-                loss_fn_outputs=[
-                    {"logprobs": types.TensorData.from_torch(logprobs.detach())}
-                    for logprobs in unpaded_logprobs
-                ],
-                metrics=metric,
+                loss_fn_outputs=all_loss_fn_outputs,
+                metrics=metric_list or {},
             )
+
+    async def _forward_micro_batch(
+        self,
+        data: list[types.Datum],
+        loss_fn_callable: Callable,
+        loss_fn_config: dict[str, float] | None,
+        backward: bool,
+    ) -> tuple[float, dict[str, float], list[dict]]:
+        """Process a single micro-batch.
+
+        Returns:
+            tuple: (loss_value, metrics_dict, loss_fn_outputs_list)
+        """
+        # Prepare input tensors
+        input_ids = [torch.tensor(datum.model_input.to_ints(), dtype=torch.long) for datum in data]
+        input_ids_padded = pad_sequence(input_ids, batch_first=True, padding_value=0)
+        attention_mask = (input_ids_padded != 0).long()
+        position_ids = (
+            torch.arange(input_ids_padded.size(1), dtype=torch.long)
+            .unsqueeze(0)
+            .expand(input_ids_padded.size(0), -1)
+        )
+
+        device = next(self.model.parameters()).device
+        input_ids_padded = input_ids_padded.to(device)
+        attention_mask = attention_mask.to(device)
+        position_ids = position_ids.to(device)
+
+        # Forward pass
+        outputs = self.model(
+            input_ids=input_ids_padded,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            return_dict=True,
+        )
+
+        if loss_fn_config is None:
+            loss_fn_config = {}
+
+        logits = outputs.logits
+        del outputs
+        torch.cuda.empty_cache()
+
+        if "temperature" in loss_fn_config:
+            temperature = loss_fn_config["temperature"]
+            logits = logits / temperature
+
+        loss_fn_inputs = self._prepare_loss_fn_inputs(data)
+        target_tokens = loss_fn_inputs["target_tokens"]
+
+        target_logprobs = self._compute_logprobs_from_target_tokens(logits, target_tokens)
+        del logits
+        torch.cuda.empty_cache()
+
+        loss_fn_inputs["target_logprobs"] = target_logprobs
+        loss, metric = loss_fn_callable(loss_fn_inputs, loss_fn_config)
+
+        # Backward with gradient accumulation
+        if backward:
+            loss.backward(retain_graph=False)
+            torch.cuda.empty_cache()
+
+        unpaded_logprobs = self._unpad_tensor(
+            target_logprobs.detach(),
+            [len(datum.model_input.to_ints()) for datum in data],
+        )
+        loss_fn_outputs = [
+            {"logprobs": types.TensorData.from_torch(logprobs.cpu().clone())}
+            for logprobs in unpaded_logprobs
+        ]
+
+        loss_value = loss.detach().item()
+
+        del target_logprobs
+        del unpaded_logprobs
+        del loss_fn_inputs
+        del loss
+
+        torch.cuda.empty_cache()
+
+        return loss_value, metric, loss_fn_outputs
+
+    def _accumulate_metrics(self, accumulated: dict, new_metrics: dict) -> dict:
+        """Accumulate metrics from multiple micro-batches."""
+        result = {}
+        for key in accumulated.keys():
+            if key in new_metrics:
+                if isinstance(accumulated[key], (int, float)):
+                    result[key] = accumulated[key] + new_metrics[key]
+                elif torch.is_tensor(accumulated[key]):
+                    result[key] = accumulated[key] + new_metrics[key]
+                else:
+                    result[key] = accumulated[key]
+            else:
+                result[key] = accumulated[key]
+
+        for key in new_metrics.keys():
+            if key not in result:
+                result[key] = new_metrics[key]
+
+        return result
 
     async def optim_step(
         self,
@@ -316,7 +430,9 @@ class HFTrainingModel:
                 param_group["weight_decay"] = adam_params.weight_decay
             optimizer.step()
             optimizer.zero_grad()
-            return types.OptimStepResponse()
+
+        torch.cuda.empty_cache()
+        return types.OptimStepResponse()
 
     # --------------------------------
     # Helper methods
@@ -362,11 +478,30 @@ class HFTrainingModel:
     def _compute_logprobs_from_target_tokens(
         self, logits: torch.Tensor, target_tokens: torch.Tensor
     ) -> torch.Tensor:
-        logits_labels = torch.gather(logits, dim=-1, index=target_tokens.unsqueeze(-1)).squeeze(-1)
-        # loop to reduce peak mem consumption
-        logsumexp_values = torch.stack([torch.logsumexp(logit, dim=-1) for logit in logits])
-        logprobs_labels = logits_labels - logsumexp_values  # log_softmax(x_i) = x_i - logsumexp(x)
-        return logprobs_labels
+        if logits.dtype in [torch.float32, torch.float64]:
+            logits_labels = torch.gather(logits, dim=-1, index=target_tokens.unsqueeze(-1)).squeeze(
+                -1
+            )
+            logsumexp_values = torch.stack(
+                [
+                    torch.logsumexp(logit, dim=-1) for logit in logits
+                ]  # loop to reduce peak mem consumption
+            )
+            log_probs_labels = (
+                logits_labels - logsumexp_values
+            )  # log_softmax(x_i) = x_i - logsumexp(x)
+        else:
+            log_probs_labels = []
+            for row_logits, row_labels in zip(
+                logits, target_tokens, strict=True
+            ):  # loop to reduce peak mem consumption
+                row_log_probs = torch.nn.functional.log_softmax(row_logits, dim=-1)
+                row_log_probs_labels = row_log_probs.gather(
+                    dim=-1, index=row_labels.unsqueeze(-1)
+                ).squeeze(-1)
+                log_probs_labels.append(row_log_probs_labels)
+            log_probs_labels = torch.stack(log_probs_labels)
+        return log_probs_labels
 
     def _unpad_tensor(
         self, padded_tensor: torch.Tensor, original_lengths: list[int]
@@ -383,6 +518,8 @@ class HFTrainingModel:
             dtype="auto",
             device_map="auto",
         )
+        model.enable_input_require_grads()
+        model.gradient_checkpointing_enable({"use_reentrant": False})
         peft_config = LoraConfig()
         peft_model = get_peft_model(model, peft_config=peft_config, adapter_name="default")
         return peft_model
@@ -398,7 +535,7 @@ class HFTrainingModel:
             ray.remote(cls)
             .options(
                 name="training_model_" + config.model_name,
-                num_gpus=1 if not config.colocate else 1 - config.sampling_memory_fraction,
+                num_gpus=(1 if not config.colocate else 1 - config.sampling_memory_fraction),
             )
             .remote(config)
         )

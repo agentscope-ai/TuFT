@@ -4,6 +4,7 @@ from tuft.exceptions import (
     LossFunctionInputShapeMismatchException,
     LossFunctionMissingInputException,
     LossFunctionNotFoundException,
+    LossFunctionUnknownMetricReductionException,
 )
 
 
@@ -221,3 +222,41 @@ def test_dro_loss():
     }
     with pytest.raises(LossFunctionMissingInputException):
         loss_fn(loss_fn_inputs_missing, loss_fn_config)
+
+
+def test_loss_fn_metrics_reduction():
+    import torch
+
+    from tuft.loss_fn import metrics_reduction
+
+    metric_list = [
+        {"loss:mean": 0.5, "accuracy:sum": 2, "time:min": 0.8, "time:max": 0.9},
+        {"loss:mean": 0.3, "accuracy:sum": 3, "time:min": 0.7, "time:max": 0.95},
+        {"loss:mean": 0.4, "accuracy:sum": 5, "time:min": 0.75, "time:max": 0.85},
+    ]
+    weights = [2.0, 3.0, 5.0]
+    reduced_metrics = metrics_reduction(metric_list, weights)
+
+    expected_loss_mean = (0.5 * 2 + 0.3 * 3 + 0.4 * 5) / sum(weights)
+    expected_accuracy_sum = 2 + 3 + 5
+    expected_time_min = min(0.8, 0.7, 0.75)
+    expected_time_max = max(0.9, 0.95, 0.85)
+
+    assert torch.isclose(
+        torch.tensor(reduced_metrics["loss:mean"]), torch.tensor(expected_loss_mean)
+    ), "Reduced loss:mean mismatch."
+    assert reduced_metrics["accuracy:sum"] == expected_accuracy_sum, "Reduced accuracy:sum mismatch."
+    assert reduced_metrics["time:min"] == expected_time_min, "Reduced time:min mismatch."
+    assert reduced_metrics["time:max"] == expected_time_max, "Reduced time:max mismatch."
+
+    metric_list_empty = []
+    weights_empty = []
+    reduced_metrics_empty = metrics_reduction(metric_list_empty, weights_empty)
+    assert reduced_metrics_empty == {}, "Reduced metrics for empty input should be empty."
+
+    metric_unknown = [
+        {"loss:unknown": 0.5},
+    ]
+    weights_unknown = [1.0]
+    with pytest.raises(LossFunctionUnknownMetricReductionException):
+        metrics_reduction(metric_unknown, weights_unknown)
