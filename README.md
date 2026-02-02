@@ -316,107 +316,25 @@ We provide practical examples to demonstrate how to use TuFT for training and sa
 
 ## Persistence
 
-TuFT supports optional Redis-based persistence for server state. When enabled,
-the server can recover sessions, training runs, and pending futures after a restart.
+TuFT supports optional persistence for server state. When enabled, the server can recover sessions, training runs, sampling sessions, and futures after a restart (and then restore runtime model state from checkpoints).
 
-To use persistence, install the optional dependency:
+See [docs/persistence.md](docs/persistence.md) for full details (key layout, restore semantics, and safety checks).
 
 ```bash
-uv pip install tuft[persistence]
+uv pip install "tuft[persistence]"
 ```
-
-### Persistence Modes
-
-TuFT provides three persistence modes:
-
-| Mode | Description | Use Case |
-|------|-------------|----------|
-| `DISABLE` | No persistence, data in-memory only | Development, testing without state recovery |
-| `REDIS` | External Redis server | Production, multi-instance deployments |
-| `FILE` | File-backed store | Demos, small-scale testing |
-
-### Configuration
-
-Add a `persistence` section to your `tuft_config.yaml` configuration file and choose one of the following modes.
-
-#### Mode 1: DISABLE (Default)
-
-No configuration needed. All data is stored in memory and lost on restart.
-
-```yaml
-# tuft_config.yaml
-persistence:
-  mode: DISABLE
-```
-
-#### Mode 2: External Redis Server
-
-Use an external Redis server for production deployments:
 
 ```yaml
 # tuft_config.yaml
 persistence:
   mode: REDIS
   redis_url: "redis://localhost:6379/0"
-  namespace: "persistence-tuft-server"  # Default: "persistence-tuft-server".
-```
-
-You can start a local Redis instance using Docker:
-
-```bash
-docker run -d --name TuFT-redis -p 6379:6379 redis:7-alpine
-```
-
-#### Mode 3: File-backed Store
-
-Use the file-backed store for demos or small-scale testing:
-
-```yaml
-# tuft_config.yaml
-persistence:
-  mode: FILE
-  file_path: "~/.cache/tuft/file_redis.json"
-  namespace: "persistence-tuft-server"  # Default: "persistence-tuft-server"
-```
-
-### Configuration Validation
-
-When persistence is enabled, TuFT validates the current configuration against the stored signature on restart. This prevents data corruption when configuration changes. By default, only `supported_models` is checked.
-
-You can configure which fields to validate:
-
-```yaml
-persistence:
-  mode: REDIS
-  redis_url: "redis://localhost:6379/0"
-  check_fields:  # Default: ["SUPPORTED_MODELS"]
-    - SUPPORTED_MODELS  # Always checked (mandatory)
-    - CHECKPOINT_DIR    # Optional
-    - MODEL_OWNER       # Optional
-```
-
-Available check fields: `SUPPORTED_MODELS`, `CHECKPOINT_DIR`, `MODEL_OWNER`, `TOY_BACKEND_SEED`, `AUTHORIZED_USERS`, `TELEMETRY`.
-
-If a mismatch is detected, use `tuft clear persistence` to clear existing data and start fresh:
-
-```bash
-tuft clear persistence --config /path/to/tuft_config.yaml
-```
-
-Use `--force` or `-f` to skip the confirmation prompt:
-
-```bash
-tuft clear persistence --config /path/to/tuft_config.yaml --force
+  namespace: "persistence-tuft-server"
 ```
 
 ## Observability (OpenTelemetry)
 
-TuFT supports optional OpenTelemetry integration for distributed tracing, metrics, and logging.
-This allows you to monitor your TuFT server using observability tools like SigNoz, Jaeger, or Grafana.
-
-### Configuration
-
-Add the following `telemetry` section to your `tuft_config.yaml` configuration file:
+TuFT supports optional OpenTelemetry integration for tracing, metrics, and logs. See [docs/telemetry.md](docs/telemetry.md) for details (what TuFT records, correlation keys, Ray context propagation, and collector setup).
 
 ```yaml
 # tuft_config.yaml
@@ -425,10 +343,6 @@ telemetry:
   service_name: tuft
   otlp_endpoint: http://localhost:4317  # Your OTLP collector endpoint
   resource_attributes: {}
-    # example:
-    # deployment.environment: production
-    # service.version: 1.0.0
-    # service.namespace: my-namespace
 ```
 
 Alternatively, use environment variables:
