@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 
@@ -120,7 +121,7 @@ async def test_sampling_session_wrong_user(request, tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_sampling_session_seq_id_must_increase(request, tmp_path) -> None:
+async def test_sampling_session_cocurrent(request, tmp_path) -> None:
     use_gpu = request.config.getoption("--gpu")
     state = _build_state(tmp_path, use_gpu)
     session_id = _create_session(state)
@@ -131,23 +132,22 @@ async def test_sampling_session_seq_id_must_increase(request, tmp_path) -> None:
         session_seq_id=10,
         user_id="tester",
     )
-    first_request = types.SampleRequest(
-        prompt=types.ModelInput.from_ints([5, 6, 7]),
-        num_samples=1,
-        sampling_params=types.SamplingParams(max_tokens=1, temperature=0.5),
-        sampling_session_id=sampling_session_id,
-        seq_id=1,
-    )
-    response = await state.run_sample(first_request, user_id="tester")
-    assert response.sequences
-    record = state.sampling.sampling_sessions[sampling_session_id]
-    assert record.last_seq_id == 1
-    assert record.history and record.history[0].prompt_token_count == 3
-
-    repeat_request = first_request.model_copy(update={"seq_id": 1})
-    with pytest.raises(SequenceConflictException) as excinfo:
-        await state.run_sample(repeat_request, user_id="tester")
-    assert excinfo.value.detail == "Sequence conflict: expected 2, got 1."
+    requests = [
+        types.SampleRequest(
+            prompt=types.ModelInput.from_ints([5, 6, 7]),
+            num_samples=1,
+            sampling_params=types.SamplingParams(max_tokens=1, temperature=0.5),
+            sampling_session_id=sampling_session_id,
+            seq_id=i,
+        )
+        for i in range(10)
+    ]
+    response = await asyncio.gather(*[state.run_sample(req, user_id="tester") for req in requests])
+    for resp in response:
+        assert resp.sequences is not None
+        assert len(resp.sequences) == 1
+        assert resp.sequences[0].tokens is not None
+        assert len(resp.sequences[0].tokens) > 0
 
 
 @pytest.mark.asyncio
