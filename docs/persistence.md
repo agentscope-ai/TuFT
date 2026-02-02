@@ -134,7 +134,7 @@ On process start, these components restore their in-memory registries by scannin
 - `TrainingController` restores training runs + checkpoint records.
   - If a training run references a `base_model` not present in the current config, it is marked **corrupted**.
 - `SamplingController` restores sampling sessions.
-  - Sessions whose `base_model` is no longer supported are deleted from storage.
+  - Sampling sessions whose `base_model` is no longer supported are deleted from storage.
 - `FutureStore` restores futures.
   - Completed futures (`ready` / `failed`) are immediately marked as completed.
   - Restored futures also rebuild `future_id` allocation state to keep ordering monotonic.
