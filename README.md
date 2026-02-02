@@ -332,8 +332,8 @@ TuFT provides three persistence modes:
 | Mode | Description | Use Case |
 |------|-------------|----------|
 | `DISABLE` | No persistence, data in-memory only | Development, testing without state recovery |
-| `REDIS_URL` | External Redis server | Production, multi-instance deployments |
-| `FILE_REDIS` | File-backed store | Demos, small-scale testing |
+| `REDIS` | External Redis server | Production, multi-instance deployments |
+| `FILE` | File-backed store | Demos, small-scale testing |
 
 ### Configuration
 
@@ -356,9 +356,9 @@ Use an external Redis server for production deployments:
 ```yaml
 # tuft_config.yaml
 persistence:
-  mode: REDIS_URL
+  mode: REDIS
   redis_url: "redis://localhost:6379/0"
-  namespace: "tuft"  # Default: "tuft".
+  namespace: "persistence-tuft-server"  # Default: "persistence-tuft-server".
 ```
 
 You can start a local Redis instance using Docker:
@@ -374,9 +374,9 @@ Use the file-backed store for demos or small-scale testing:
 ```yaml
 # tuft_config.yaml
 persistence:
-  mode: FILE_REDIS
+  mode: FILE
   file_path: "~/.cache/tuft/file_redis.json"
-  namespace: "tuft"  # Default: "tuft"
+  namespace: "persistence-tuft-server"  # Default: "persistence-tuft-server"
 ```
 
 ### Configuration Validation
@@ -387,7 +387,7 @@ You can configure which fields to validate:
 
 ```yaml
 persistence:
-  mode: REDIS_URL
+  mode: REDIS
   redis_url: "redis://localhost:6379/0"
   check_fields:  # Default: ["SUPPORTED_MODELS"]
     - SUPPORTED_MODELS  # Always checked (mandatory)
@@ -397,13 +397,17 @@ persistence:
 
 Available check fields: `SUPPORTED_MODELS`, `CHECKPOINT_DIR`, `MODEL_OWNER`, `TOY_BACKEND_SEED`, `AUTHORIZED_USERS`, `TELEMETRY`.
 
-If a mismatch is detected, use `--refresh-persistence` to clear existing data and start fresh:
+If a mismatch is detected, use `tuft clear persistence` to clear existing data and start fresh:
 
 ```bash
-tuft launch --config config.yaml --refresh-persistence
+tuft clear persistence --config /path/to/tuft_config.yaml
 ```
 
-Use `--force-refresh-persistence` to skip the confirmation prompt.
+Use `--force` or `-f` to skip the confirmation prompt:
+
+```bash
+tuft clear persistence --config /path/to/tuft_config.yaml --force
+```
 
 ## Observability (OpenTelemetry)
 

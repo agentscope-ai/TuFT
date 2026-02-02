@@ -110,7 +110,7 @@ def configure_persistence(request):
                 stacklevel=2,
             )
             store.configure(
-                PersistenceConfig.from_file_redis(
+                PersistenceConfig.from_file(
                     file_path=file_path,
                     namespace="tuft_test",
                 )
@@ -161,7 +161,7 @@ def enable_persistence(request):
         test_name = request.node.name
         file_path = _get_file_redis_path(f"enable_persistence_{test_name}")
         store.configure(
-            PersistenceConfig.from_file_redis(
+            PersistenceConfig.from_file(
                 file_path=file_path,
                 namespace="tuft_test",
             )

@@ -409,9 +409,9 @@ authorized_users:
 
 # Optional: Persistence configuration
 # persistence:
-#   mode: DISABLE  # Options: DISABLE, REDIS_URL, FILE_REDIS
+#   mode: DISABLE  # Options: DISABLE, REDIS, FILE
 #   redis_url: "redis://localhost:6379/0"
-#   namespace: "tuft"
+#   namespace: "persistence-tuft-server"
 CONFIG_EOF
     fi
 }

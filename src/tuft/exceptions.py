@@ -180,7 +180,8 @@ class ConfigMismatchError(PersistenceException):
             "This can cause data corruption when restoring persisted state.\n\n"
             "Options:\n"
             "  1. Use a different Redis database (change redis_url in config)\n"
-            "  2. Use --refresh-persistence to clear existing data and start fresh\n"
+            "  2. Run `tuft clear persistence -c <config_path>` to clear existing data\n"
+            "     Use `--force` or `-f` to skip confirmation prompt.\n"
             "     (WARNING: This will delete all persisted sessions, training runs, etc.)\n"
             "  3. Restore the original configuration that matches the stored data"
         )

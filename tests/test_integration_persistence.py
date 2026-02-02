@@ -85,7 +85,7 @@ def test_checkpoint_resume_persistence(tmp_path: Path) -> None:
     config.authorized_users = {
         "tml-test-key": "default",
     }
-    config.persistence = PersistenceConfig.from_file_redis(
+    config.persistence = PersistenceConfig.from_file(
         file_path=file_redis_path,
         namespace="tuft_test",
     )

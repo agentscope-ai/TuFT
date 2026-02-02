@@ -23,6 +23,8 @@ from .telemetry.metrics import ResourceMetricsCollector
 
 
 app = typer.Typer(help="TuFT - Tenant-unified Fine-Tuning Server.", no_args_is_help=True)
+clear_app = typer.Typer(help="Clear data commands.", no_args_is_help=True)
+app.add_typer(clear_app, name="clear")
 
 
 # Required for Typer to recognize subcommands when using no_args_is_help=True
@@ -69,21 +71,6 @@ def _resolve_config_path(config_path: Path | None) -> Path:
     )
 
 
-_REFRESH_PERSISTENCE_OPTION = typer.Option(
-    False,
-    "--refresh-persistence",
-    help=(
-        "Clear all existing persistence data and start fresh. "
-        "Use when config has changed and you want to discard old data."
-    ),
-)
-_FORCE_REFRESH_PERSISTENCE_OPTION = typer.Option(
-    False,
-    "--force-refresh-persistence",
-    help="Skip confirmation prompts when using --refresh-persistence.",
-)
-
-
 def _build_config(
     config_path: Path | None,
     checkpoint_dir: Path | None,
@@ -101,22 +88,52 @@ def _build_config(
     return config
 
 
-def _handle_refresh_persistence(force_refresh: bool) -> None:
-    """Handle the --refresh-persistence flag.
+_FORCE_OPTION = typer.Option(
+    False,
+    "--force",
+    "-f",
+    help="Skip confirmation prompts when clearing persistence data.",
+)
 
-    Prompts for confirmation unless --force-refresh is provided,
-    then clears all persistence data in the current namespace.
+
+@clear_app.command(name="persistence")
+def clear_persistence(
+    config_path: Path | None = _CONFIG_OPTION,
+    force: bool = _FORCE_OPTION,
+) -> None:
+    """Clear all persistence data and start fresh.
+
+    This command clears all existing persistence data in the configured namespace.
+    Use this when the configuration has changed and you want to discard old data.
     """
+    # Build config to get persistence settings
+    try:
+        resolved_config_path = _resolve_config_path(config_path)
+        config = load_yaml_config(resolved_config_path)
+    except typer.BadParameter as e:
+        typer.secho(f"Error: {e}", fg=typer.colors.RED)
+        raise typer.Exit(1) from e
+
+    if not config.persistence.enabled:
+        typer.secho(
+            "Persistence is disabled in the configuration. Nothing to clear.",
+            fg=typer.colors.YELLOW,
+        )
+        raise typer.Exit(0)
+
+    # Configure the store
+    store = get_redis_store()
+    store.configure(config.persistence)
     namespace = get_current_namespace()
 
-    if not force_refresh:
+    if not force:
         typer.secho(
             "\n🚨🚨🚨 CRITICAL WARNING 🚨🚨🚨\n",
             fg=typer.colors.RED,
             bold=True,
         )
         typer.secho(
-            "--refresh-persistence will PERMANENTLY DELETE ALL persistence data!\n",
+            "This command will PERMANENTLY DELETE ALL persistence data!\n",
             fg=typer.colors.RED,
             bold=True,
         )
@@ -151,15 +168,12 @@ def _handle_refresh_persistence(force_refresh: bool) -> None:
         f"✅ Cleared {deleted_count} keys from namespace '{cleared_namespace}'.",
         fg=typer.colors.GREEN,
     )
-    typer.echo("Server will start with fresh state.\n")
+    typer.echo("Persistence data has been cleared. You can now start the server fresh.")
 
 
-def _validate_persistence_config(
-    config: AppConfig, refresh_persistence: bool, force_refresh_persistence: bool
-) -> None:
+def _validate_persistence_config(config: AppConfig) -> None:
     """Validate that persistence config matches stored config.
 
-    If refresh_persistence is True, clears existing data instead of validating.
     If config mismatch is detected, exits with an error message.
     """
     if not config.persistence.enabled:
@@ -168,10 +182,6 @@ def _validate_persistence_config(
     # Configure the Redis store first
     store = get_redis_store()
     store.configure(config.persistence)
-
-    if refresh_persistence:
-        _handle_refresh_persistence(force_refresh_persistence)
-        return
 
     try:
         validate_config_signature(config)
@@ -207,14 +217,12 @@ def launch(
     reload: bool = _RELOAD_OPTION,
     config_path: Path | None = _CONFIG_OPTION,
     checkpoint_dir: Path | None = _CHECKPOINT_DIR_OPTION,
-    refresh_persistence: bool = _REFRESH_PERSISTENCE_OPTION,
-    force_refresh_persistence: bool = _FORCE_REFRESH_PERSISTENCE_OPTION,
 ) -> None:
     """Launch the TuFT server."""
     app_config = _build_config(config_path, checkpoint_dir)
 
     # Validate persistence configuration before starting
-    _validate_persistence_config(app_config, refresh_persistence, force_refresh_persistence)
+    _validate_persistence_config(app_config)
 
     # Initialize telemetry before starting the server
     _init_telemetry(app_config, log_level)

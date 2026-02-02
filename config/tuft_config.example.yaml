@@ -79,28 +79,29 @@ authorized_users:
 # Persistence Configuration
 # =============================================================================
 # Configure state persistence for recovery after server restart.
+# For detailed documentation, see the "Persistence" section in README.md.
 #
 # Available modes:
 #   - DISABLE: No persistence (default)
-#   - REDIS_URL: External Redis server
-#   - FILE_REDIS: File-backed store
+#   - REDIS: External Redis server
+#   - FILE: File-backed store
 
 persistence:
-  mode: DISABLE  # Options: DISABLE, REDIS_URL, FILE_REDIS
+  mode: DISABLE  # Options: DISABLE, REDIS, FILE
 
-  # For REDIS_URL mode:
+  # For REDIS mode:
   # redis_url: "redis://localhost:6379/0"
 
-  # For FILE_REDIS mode:
+  # For FILE mode:
   # file_path: "~/.cache/tuft/file_redis.json"
 
-  # Namespace prefix for Redis keys. (optional, defaults to "tuft".)
-  # namespace: "tuft"
+  # Namespace prefix for Redis keys. (optional, defaults to "persistence-tuft-server".)
+  # namespace: "persistence-tuft-server"
 
   # Fields to validate on server restart for config consistency.
+  # For detailed documentation on available fields and config validation,
+  # see the "Configuration Validation" section in README.md.
   # Defaults to ["SUPPORTED_MODELS"]. SUPPORTED_MODELS is always checked.
-  # Available fields: SUPPORTED_MODELS, CHECKPOINT_DIR, MODEL_OWNER, 
-  #                   TOY_BACKEND_SEED, AUTHORIZED_USERS, TELEMETRY.
   # check_fields:
   #   - SUPPORTED_MODELS
   #   - CHECKPOINT_DIR

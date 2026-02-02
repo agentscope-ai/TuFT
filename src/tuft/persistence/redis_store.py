@@ -9,13 +9,13 @@ Key Design:
 
 Persistence Modes:
 - DISABLE: No persistence, all data is in-memory only
-- REDIS_URL: Use external Redis server via URL
-- FILE_REDIS: Use file-backed storage for tests and demos
+- REDIS: Use external Redis server via URL
+- FILE: Use file-backed storage for tests and demos
 
 Config Validation:
 - On startup, the current config signature is compared with the stored signature
 - If mismatch is detected, server stops with an error message
-- Use --refresh-persistence to override and clear existing data
+- Use `tuft clear persistence` to override and clear existing data
 """
 
 from __future__ import annotations
@@ -55,9 +55,9 @@ T = TypeVar("T", bound=BaseModel)
 class PersistenceMode(str, Enum):
     """Persistence mode options."""
 
-    DISABLE = "disabled"  # No persistence
-    REDIS_URL = "redis_url"  # Use external Redis server
-    FILE_REDIS = "file_redis"  # Use file-backed storage for tests/demos
+    DISABLE = "DISABLE"  # No persistence
+    REDIS = "REDIS"  # Use external Redis server
+    FILE = "FILE"  # Use file-backed storage for tests/demos
 
 
 # Default TTL values in seconds
@@ -71,12 +71,12 @@ class ConfigCheckField:
     SUPPORTED_MODELS is always required (mandatory) for restore safety.
     """
 
-    SUPPORTED_MODELS = "supported_models"
-    CHECKPOINT_DIR = "checkpoint_dir"
-    MODEL_OWNER = "model_owner"
-    TOY_BACKEND_SEED = "toy_backend_seed"
-    AUTHORIZED_USERS = "authorized_users"
-    TELEMETRY = "telemetry"
+    SUPPORTED_MODELS = "SUPPORTED_MODELS"
+    CHECKPOINT_DIR = "CHECKPOINT_DIR"
+    MODEL_OWNER = "MODEL_OWNER"
+    TOY_BACKEND_SEED = "TOY_BACKEND_SEED"
+    AUTHORIZED_USERS = "AUTHORIZED_USERS"
+    TELEMETRY = "TELEMETRY"
 
 
 # Default fields to check (supported_models is mandatory)
@@ -87,10 +87,10 @@ class PersistenceConfig(BaseModel):
     """Configuration for Redis persistence.
 
     Attributes:
-        mode: Persistence mode - DISABLE, REDIS_URL, or FILE_REDIS
-        redis_url: Redis server URL (only used when mode=REDIS_URL)
-        file_path: JSON file path (only used when mode=FILE_REDIS)
-        namespace: Key namespace prefix for Redis keys. Defaults to "tuft".
+        mode: Persistence mode - DISABLE, REDIS, or FILE
+        redis_url: Redis server URL (only used when mode=REDIS)
+        file_path: JSON file path (only used when mode=FILE)
+        namespace: Key namespace prefix for Redis keys. Defaults to "persistence-tuft-server".
         future_ttl_seconds: TTL for future records in seconds. None means no expiry.
         check_fields: List of AppConfig fields to validate on restart.
                      Defaults to ["SUPPORTED_MODELS"]. SUPPORTED_MODELS is always
@@ -105,7 +105,7 @@ class PersistenceConfig(BaseModel):
     mode: PersistenceMode = PersistenceMode.DISABLE
     redis_url: str = "redis://localhost:6379/0"
     file_path: Path | None = None
-    namespace: str = "tuft"  # Default namespace for Redis keys
+    namespace: str = "persistence-tuft-server"  # Default namespace for Redis keys
     future_ttl_seconds: int | None = DEFAULT_FUTURE_TTL_SECONDS
     check_fields: list[str] = Field(default_factory=lambda: DEFAULT_CHECK_FIELDS.copy())
 
@@ -125,13 +125,13 @@ class PersistenceConfig(BaseModel):
     def from_redis_url(
         cls,
         redis_url: str,
-        namespace: str = "tuft",
+        namespace: str = "persistence-tuft-server",
         future_ttl_seconds: int | None = DEFAULT_FUTURE_TTL_SECONDS,
         check_fields: list[str] | None = None,
     ) -> "PersistenceConfig":
         """Create a config using external Redis server."""
         return cls(
-            mode=PersistenceMode.REDIS_URL,
+            mode=PersistenceMode.REDIS,
             redis_url=redis_url,
             namespace=namespace,
             future_ttl_seconds=future_ttl_seconds,
@@ -139,16 +139,16 @@ class PersistenceConfig(BaseModel):
         )
 
     @classmethod
-    def from_file_redis(
+    def from_file(
         cls,
         file_path: Path | None = None,
-        namespace: str = "tuft",
+        namespace: str = "persistence-tuft-server",
         future_ttl_seconds: int | None = DEFAULT_FUTURE_TTL_SECONDS,
         check_fields: list[str] | None = None,
     ) -> "PersistenceConfig":
         """Create a config using file-backed storage."""
         return cls(
-            mode=PersistenceMode.FILE_REDIS,
+            mode=PersistenceMode.FILE,
             file_path=file_path,
             namespace=namespace,
             future_ttl_seconds=future_ttl_seconds,
@@ -204,7 +204,7 @@ class RedisStore:
                 if self._redis is None or self._pid != current_pid:
                     self._close_connections()
 
-                    if self._config.mode in (PersistenceMode.REDIS_URL, PersistenceMode.FILE_REDIS):
+                    if self._config.mode in (PersistenceMode.REDIS, PersistenceMode.FILE):
                         logger.info("Redis connection begin")
                         self._redis = self._create_redis_client()
 
@@ -219,7 +219,7 @@ class RedisStore:
         if self._config is None:
             return None
         try:
-            if self._config.mode == PersistenceMode.FILE_REDIS:
+            if self._config.mode == PersistenceMode.FILE:
                 from .file_redis import FileRedis
 
                 file_path = self._config.file_path or (
@@ -239,7 +239,7 @@ class RedisStore:
 
     @property
     def namespace(self) -> str:
-        return self._config.namespace if self._config else "tuft"
+        return self._config.namespace if self._config else "persistence-tuft-server"
 
     @property
     def future_ttl(self) -> int | None:
@@ -542,19 +542,22 @@ class ConfigSignature(BaseModel):
 
     # Metadata
     created_at: datetime = Field(default_factory=_now)
-    namespace: str = "tuft"
+    namespace: str = "persistence-tuft-server"
 
     @classmethod
     def from_app_config(cls, config: Any) -> "ConfigSignature":
         """Create a signature by serializing the AppConfig."""
         # Use the method on AppConfig to get persistence-safe data
         config_data = config.get_config_for_persistence()
-        namespace = config.persistence.namespace if config.persistence else "tuft"
+        namespace = (
+            config.persistence.namespace if config.persistence else "persistence-tuft-server"
+        )
         return cls(config_data=config_data, namespace=namespace)
 
     def _get_field_value(self, field_name: str) -> Any:
         """Get the value of a field by name."""
-        return self.config_data.get(field_name)
+        lowercase_field = field_name.lower()
+        return self.config_data.get(lowercase_field)
 
     def _normalize_for_comparison(self, value: Any) -> Any:
         if isinstance(value, list):

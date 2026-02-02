@@ -767,7 +767,7 @@ def _create_config_with_models(
         ],
         telemetry=TelemetryConfig(enabled=telemetry_enabled),
         persistence=PersistenceConfig(
-            mode=PersistenceMode.FILE_REDIS,
+            mode=PersistenceMode.FILE,
             check_fields=check_fields if check_fields is not None else DEFAULT_CHECK_FIELDS.copy(),
         ),
     )
