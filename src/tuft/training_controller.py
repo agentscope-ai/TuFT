@@ -274,7 +274,8 @@ class TrainingController:
             if seq_id is not None:
                 self._reserve_seq_id(record, seq_id)
                 # Save the updated next_seq_id to Redis
-                self._save_training_run(record.training_run_id)
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, self._save_training_run, record.training_run_id)
             return await operation()
 
     def _reserve_seq_id(self, record: TrainingRunRecord, seq_id: int) -> None:
@@ -314,7 +315,8 @@ class TrainingController:
                 )
                 await backend.create_adapter(model_id, lora_config)
                 self.training_runs[model_id] = record
-                self._save_training_run(model_id)
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, self._save_training_run, model_id)
 
                 # Update metrics
                 get_metrics().training_models_active.add(1, {"base_model": base_model})
@@ -541,7 +543,14 @@ class TrainingController:
 
                 # Save training run and checkpoint atomically to prevent inconsistency
                 # if server crashes between saves
-                self._save_training_run_with_checkpoint(model_id, checkpoint_name, checkpoint_type)
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    None,
+                    self._save_training_run_with_checkpoint,
+                    model_id,
+                    checkpoint_name,
+                    checkpoint_type,
+                )
 
                 # Update metrics
                 metrics = get_metrics()
@@ -722,7 +731,8 @@ class TrainingController:
         except Exception:  # pylint: disable=broad-except
             # If loading fails, mark as corrupted
             record.corrupted = True
-            self._save_training_run(model_id)
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self._save_training_run, model_id)
             return None
 
         return latest_ckpt

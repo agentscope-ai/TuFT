@@ -345,8 +345,9 @@ class FutureStore:
             record.payload = payload
             record.status = "ready"
             record.error = None
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self._save_future, request_id)
             record.event.set()
-            self._save_future(request_id)
 
             # Update metrics
             get_metrics().futures_completed.add(
@@ -370,8 +371,9 @@ class FutureStore:
                 return
             record.status = "failed"
             record.error = failure
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self._save_future, request_id)
             record.event.set()
-            self._save_future(request_id)
 
             # Update metrics
             get_metrics().futures_completed.add(

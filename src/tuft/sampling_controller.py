@@ -236,7 +236,8 @@ class SamplingController:
                     model_path=str(adapter_path) if adapter_path else None,
                     session_seq_id=session_seq_id,
                 )
-                self._save_session(sampling_session_id)
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, self._save_session, sampling_session_id)
 
                 # Update metrics
                 get_metrics().sampling_sessions_active.add(1, {"base_model": base_model_ref or ""})
@@ -261,7 +262,8 @@ class SamplingController:
             prompt_hash=self._hash_prompt(prompt),
         )
         record.history.append(entry)
-        self._save_session(record.sampling_session_id)
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._save_session, record.sampling_session_id)
 
     async def _resolve_backend(
         self, request: types.SampleRequest, user_id: str
@@ -285,7 +287,8 @@ class SamplingController:
             # Track the maximum submitted seq_id for recovery purposes
             if request.seq_id > record.max_submitted_seq_id:
                 record.max_submitted_seq_id = request.seq_id
-                self._save_session(record.sampling_session_id)
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, self._save_session, record.sampling_session_id)
             await record.executor.submit(
                 sequence_id=request.seq_id,
                 func=self._record_sequence,
