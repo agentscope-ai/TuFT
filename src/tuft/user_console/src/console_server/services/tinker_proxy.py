@@ -63,7 +63,7 @@ def list_training_runs_internal(client) -> List[TrainingRunItem]:
                 break
             runs.extend(response.training_runs)
 
-            if len(response.training_runs) < 5:
+            if len(response.training_runs) < page_size:
                 break
 
             offset += page_size
