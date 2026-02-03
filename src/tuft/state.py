@@ -135,7 +135,10 @@ class ServerState:
         1. For each training run restored from Redis, create adapter and load latest checkpoint
         2. Mark ALL futures created after checkpoint's future_id as failed
         3. For training runs without checkpoints, mark all futures as failed
+        4. Mark all pending sample futures as failed
         """
+        self.future_store.mark_pending_sample_futures_failed()
+
         # Restore training runs (adapter + checkpoint)
         for model_id, record in self.training.training_runs.items():
             if record.backend is None or record.corrupted:

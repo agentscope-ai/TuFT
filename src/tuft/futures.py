@@ -189,6 +189,24 @@ class FutureStore:
                 count += 1
         return count
 
+    def mark_pending_sample_futures_failed(
+        self,
+        error_message: str = "Server restarted while sample request was pending. Please retry.",
+    ) -> int:
+        """Mark all pending sample futures as failed."""
+        count = 0
+        for record in self._records.values():
+            if record.status == "pending" and record.operation_type == "sample":
+                record.status = "failed"
+                record.error = types.RequestFailedResponse(
+                    error=error_message,
+                    category=types.RequestErrorCategory.Server,
+                )
+                record.event.set()
+                self._save_future(record.request_id)
+                count += 1
+        return count
+
     def _store_record(self, record: FutureRecord) -> None:
         self._records[record.request_id] = record
         self._save_future(record.request_id)
