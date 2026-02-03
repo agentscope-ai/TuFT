@@ -81,3 +81,49 @@ async def test_future_store_handles_unexpected_errors():
     assert result.category == types.RequestErrorCategory.Server
     assert "boom" in result.error
     await store.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_mark_pending_sample_futures_failed():
+    """Test that mark_pending_sample_futures_failed only marks sample futures as failed."""
+    store = FutureStore()
+
+    async def _sample_operation() -> types.SampleResponse:
+        await asyncio.sleep(10)  # Long enough to stay pending
+        return types.SampleResponse(sequences=[])
+
+    async def _training_operation() -> types.SaveWeightsResponse:
+        await asyncio.sleep(10)
+        return types.SaveWeightsResponse(path="tinker://run/weights/ckpt")
+
+    sample_future = await store.enqueue(
+        _sample_operation, user_id="tester", operation_type="sample"
+    )
+    training_future = await store.enqueue(
+        _training_operation, user_id="tester", model_id="model-1", operation_type="save_weights"
+    )
+
+    sample_result = await store.retrieve(sample_future.request_id, user_id="tester", timeout=0.1)
+    training_result = await store.retrieve(
+        training_future.request_id, user_id="tester", timeout=0.1
+    )
+    assert isinstance(sample_result, TryAgainResponse)
+    assert isinstance(training_result, TryAgainResponse)
+
+    # Mark sample futures as failed
+    count = store.mark_pending_sample_futures_failed()
+    assert count == 1  # Only the sample future should be marked
+
+    # Sample future should now be failed
+    sample_result = await store.retrieve(sample_future.request_id, user_id="tester", timeout=0.1)
+    assert isinstance(sample_result, types.RequestFailedResponse)
+    assert sample_result.category == types.RequestErrorCategory.Server
+
+    training_result = await store.retrieve(
+        training_future.request_id, user_id="tester", timeout=0.1
+    )
+    # It should NOT be a RequestFailedResponse from our mark call
+    assert not isinstance(training_result, types.RequestFailedResponse)
+    assert isinstance(training_result, TryAgainResponse)
+
+    await store.shutdown()

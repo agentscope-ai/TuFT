@@ -302,6 +302,42 @@ class TestSamplingSessionPersistence:
         assert restored.history[1].seq_id == 2
         assert restored.history[1].prompt_token_count == 20
 
+    def test_max_submitted_seq_id_persisted_and_executor_restored(self, setup):
+        """Test that max_submitted_seq_id is persisted and executor is restored correctly."""
+        store, app_config = setup
+
+        # === Phase 1: Create session with max_submitted_seq_id ===
+        controller = SamplingController(app_config)
+
+        sampling_session_id = "test-executor-restore"
+        record = SamplingSessionRecord(
+            sampling_session_id=sampling_session_id,
+            session_id="session-003",
+            user_id="executor_user",
+            model_id=sampling_session_id,
+            base_model="Qwen/Qwen3-0.6B",
+            model_path=None,
+            session_seq_id=1,
+            last_seq_id=10,
+            max_submitted_seq_id=15,  # Some requests were submitted but not yet processed
+        )
+        controller.sampling_sessions[sampling_session_id] = record
+        controller._save_session(sampling_session_id)
+
+        # Verify initial executor state
+        assert record.executor.next_sequence_id == 0  # Default value
+
+        # === Phase 2: Crash and restart ===
+        del controller
+        new_controller = SamplingController(app_config)
+
+        # === Phase 3: Verify executor restored with correct next_sequence_id ===
+        restored = new_controller.sampling_sessions[sampling_session_id]
+        assert restored.max_submitted_seq_id == 15
+        assert restored.last_seq_id == 10
+        # executor.next_sequence_id should be max_submitted_seq_id + 1
+        assert restored.executor.next_sequence_id == 16
+
 
 # =============================================================================
 # TrainingRun Persistence Tests (CPU)
