@@ -9,7 +9,7 @@ We recommend using [uv](https://github.com/astral-sh/uv) for dependency manageme
 **Activate virtual environment**
 ```shell
 uv venv --python 3.12
-source .ven/bin/activate
+source .venv/bin/activate
 ```
 
 **Install the dependencies**
