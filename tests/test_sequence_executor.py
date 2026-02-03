@@ -3,7 +3,7 @@ import time
 
 import pytest
 
-from tuft.exceptions import SequenceTimeoutException, SequenceConflictException
+from tuft.exceptions import SequenceConflictException, SequenceTimeoutException
 from tuft.sequence_executor import SequenceExecutor
 
 

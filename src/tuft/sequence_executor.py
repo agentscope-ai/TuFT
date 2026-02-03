@@ -2,7 +2,7 @@ import asyncio
 import heapq
 from typing import Any, Callable
 
-from .exceptions import SequenceTimeoutException, SequenceConflictException
+from .exceptions import SequenceConflictException, SequenceTimeoutException
 
 
 class SequenceExecutor:
@@ -19,9 +19,7 @@ class SequenceExecutor:
 
     async def submit(self, sequence_id: int, func: Callable, **kwargs) -> Any:
         if sequence_id < self.next_sequence_id:
-            raise SequenceConflictException(
-                expected=self.next_sequence_id, got=sequence_id
-            )
+            raise SequenceConflictException(expected=self.next_sequence_id, got=sequence_id)
         future = asyncio.Future()
         async with self.heap_lock:
             heapq.heappush(self.pending_heap, (sequence_id, func, kwargs, future))
