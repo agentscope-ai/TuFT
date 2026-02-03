@@ -18,6 +18,21 @@ class SequenceExecutor:
         self.timeout = timeout
 
     async def submit(self, sequence_id: int, func: Callable, **kwargs) -> Any:
+        """Submit a task with a specific sequence_id.
+
+        Args:
+            sequence_id (int): The sequence ID of the task.
+            func (Callable): The async function to execute.
+            **kwargs: Keyword arguments to pass to the function.
+
+        Returns:
+            Any: The result of the function execution.
+
+        Raises:
+            SequenceTimeoutException: If the task times out waiting for its turn.
+            SequenceConflictException: If a task with a lower sequence_id has already been
+                processed.
+        """
         if sequence_id < self.next_sequence_id:
             raise SequenceConflictException(expected=self.next_sequence_id, got=sequence_id)
         future = asyncio.Future()
