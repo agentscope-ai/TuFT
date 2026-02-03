@@ -51,6 +51,9 @@ backend = [
 persistence = [
     "redis>=5.0.0",
 ]
+examples = [
+    "matplotlib>=3.8",
+]
 
 [tool.ruff]
 line-length = 100
