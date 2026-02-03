@@ -98,6 +98,12 @@ persistence:
   # Namespace prefix for Redis keys. (optional, defaults to "persistence-tuft-server".)
   # namespace: "persistence-tuft-server"
 
+  # TTL (Time-To-Live) for future records in seconds.
+  # Futures are short-lived async operation results that expire after this duration.
+  # Set to null for no expiry (not recommended for production).
+  # Default: 86400 (1 day)
+  # future_ttl_seconds: 86400
+
   # Fields to validate on server restart for config consistency.
   # For detailed documentation on available fields and config validation,
   # see the "Configuration Validation" section in README.md.
