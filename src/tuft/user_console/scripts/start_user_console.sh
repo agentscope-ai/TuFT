@@ -5,8 +5,8 @@
 set -e  # Exit immediately if a command exits with a non-zero status
 
 # Default values
-DEFAULT_GUI_PORT=10715
-DEFAULT_BACKEND_PORT=10710
+DEFAULT_GUI_PORT=10613
+DEFAULT_BACKEND_PORT=10712
 
 # Display help message
 show_help() {
