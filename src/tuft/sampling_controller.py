@@ -112,9 +112,7 @@ class SamplingController:
                 continue
             # Initialize executor with next_sequence_id based on max_submitted_seq_id
             # to avoid hanging on new requests after restore
-            record.executor = SequenceExecutor(
-                next_sequence_id=record.max_submitted_seq_id + 1
-            )
+            record.executor = SequenceExecutor(next_sequence_id=record.max_submitted_seq_id + 1)
             self.sampling_sessions[record.sampling_session_id] = record
         for session_id in invalid_sessions:
             store.delete(self._build_key(session_id))

@@ -104,7 +104,9 @@ async def test_mark_pending_sample_futures_failed():
     )
 
     sample_result = await store.retrieve(sample_future.request_id, user_id="tester", timeout=0.1)
-    training_result = await store.retrieve(training_future.request_id, user_id="tester", timeout=0.1)
+    training_result = await store.retrieve(
+        training_future.request_id, user_id="tester", timeout=0.1
+    )
     assert isinstance(sample_result, TryAgainResponse)
     assert isinstance(training_result, TryAgainResponse)
 
@@ -117,7 +119,9 @@ async def test_mark_pending_sample_futures_failed():
     assert isinstance(sample_result, types.RequestFailedResponse)
     assert sample_result.category == types.RequestErrorCategory.Server
 
-    training_result = await store.retrieve(training_future.request_id, user_id="tester", timeout=0.1)
+    training_result = await store.retrieve(
+        training_future.request_id, user_id="tester", timeout=0.1
+    )
     # It should NOT be a RequestFailedResponse from our mark call
     assert not isinstance(training_result, types.RequestFailedResponse)
     assert isinstance(training_result, TryAgainResponse)
