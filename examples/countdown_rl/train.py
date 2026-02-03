@@ -7,19 +7,17 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence
 
 import matplotlib.pyplot as plt
-import torch
 import tinker
-from tinker import types
-from tinker.types.tensor_data import TensorData
-from tqdm import tqdm
-
+import torch
 from env import (
     COUNTDOWN_FEWSHOT,
-    STOP_SEQS,
     CountdownDatasetLoader,
     compute_reward,
     make_prompt_model_input,
 )
+from tinker import types
+from tinker.types.tensor_data import TensorData
+from tqdm import tqdm
 
 
 @dataclass(frozen=True)
@@ -106,7 +104,7 @@ def load_dataset(cfg: Config) -> CountdownDatasetLoader:
     print(f"[2/6] load dataset: {cfg.dataset}")
     ds = CountdownDatasetLoader(cfg.dataset, cfg.test_size, cfg.seed)
     print(f"      train={len(ds.train)} test={len(ds.test)}")
-    samp = ds.get_batch(1, split='train')[0]
+    samp = ds.get_batch(1, split="train")[0]
     print(f"      sample_prompt_head={(COUNTDOWN_FEWSHOT + samp.question)[:140]} ...")
     return ds
 
@@ -126,14 +124,10 @@ def create_training_client(service_client: tinker.ServiceClient, cfg: Config):
 def build_params(cfg: Config):
     print("[4/6] build sampling/optim params")
     sampling_params_train = types.SamplingParams(
-        max_tokens=cfg.max_tokens,
-        temperature=cfg.temperature,
-        stop=STOP_SEQS,
+        max_tokens=cfg.max_tokens, temperature=cfg.temperature
     )
     sampling_params_eval = types.SamplingParams(
-        max_tokens=cfg.max_tokens,
-        temperature=cfg.eval_temperature,
-        stop=STOP_SEQS,
+        max_tokens=cfg.max_tokens, temperature=cfg.eval_temperature
     )
     adam_params = types.AdamParams(
         learning_rate=cfg.learning_rate,
@@ -142,6 +136,7 @@ def build_params(cfg: Config):
         eps=1e-8,
     )
     return sampling_params_train, sampling_params_eval, adam_params
+
 
 def build_importance_sampling_datum(
     *,
@@ -366,23 +361,29 @@ def train_loop(
         pbar.set_postfix(postfix)
 
         if wandb:
-            wandb.log(
-                {
-                    "train/mean_reward": mean_reward_train,
-                    "train/kept_rollouts": kept_rollouts,
-                    "train/skipped_problems": skipped_problems,
-                    "train/batch_size": cfg.batch_size,
-                    "train/group_size": cfg.group_size,
-                    "train/learning_rate": cfg.learning_rate,
-                    **({} if eval_reward is None else {"eval/mean_reward": eval_reward, "eval/ema_reward": ema_now}),
-                },
-                step=step,
-            )
+            log_data = {
+                "train/mean_reward": mean_reward_train,
+                "train/kept_rollouts": kept_rollouts,
+                "train/skipped_problems": skipped_problems,
+                "train/batch_size": cfg.batch_size,
+                "train/group_size": cfg.group_size,
+                "train/learning_rate": cfg.learning_rate,
+            }
+            if eval_reward is not None:
+                log_data.update(
+                    {
+                        "eval/mean_reward": eval_reward,
+                        "eval/ema_reward": ema_now,
+                    }
+                )
+
+            wandb.log(log_data, step=step)
 
     if metrics_history:
         print(
             "      done. train_mean_reward:",
-            f"{metrics_history[0]['train_mean_reward']:.4f} -> {metrics_history[-1]['train_mean_reward']:.4f}",
+            f"{metrics_history[0]['train_mean_reward']:.4f} -> "
+            f"{metrics_history[-1]['train_mean_reward']:.4f}",
         )
 
     return metrics_history
@@ -417,7 +418,6 @@ def final_eval_plot_save(
             sampling_params_greedy = types.SamplingParams(
                 max_tokens=cfg.max_tokens,
                 temperature=greedy_temp,
-                stop=STOP_SEQS,
             )
             result = final_client.sample(
                 prompt=prompt_input,
@@ -429,7 +429,6 @@ def final_eval_plot_save(
             sampling_params_greedy = types.SamplingParams(
                 max_tokens=cfg.max_tokens,
                 temperature=0.1,
-                stop=STOP_SEQS,
             )
             result = final_client.sample(
                 prompt=prompt_input,
@@ -477,7 +476,15 @@ def final_eval_plot_save(
             plt.figure(figsize=(10, 5))
             plt.plot(eval_steps, eval_rewards, "b-", linewidth=2, label="eval_mean_reward")
             if len(ema_steps) > 0:
-                plt.plot(ema_steps, ema_rewards, "r-", linewidth=2, alpha=0.9, label="ema_eval_reward")
+                plt.plot(
+                    ema_steps,
+                    ema_rewards,
+                    "r-",
+                    linewidth=2,
+                    alpha=0.9,
+                    label="ema_eval_reward",
+                )
+
             plt.xlabel("Step")
             plt.ylabel("Eval mean reward")
             plt.title("COUNTDOWN RL Training")

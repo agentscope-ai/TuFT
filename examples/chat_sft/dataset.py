@@ -5,8 +5,10 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
+import torch
 from datasets import load_dataset
 from tinker import types
+
 
 Messages = List[Dict[str, Any]]
 
@@ -14,6 +16,7 @@ Messages = List[Dict[str, Any]]
 @dataclass
 class ChatDataset:
     """Simple chat dataset with batching."""
+
     data: List[Messages]
     index: int = 0
 
@@ -97,7 +100,7 @@ def conversation_to_datum(
     return types.Datum(
         model_input=types.ModelInput.from_ints(input_tokens),
         loss_fn_inputs={
-            "target_tokens": list(target_tokens),
-            "weights": target_weights.tolist(),
+            "target_tokens": torch.tensor(target_tokens, dtype=torch.long),
+            "weights": torch.tensor(target_weights, dtype=torch.float32),
         },
     )

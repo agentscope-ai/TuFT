@@ -16,7 +16,6 @@ COUNTDOWN_FEWSHOT = (
     "Example: <answer>(1+2)/3</answer>.\n"
     "A: <answer>(2*3)+7</answer>\n\n"
 )
-STOP_SEQS = ["</answer>"]
 
 
 def load_countdown_splits(
@@ -175,11 +174,5 @@ def compute_reward(
 
 
 def make_prompt_model_input(tokenizer, text: str) -> types.ModelInput:
-    """Build ModelInput from text.
-    Prefer ModelInput.from_text() if available, otherwise encode with tokenizer.
-    """
-    if hasattr(types.ModelInput, "from_text"):
-        return types.ModelInput.from_text(text)
-
     toks = tokenizer.encode(text, add_special_tokens=False)
     return types.ModelInput(chunks=[types.EncodedTextChunk(tokens=toks)])

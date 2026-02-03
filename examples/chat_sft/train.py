@@ -8,11 +8,10 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import matplotlib.pyplot as plt
 import tinker
+from dataset import ChatDataset, conversation_to_datum, load_chat_dataset
 from tinker import types
 from tqdm import tqdm
 from transformers import AutoTokenizer
-
-from dataset import ChatDataset, conversation_to_datum, load_chat_dataset
 
 
 @dataclass(frozen=True)
@@ -140,7 +139,7 @@ def build_datums(
     for messages in batch:
         try:
             datums.append(conversation_to_datum(messages, tokenizer, max_length))
-        except Exception:
+        except ValueError:
             continue
     return datums
 
@@ -187,7 +186,9 @@ def train_sft(
             )
 
     if metrics_history:
-        print(f"      done. loss: {metrics_history[0]['loss']:.4f} -> {metrics_history[-1]['loss']:.4f}")
+        loss0 = metrics_history[0]["loss"]
+        loss1 = metrics_history[-1]["loss"]
+        print(f"      done. loss: {loss0:.4f} -> {loss1:.4f}")
     else:
         print("      done. (no metrics recorded; all batches invalid?)")
 
@@ -223,7 +224,6 @@ def plot_training_loss(metrics_history: List[Dict[str, Any]], cfg: Config, wandb
     if not metrics_history:
         return
     if cfg.plot_path is None:
-        # plot_path 为 None：不画图、不保存
         return
 
     print(f"[plot] save: {cfg.plot_path}")
@@ -267,16 +267,12 @@ def save_and_sample(
     )
     prompt_tokens = tokenizer.encode(prompt_text, add_special_tokens=False)
 
-    sample_future = sampling_client.sample(
+    sample_result = sampling_client.sample(
         prompt=types.ModelInput.from_ints(prompt_tokens),
         num_samples=1,
-        sampling_params=types.SamplingParams(
-            max_tokens=128,
-            temperature=0.7,
-            stop_token_ids=[tokenizer.eos_token_id],
-        ),
-    )
-    sample_result = sample_future.result() if hasattr(sample_future, "result") else sample_future
+        sampling_params=types.SamplingParams(max_tokens=128, temperature=0.7),
+    ).result()
+
     response = tokenizer.decode(sample_result.sequences[0].tokens)
 
     print("=== Generation ===")
