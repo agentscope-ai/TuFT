@@ -2,39 +2,92 @@
 
 TuFT supports **optional persistence** for server state. When enabled, TuFT can recover key runtime metadata (sessions, training runs, sampling sessions, futures) after a server restart, and then **reconstruct model runtime state from checkpoints on disk**.
 
-This document explains both **how to use persistence** and **how it works internally** (what is stored, key layout, restore semantics, and safety checks).
+This document is organized into two parts:
+
+- **Part 1: User Guide** – how to configure and use persistence
+- **Part 2: Design & Internals** – how persistence works under the hood
 
 ---
 
 ## Table of Contents
 
-- [Goals and non-goals](#goals-and-non-goals)
+### Part 1: User Guide
+
+- [Quick start](#quick-start)
+- [Configuration options](#configuration-options)
 - [Persistence backends](#persistence-backends)
 - [What is persisted](#what-is-persisted)
-- [Redis key design](#redis-key-design)
-- [Startup restore semantics](#startup-restore-semantics)
-- [Safety checks](#safety-checks)
-- [Configuration](#configuration)
 - [Operational workflows](#operational-workflows)
 - [Troubleshooting](#troubleshooting)
 
+### Part 2: Design & Internals
+
+- [Goals and non-goals](#goals-and-non-goals)
+- [Redis key design](#redis-key-design)
+- [Startup restore semantics](#startup-restore-semantics)
+- [Safety checks](#safety-checks)
+
 ---
 
-## Goals and non-goals
+# Part 1: User Guide
 
-### Goals
+---
 
-- **Crash/restart recovery** of server state metadata so users can:
-  - list sessions / training runs / sampling sessions after restart
-  - retrieve completed futures after restart (within TTL)
-  - continue training **from the latest checkpoint** for each training run
-- **Safety-first restore**: prevent silent corruption when server configuration changes.
+## Quick start
 
-### Non-goals
+### Install optional dependency
 
-- Persistence **does not** snapshot live GPU memory / in-flight model execution state.
-- TuFT **does not** re-run pending tasks after a crash. Pending work is treated as unsafe and must be retried.
-- Persistence **does not** store model weight blobs in Redis; weight artifacts live on disk under `checkpoint_dir` (and can be archived via the API).
+```bash
+uv pip install "tuft[persistence]"
+```
+
+### Enable persistence
+
+Add a `persistence` section to your `tuft_config.yaml`:
+
+```yaml
+persistence:
+  mode: REDIS
+  redis_url: "redis://localhost:6379/0"
+  namespace: "persistence-tuft-server"
+```
+
+For file-backed storage (demos/tests):
+
+```yaml
+persistence:
+  mode: FILE
+  file_path: "~/.cache/tuft/file_redis.json"
+  namespace: "persistence-tuft-server"
+```
+
+---
+
+## Configuration options
+
+Persistence is configured via the `persistence` section in your `tuft_config.yaml` configuration file. The following options are available:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `mode` | string | `DISABLE` | Persistence mode: `DISABLE`, `REDIS`, or `FILE` |
+| `redis_url` | string | `redis://localhost:6379/0` | Redis server URL (only used when `mode: REDIS`) |
+| `file_path` | string | `~/.cache/tuft/file_redis.json` | JSON file path (only used when `mode: FILE`) |
+| `namespace` | string | `persistence-tuft-server` | Key namespace prefix for Redis keys |
+| `future_ttl_seconds` | integer or null | `86400` (1 day) | TTL for future records in seconds. Set to `null` for no expiry. |
+| `check_fields` | list | `["SUPPORTED_MODELS"]` | List of config fields to validate on restart (see [Safety checks](#safety-checks)) |
+
+### Full configuration example
+
+```yaml
+persistence:
+  mode: REDIS
+  redis_url: "redis://localhost:6379/0"
+  namespace: "my-tuft-deployment"
+  future_ttl_seconds: 86400  # 1 day
+  check_fields:
+    - SUPPORTED_MODELS
+    - CHECKPOINT_DIR
+```
 
 ---
 
@@ -52,7 +105,7 @@ Internally, all records are stored as **JSON-serialized Pydantic models**, one r
 
 ## What is persisted
 
-Persistence is implemented at the level of **major server subsystems** (not every tiny field/variable), specifically:
+TuFT persists **metadata for major server subsystems** incrementally as changes occur. Specifically, the following subsystems have their state persisted:
 
 - **Sessions** (`SessionManager`)
   - session metadata, tags, `user_id`, heartbeat timestamp
@@ -71,10 +124,73 @@ Persistence is implemented at the level of **major server subsystems** (not ever
 - **Futures** (`FutureStore`)
   - request lifecycle records: `pending` / `ready` / `failed`
   - includes `operation_type`, `operation_args`, `future_id`, payload or error
-  - stored with a **TTL** (default: 1 day) to prevent unbounded growth
+  - stored with a **TTL** (default: 1 day, configurable via `future_ttl_seconds`)
 
 - **Configuration signature** (`ConfigSignature`)
   - a snapshot of selected `AppConfig` fields for restore safety
+
+---
+
+## Operational workflows
+
+### Clearing persistence state
+
+If you intentionally changed config and want to start fresh, clear persistence data:
+
+```bash
+tuft clear persistence --config /path/to/tuft_config.yaml
+```
+
+This removes keys under the configured `namespace`. It does **not** delete checkpoint files on disk.
+
+### Changing config safely
+
+Recommended workflow when changing any field that affects restore safety:
+
+- deploy with a **new namespace**, or
+- clear the old namespace explicitly before restart.
+
+---
+
+## Troubleshooting
+
+### Startup fails with "Configuration Mismatch"
+
+- **Cause**: you restarted TuFT with a config whose signature differs from the stored signature in the same namespace.
+- **Fix**:
+  - either revert the config change,
+  - or clear persistence state (destructive) and restart,
+  - or switch to a new `persistence.namespace` for the new deployment.
+
+### After restart, some results are marked failed
+
+This is expected if those futures were created **after** the latest recovered checkpoint (or when no checkpoint existed). Re-run those operations from the client.
+
+### Redis grows indefinitely
+
+Long-lived records (sessions, training runs, sampling sessions, checkpoints metadata) do not expire. Futures expire based on the configured `future_ttl_seconds` (default: 1 day). You should also set a namespace per deployment and clear unused namespaces.
+
+---
+
+# Part 2: Design & Internals
+
+---
+
+## Goals and non-goals
+
+### Goals
+
+- **Crash/restart recovery** of server state metadata so users can:
+  - list sessions / training runs / sampling sessions after restart
+  - retrieve completed futures after restart (within TTL)
+  - continue training **from the latest checkpoint** for each training run
+- **Safety-first restore**: prevent silent corruption when server configuration changes.
+
+### Non-goals
+
+- Persistence **does not** snapshot live GPU memory / in-flight model execution state.
+- TuFT **does not** re-run pending tasks after a crash. Pending work is treated as unsafe and must be retried.
+- Persistence **does not** store model weight blobs in Redis; weight artifacts live on disk under `checkpoint_dir` (and can be archived via the API).
 
 ---
 
@@ -147,7 +263,7 @@ After controller restore, TuFT performs checkpoint-based recovery:
 
 - For each training run that is not corrupted and has a usable backend:
   - load the **latest checkpoint** on disk (and recreate adapter state)
-  - treat that checkpoint as the server’s recovery boundary
+  - treat that checkpoint as the server's recovery boundary
 - Futures are reconciled against this boundary:
   - if a training run has a valid latest checkpoint with `future_id = F`, **all futures for that run with `future_id > F` are marked failed** (and must be retried)
   - if no checkpoint exists, **all futures for that run are marked failed**
@@ -157,7 +273,7 @@ This means TuFT guarantees:
 - **Training can continue from the latest checkpoint**, but
 - any operations after that checkpoint are considered unsafe and require retries.
 
-> Important: sequence IDs remain **monotonically increasing** even across restarts. TuFT does not “rewind” `next_seq_id` to the checkpoint boundary, by design.
+> Important: sequence IDs remain **monotonically increasing** even across restarts. TuFT does not "rewind" `next_seq_id` to the checkpoint boundary, by design.
 
 ---
 
@@ -169,7 +285,7 @@ TuFT includes a restart-safety check to prevent silent corruption when configura
 
 TuFT stores a `ConfigSignature` derived from `AppConfig.get_config_for_persistence()` (notably excluding the persistence config itself).
 
-On startup, TuFT compares selected fields (default: `SUPPORTED_MODELS`) and can be configured to check additional fields:
+On startup, TuFT compares selected fields (default: `SUPPORTED_MODELS`) and can be configured to check additional fields via `check_fields`:
 
 - `SUPPORTED_MODELS` (always checked; mandatory)
 - `CHECKPOINT_DIR`
@@ -179,77 +295,3 @@ On startup, TuFT compares selected fields (default: `SUPPORTED_MODELS`) and can 
 - `TELEMETRY`
 
 If validation fails, startup aborts and prints a diff. This avoids cases where an old state references models no longer configured, or a new deployment accidentally points at an old namespace.
-
----
-
-## Configuration
-
-### Install optional dependency
-
-```bash
-uv pip install "tuft[persistence]"
-```
-
-### Enable persistence
-
-Add a `persistence` section to your `tuft_config.yaml`:
-
-```yaml
-persistence:
-  mode: REDIS
-  redis_url: "redis://localhost:6379/0"
-  namespace: "persistence-tuft-server"
-  check_fields:
-    - SUPPORTED_MODELS
-```
-
-#### File-backed store (demos/tests)
-
-```yaml
-persistence:
-  mode: FILE
-  file_path: "~/.cache/tuft/file_redis.json"
-  namespace: "persistence-tuft-server"
-```
-
----
-
-## Operational workflows
-
-### Clearing persistence state
-
-If you intentionally changed config and want to start fresh, clear persistence data:
-
-```bash
-tuft clear persistence --config /path/to/tuft_config.yaml
-```
-
-This removes keys under the configured `namespace`. It does **not** delete checkpoint files on disk.
-
-### Changing config safely
-
-Recommended workflow when changing any field that affects restore safety:
-
-- deploy with a **new namespace**, or
-- clear the old namespace explicitly before restart.
-
----
-
-## Troubleshooting
-
-### Startup fails with “Configuration Mismatch”
-
-- **Cause**: you restarted TuFT with a config whose signature differs from the stored signature in the same namespace.
-- **Fix**:
-  - either revert the config change,
-  - or clear persistence state (destructive) and restart,
-  - or switch to a new `persistence.namespace` for the new deployment.
-
-### After restart, some results are marked failed
-
-This is expected if those futures were created **after** the latest recovered checkpoint (or when no checkpoint existed). Re-run those operations from the client.
-
-### Redis grows indefinitely
-
-Long-lived records (sessions, training runs, sampling sessions, checkpoints metadata) do not expire. Futures do expire by TTL, but you should also set a namespace per deployment and clear unused namespaces.
-

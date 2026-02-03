@@ -1,6 +1,6 @@
 # Observability (OpenTelemetry)
 
-TuFT includes optional **OpenTelemetry** integration for:
+TuFT includes built-in **OpenTelemetry** integration for:
 
 - **Traces** (distributed tracing across HTTP → controllers → Ray actors)
 - **Metrics** (request/workflow + resource metrics)
@@ -35,8 +35,17 @@ telemetry:
   enabled: true
   service_name: tuft
   otlp_endpoint: http://localhost:4317
-  resource_attributes: {}
+  resource_attributes:
+    deployment.environment: production
+    service.version: 1.0.0
 ```
+
+> **Note**: `resource_attributes` allows you to attach custom metadata to all telemetry data. Common attributes include:
+> - `deployment.environment`: e.g., `production`, `staging`, `development`
+> - `service.version`: your application version
+> - `service.namespace`: logical grouping of services
+> - `host.name`: hostname of the machine
+> - Custom attributes for your organization (e.g., `team`, `region`)
 
 Alternatively set the endpoint via env var:
 
@@ -275,4 +284,3 @@ export TUFT_OTEL_DEBUG=1
 ### GPU metrics missing
 
 - GPU gauges require NVML (`pynvml`) and a working NVML environment. TuFT will gracefully skip GPU metrics if unavailable.
-
