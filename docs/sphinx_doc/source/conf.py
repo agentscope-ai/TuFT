@@ -2,13 +2,17 @@
 # For the full list of built-in configuration values, see the documentation:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
+from importlib import metadata
+
 
 # -- Project information -----------------------------------------------------
 project = "TuFT"
 copyright = "2026 agentscope-ai"
 author = "TuFT Team"
-version = "0.1.3"
-release = "0.1.3"
+_package_version = metadata.version("tuft")
+
+version = _package_version
+release = _package_version
 
 # -- General configuration ---------------------------------------------------
 extensions = [
