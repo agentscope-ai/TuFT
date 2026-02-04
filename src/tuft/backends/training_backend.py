@@ -9,6 +9,7 @@ from tinker import types
 from tuft.backends.base_backend import BaseTrainingBackend
 from tuft.checkpoints import CheckpointRecord
 from tuft.config import ModelConfig
+from tuft.exceptions import LossFunctionMissingInputException
 from tuft.telemetry.tracing import get_tracer, inject_context
 
 
@@ -176,6 +177,9 @@ class DummyTrainingBackend(BaseTrainingBackend):
         loss_fn_config: dict[str, float] | None,
         backward: bool = False,
     ) -> types.ForwardBackwardOutput:
+        # only for testing error handling
+        if loss_fn_config and "raise_missing_input" in loss_fn_config:
+            raise LossFunctionMissingInputException("expected_error")
         return await self._run_step(data, backward=backward)
 
     async def _run_step(

@@ -69,7 +69,6 @@ class SamplingSessionRecord(BaseModel):
     model_path: str | None = None
     session_seq_id: int
     last_seq_id: int = -1
-    max_submitted_seq_id: int = -1
     history: list[SamplingHistoryEntry] = Field(default_factory=list)
     executor: SequenceExecutor = Field(default_factory=SequenceExecutor, exclude=True)
 
@@ -112,7 +111,7 @@ class SamplingController:
                 continue
             # Initialize executor with next_sequence_id based on max_submitted_seq_id
             # to avoid hanging on new requests after restore
-            record.executor = SequenceExecutor(next_sequence_id=record.max_submitted_seq_id + 1)
+            record.executor = SequenceExecutor()
             self.sampling_sessions[record.sampling_session_id] = record
         for session_id in invalid_sessions:
             store.delete(self._build_key(session_id))
@@ -284,11 +283,6 @@ class SamplingController:
                 raise UserMismatchException()
             if request.seq_id is None:
                 raise MissingSequenceIDException()
-            # Track the maximum submitted seq_id for recovery purposes
-            if request.seq_id > record.max_submitted_seq_id:
-                record.max_submitted_seq_id = request.seq_id
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, self._save_session, record.sampling_session_id)
             await record.executor.submit(
                 sequence_id=request.seq_id,
                 func=self._record_sequence,

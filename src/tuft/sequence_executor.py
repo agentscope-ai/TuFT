@@ -2,18 +2,24 @@ import asyncio
 import heapq
 from typing import Any, Callable
 
-from .exceptions import SequenceConflictException, SequenceTimeoutException
+from .exceptions import SequenceTimeoutException
 
 
 class SequenceExecutor:
-    """An executor that processes tasks strictly in the order of their `sequence_id`.
-    Out-of-order tasks are buffered until all previous sequence ids have been processed.
+    """
+    An executor that processes tasks according to their `sequence_id` order.
+
+    Note: This executor only guarantees that tasks in the queue are executed in
+    ascending order of `sequence_id`. It does not guarantee that earlier finished
+    tasks always have smaller `sequence_id` than later finished ones. For example,
+    if tasks with sequence_id=1, 2, 3, 4 are submitted concurrently, they will be
+    executed in order. If a task with sequence_id=0 are submitted after these finish,
+    it will be executed only after all previous tasks complete.
     """
 
-    def __init__(self, timeout: float = 900, next_sequence_id: int = 0) -> None:
+    def __init__(self, timeout: float = 900) -> None:
         self.pending_heap = []  # (sequence_id, func, kwargs, future)
         self.heap_lock = asyncio.Lock()
-        self.next_sequence_id = next_sequence_id
         self._processing = False
         self.timeout = timeout
 
@@ -30,11 +36,7 @@ class SequenceExecutor:
 
         Raises:
             SequenceTimeoutException: If the task times out waiting for its turn.
-            SequenceConflictException: If a task with a lower sequence_id has already been
-                processed.
         """
-        if sequence_id < self.next_sequence_id:
-            raise SequenceConflictException(expected=self.next_sequence_id, got=sequence_id)
         future = asyncio.Future()
         async with self.heap_lock:
             heapq.heappush(self.pending_heap, (sequence_id, func, kwargs, future))
@@ -54,15 +56,8 @@ class SequenceExecutor:
                 if not self.pending_heap:
                     self._processing = False
                     break
-                # Peek at the smallest sequence_id
-                sequence_id, func, kwargs, future = self.pending_heap[0]
-                if sequence_id != self.next_sequence_id:
-                    # wait next sequence_id
-                    self._processing = False
-                    break
-
-                heapq.heappop(self.pending_heap)
-                self.next_sequence_id += 1
+                # get the next task to process
+                _, func, kwargs, future = heapq.heappop(self.pending_heap)
             try:
                 result = await func(**kwargs)
                 if not future.done():

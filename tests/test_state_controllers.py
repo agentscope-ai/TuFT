@@ -11,6 +11,7 @@ from tuft.auth import User
 from tuft.config import AppConfig, ModelConfig
 from tuft.exceptions import (
     CheckpointAccessDeniedException,
+    LossFunctionMissingInputException,
     MissingSequenceIDException,
     SequenceConflictException,
     UserMismatchException,
@@ -192,6 +193,20 @@ async def test_training_seq_id_enforced(request, tmp_path) -> None:
         )
     assert excinfo.value.detail == "Sequence conflict: expected 2, got 1."
 
+    # failed operatrion will not increase seq_id, so seq_id=2 is still expected
+    with pytest.raises(LossFunctionMissingInputException) as excinfo:
+        await state.run_forward(
+            training.training_run_id,
+            user_id="tester",
+            data=[datum],
+            loss_fn="importance_sampling",  # raise LossFunctionMissingInputException
+            loss_fn_config={
+                "raise_missing_input": 1.0,
+            },
+            seq_id=2,
+            backward=False,
+        )
+    # should be executed successfully
     await state.run_forward(
         training.training_run_id,
         user_id="tester",

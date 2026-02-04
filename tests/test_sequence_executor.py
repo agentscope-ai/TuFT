@@ -3,7 +3,6 @@ import time
 
 import pytest
 
-from tuft.exceptions import SequenceConflictException, SequenceTimeoutException
 from tuft.sequence_executor import SequenceExecutor
 
 
@@ -63,19 +62,10 @@ async def test_sequence_executor_with_exceptions():
 
 @pytest.mark.asyncio
 async def test_sequence_executor_out_of_order():
-    executor = SequenceExecutor(timeout=1, next_sequence_id=0)
+    executor = SequenceExecutor(timeout=1)
 
     task = asyncio.create_task(executor.submit(1, _task_function, timeout=0.1))
     await asyncio.sleep(0.3)  # Ensure task with seq_id=1 is waiting
     await executor.submit(0, _task_function, timeout=0.1)
     await task  # This should complete now
     await executor.submit(2, _task_function, timeout=0.1)
-
-    with pytest.raises(SequenceTimeoutException) as exc_info:
-        await executor.submit(4, _task_function, timeout=0.1)  # seq_id=3 is missing
-    assert exc_info.value.sequence_id == 4
-
-    with pytest.raises(SequenceConflictException) as exc_info:
-        await executor.submit(2, _task_function, timeout=0.1)  # seq_id=2 already processed
-    assert exc_info.value.expected == 3
-    assert exc_info.value.got == 2
