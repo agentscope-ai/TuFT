@@ -2,6 +2,14 @@
   <img src="assets/tuft-logo-colorful.svg" alt="TuFT Logo" width="400"/>
 </div>
 
+<p align="center">
+  <a href="https://agentscope-ai.github.io/TuFT"><img src="https://img.shields.io/badge/docs-online-blue" alt="Docs"/></a>
+  <a href="https://pypi.org/project/tuft/"><img src="https://img.shields.io/pypi/v/tuft" alt="PyPI"/></a>
+  <a href="https://qr.dingtalk.com/action/joingroup?code=v1,k1,UWvzO6HHSeuvRQ5WXCOMJEijadQV+hDjhMIpiVr8qCs=&_dt_no_comment=1&origin=11?"><img src="https://img.shields.io/badge/DingTalk-join-blue" alt="DingTalk"/></a>
+  <a href="https://discord.gg/wEahC7ZJ"><img src="https://img.shields.io/badge/Discord-join-5865F2" alt="Discord"/></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/agentscope-ai/TuFT" alt="License"/></a>
+</p>
+
 TuFT (**T**enant-**u**nified **F**ine**T**uning) is a multi-tenant platform that lets multiple users fine-tune LLMs on shared infrastructure through a unified API. Access it via the Tinker SDK or compatible clients.
 
 Check out our [roadmap](#roadmap) to see what we're building next.

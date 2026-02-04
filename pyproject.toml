@@ -54,6 +54,15 @@ persistence = [
 examples = [
     "matplotlib>=3.8",
 ]
+docs = [
+    "sphinx>=7.0.0,<9.0.0",
+    "myst-parser>=3.0.0",
+    "sphinx-copybutton",
+    "sphinx-design",
+    "linkify-it-py",
+    "sphinx-autobuild",
+    "sphinxawesome-theme>=6.0.0",
+]
 
 [tool.ruff]
 line-length = 100
