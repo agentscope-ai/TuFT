@@ -98,6 +98,15 @@ while read -r VERSION TAG; do
     fi
   fi
   git -C "${ROOT_DIR}" checkout "${TAG}" >/dev/null
+  # TODO(remove): main may not include docs/sphinx_doc yet.
+  # Build from the current branch so PR checks can still pass.
+  if [[ ! -d "${SRC_EN}" || ! -d "${SRC_ZH}" ]]; then
+    if [[ "${TAG}" == "main" ]]; then
+      echo "[build_docs] docs/sphinx_doc missing on main, building current branch instead."
+      git -C "${ROOT_DIR}" checkout "${ORIG_REF}" >/dev/null
+    fi
+  fi
+  # TODO(remove): end of temporary main fallback block.
   if [[ ! -d "${SRC_EN}" || ! -d "${SRC_ZH}" ]]; then
     echo "[build_docs] Missing docs sources after checkout ${TAG}. Ensure docs/sphinx_doc exists on this ref."
     exit 1
