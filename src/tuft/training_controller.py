@@ -282,11 +282,8 @@ class TrainingController:
                 record.next_seq_id += 1
             # Save the updated next_seq_id to Redis
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                None, self._save_training_run, record.training_run_id
-            )
+            await loop.run_in_executor(None, self._save_training_run, record.training_run_id)
             return result
-
 
     async def create_model(
         self,
