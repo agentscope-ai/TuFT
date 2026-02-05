@@ -27,6 +27,7 @@ We're open source and welcome contributions! Join the community:
 - [User Guide](#user-guide)
 - [Persistence](#persistence)
 - [Observability (OpenTelemetry)](#observability-opentelemetry)
+- [Console](#console)
 - [Architecture](#architecture)
 - [Roadmap](#roadmap)
 - [Development](#development)
@@ -360,6 +361,11 @@ export TUFT_OTLP_ENDPOINT=http://localhost:4317
 export TUFT_OTEL_DEBUG=1  # Enable console exporter for debugging
 ```
 
+## Console
+
+Tuft provides a dashboard for users to know the details of their traning runs and checkpoints. It also provides a sampling playground for users to try out the finetuned models.
+
+See [docs/console.md](docs/console.md) for the console setup.
 ## Architecture
 
 TuFT provides a unified service API for agentic model training and sampling. The system supports multiple LoRA adapters per base model and checkpoint management.

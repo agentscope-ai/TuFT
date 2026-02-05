@@ -310,7 +310,7 @@ def _none_if_literal_none(x: Optional[str]) -> Optional[str]:
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="TuFT-Chat SFT training")
     p.add_argument("--base-url", default=os.getenv("TINKER_BASE_URL", "http://localhost:10610"))
-    p.add_argument("--api-key", default=os.getenv("TINKER_API_KEY", "tml-test-key"))
+    p.add_argument("--api-key", default=os.getenv("TINKER_API_KEY"))
     p.add_argument("--dataset", default="no_robots")
     p.add_argument("--base-model", default="Qwen/Qwen3-4B-Instruct-2507")
     p.add_argument("--lora-rank", type=int, default=16)
