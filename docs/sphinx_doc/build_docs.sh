@@ -98,6 +98,7 @@ while read -r VERSION TAG; do
     fi
   fi
   git -C "${ROOT_DIR}" checkout "${TAG}" >/dev/null
+  tree $ROOT_DIR/docs
   if [[ ! -d "${ROOT_DIR}/docs/sphinx_doc/${SRC_EN}" || ! -d "${ROOT_DIR}/docs/sphinx_doc/${SRC_ZH}" ]]; then
     echo "[build_docs] Missing docs sources after checkout ${TAG}. Ensure docs/sphinx_doc exists on this ref."
     exit 1
