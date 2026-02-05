@@ -1,57 +1,59 @@
 # User console
 
-TuFT provides a dashboard for users to know the details of their traning runs and checkpoints. It also provides a sampling playground for users to try out the finetuned models.
+TuFT provides a dashboard that allows users to view detailed information about their training runs and checkpoints. It also includes a sampling playground where users can experiment with fine-tuned models.
 
-## prerequisites
+## Prerequisites
 
-**Install uv**
+**1. Install uv**
 
 We recommend using [uv](https://github.com/astral-sh/uv) for dependency management.
 
-**Activate virtual environment**
+**2. Activate virtual environment**
 
-If are already in the uv environment, you can skip this step.
+If you're already in a uv virtual environment, you can skip this step.
 ```shell
 uv venv --python 3.12
 source .venv/bin/activate
 ```
 
-**Install the dependencies**
+**3. Install dependencies**
 
 ```shell
 uv pip install fastapi gradio tinker pytz requests
 ```
 
 ## Quick start
-After you start the TuFT server, you can run the following command to start the user console:
+After starting the TuFT server, run the following command to launch the user console::
 
---server-url: the URL of the TuFT server
+--server-url: URL of the TuFT server
 
---gui-port: the port of the user console
+--gui-port: Port for the user console frontend
 
---backend-port: the port of the console backend
+--backend-port: Port for the console backend
 
-The sampling tab needs the console server to load the tokenizer from the huggingface. If you cannot access HF, you need setup the mirror to enable the sampling tab.
+The Sampling tab requires the console server to load a tokenizer from Hugging Face. If you cannot access Hugging Face directly, configure a mirror endpoint:
 
 ```shell
 export HF_ENDPOINT=https://hf-mirror.com
 ```
 
-Then start the console server and the console gui.
+Then start both the console backend and GUI:
 ```shell
 cd src/tuft/console/
 bash scripts/start_user_console.sh --server-url http://localhost:10610 --gui-port 10613 --backend-port 10713
 ```
 
-You can access the user console in http://0.0.0.0:10613
+You can now access the user console at: http://0.0.0.0:10613
 
 ## Deploy with docker
 
-TuFT also provide the docker file for quick deployment. 
+TuFT also provides a Dockerfile for quick deployment.
 
-TuFT set the server url to http://host.docker.internal:10610 in the Dockerfile which requires the TuFT server to be running on the same host.
+By default, the Dockerfile sets the server URL to http://host.docker.internal:10610, which assumes the TuFT server is running on the same host as the Docker container.
 
-We also provie some suggestions when the network is not available in the dockerfile. Enable them if you need.
+The Dockerfile includes optional network configuration suggestions for environments with restricted internet access (e.g., using mirrors). Uncomment or enable them as needed.
+
+Build and run the Docker image:
 ```shell
 cd src/tuft/
 docker build -t tuft/user-console -f console/docker/Dockerfile .
