@@ -6,7 +6,7 @@ sd_hide_title: true
 
 <p class="hero-subtitle"><strong>TuFT (Tenant-unified Fine-Tuning)</strong> is a multi-tenant platform that lets multiple users fine-tune LLMs on shared infrastructure through a unified API. Access it via the Tinker SDK or compatible clients.</p>
 
-```{image} ../_static/images/index.png
+```{image} https://img.alicdn.com/imgextra/i2/O1CN01hkVXFE1uIvSMCvMxM_!!6000000006015-2-tps-2500-1406.png
 :alt: TuFT overview
 :class: hero-image
 ```
