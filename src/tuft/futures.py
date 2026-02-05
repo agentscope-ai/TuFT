@@ -203,7 +203,7 @@ class FutureStore:
         for record in self._records.values():
             if record.status == "pending" and record.operation_type == "sample":
                 record.status = "failed"
-                record.error = FutureCancelledException(record.request_id, error_message)
+                record.error = FutureCancelledException(record.request_id, reason=error_message)
                 record.event.set()
                 self._save_future(record.request_id)
                 count += 1
@@ -424,9 +424,7 @@ class FutureStore:
 
         # Return result
         if record.status == "failed" and record.error is not None:
-            if isinstance(record.error, TuFTException):
-                raise record.error
-            return record.error
+            raise record.error
 
         return record.payload
 

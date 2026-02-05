@@ -155,7 +155,7 @@ class LossFunctionNotFoundException(LossFunctionException):
 class LossFunctionMissingInputException(LossFunctionException):
     def __init__(self, missing_input_name: str):
         detail = f"Missing '{missing_input_name}' in loss_fn_inputs."
-        super().__init__(404, detail)
+        super().__init__(400, detail)
         self.input_name = missing_input_name
 
 
@@ -169,7 +169,7 @@ class LossFunctionInputShapeMismatchException(LossFunctionException):
 class LossFunctionUnknownMetricReductionException(LossFunctionException):
     def __init__(self, reduction_type: str):
         detail = f"Unknown metric reduction type: {reduction_type}"
-        super().__init__(409, detail)
+        super().__init__(400, detail)
         self.reduction_type = reduction_type
 
 
