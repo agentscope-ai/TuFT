@@ -204,6 +204,16 @@ We recommend using [uv](https://github.com/astral-sh/uv) for dependency manageme
     git clone https://github.com/agentscope-ai/TuFT
     ```
 
+    **Potential environment issues:**
+
+    TuFT relies on open-source platforms, so it may not function correctly if your environment lacks access to these resources. To help you diagnose connectivity or dependency issues, we provide a diagnostic script that checks the status of required prerequisites:
+
+    ```bash
+    cd TuFT
+    bash scripts/net_check.sh
+    ```
+    This script will assess your environment status and suggest possible solutions.
+
 2. Create a virtual environment:
 
     ```bash
