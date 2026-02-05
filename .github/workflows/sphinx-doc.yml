@@ -1,0 +1,88 @@
+name: Deploy Sphinx Doc to Pages
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - 'docs/sphinx_doc/**/*'
+  push:
+    branches:
+      - main
+
+jobs:
+  pages:
+    timeout-minutes: 30
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ['3.12']
+    env:
+      OS: ${{ matrix.os }}
+      PYTHON: '3.12'
+    permissions:
+      contents: write
+    steps:
+    - name: Free up disk space
+      run: |
+        sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
+        docker system prune -af
+    - name: Checkout PR branch
+      if: github.event_name == 'pull_request'
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ github.event.pull_request.head.repo.full_name }}
+        ref: ${{ github.event.pull_request.head.ref }}
+        fetch-depth: 0
+    - name: Checkout main branch
+      if: github.event_name != 'pull_request'
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.ref_name }}
+        fetch-depth: 0
+    - name: Setup Python ${{ matrix.python-version }}
+      uses: actions/setup-python@master
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Setup uv
+      uses: astral-sh/setup-uv@v5
+    - name: Install Dependencies
+      run: |
+        uv sync --extra docs
+    - id: build
+      name: Build Documentation
+      run: |
+        cd docs/sphinx_doc
+        DOC_VERSION="latest"
+        bash ./build_docs.sh
+        echo "DOC_VERSION=$DOC_VERSION" >> $GITHUB_ENV
+    - name: Add redirect index.html to main version
+      run: |
+        if [ -z "${DOC_VERSION:-}" ]; then
+          DOC_VERSION="latest"
+        fi
+        REDIRECT_PATH="docs/sphinx_doc/build/html/index.html"
+        MAIN_INDEX="en/${DOC_VERSION}/index.html"
+        cat > $REDIRECT_PATH <<EOF
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta http-equiv="refresh" content="0; url=$MAIN_INDEX" />
+            <script>window.location.href = "$MAIN_INDEX";</script>
+            <title>Redirecting...</title>
+          </head>
+          <body>
+            <p>Redirecting to <a href="$MAIN_INDEX">$MAIN_INDEX</a></p>
+          </body>
+        </html>
+        EOF
+    - name: Upload Documentation
+      uses: actions/upload-artifact@v4
+      with:
+        name: SphinxDoc
+        path: 'docs/sphinx_doc/build'
+    - uses: peaceiris/actions-gh-pages@v3
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: 'docs/sphinx_doc/build/html'
