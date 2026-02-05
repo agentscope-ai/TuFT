@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+
+<html :class="{ 'dark' : darkMode === true }" data-content_root="../" lang="en" x-data="{ darkMode: $persist(window.matchMedia('(prefers-color-scheme: dark)').matches), activeSection: ''}">
+<head>
+<script>
+    (function () {
+      // Set initial color scheme
+      if ((localStorage.getItem("_x_darkMode") === "true") || (window.matchMedia("(prefers-color-scheme: dark)").matches)) {
+        document.documentElement.classList.add("dark");
+      }
+
+      // Watch for media preference changes
+      window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (event) => {
+        localStorage.setItem("_x_darkMode", event.matches);
+        document.documentElement.classList.toggle("dark", event.matches);
+      });
+    })();
+  </script>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<meta charset="utf-8"/>
+<meta content="#ffffff" media="(prefers-color-scheme: light)" name="theme-color"/>
+<meta content="#030711" media="(prefers-color-scheme: dark)" name="theme-color"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<title>Countdown Reinforcement Learning (RL) | TuFT</title>
+<meta content="Countdown Reinforcement Learning (RL) | TuFT" property="og:title"/>
+<meta content="Countdown Reinforcement Learning (RL) | TuFT" name="twitter:title"/>
+<link href="../_static/pygments.css?v=03e43079" rel="stylesheet" type="text/css"/>
+<link href="../_static/theme.css?v=73505e79" rel="stylesheet" type="text/css"/>
+<link href="../_static/copybutton.css?v=76b2166b" rel="stylesheet" type="text/css"/>
+<link href="../_static/sphinx-design.min.css?v=95c83b7e" rel="stylesheet" type="text/css"/>
+<link href="../_static/custom.css?v=31585404" rel="stylesheet" type="text/css"/>
+<link href="../_static/awesome-sphinx-design.css?v=c54898a4" rel="stylesheet" type="text/css"/>
+<link href="../_static/logo_wo_text.svg" rel="icon"/>
+<link href="../search.html" rel="search" title="Search"/>
+<link href="../genindex.html" rel="index" title="Index"/>
+<link href="persistence.html" rel="next" title="Persistence"/>
+<link href="chat-sft.html" rel="prev" title="Chat Supervised Fine-Tuning (SFT)"/>
+</head>
+<body :class="{ 'overflow-hidden': showSidebar }" class="min-h-screen font-sans antialiased bg-background text-foreground" x-data="{ showSidebar: false, showScrollTop: false }">
+<div @click.self="showSidebar = false" class="fixed inset-0 z-50 overflow-hidden bg-background/80 backdrop-blur-sm md:hidden" x-cloak="" x-show="showSidebar"></div><div class="relative flex flex-col min-h-screen" id="page"><a class="absolute top-0 left-0 z-[100] block bg-background p-4 text-xl transition -translate-x-full opacity-0 focus:translate-x-0 focus:opacity-100" href="#content">
+      Skip to content
+    </a><header class="sticky top-0 z-40 w-full border-b shadow-xs border-border bg-background/90 backdrop-blur"><div class="container flex items-center h-14">
+<div class="hidden mr-4 md:flex">
+<a class="flex items-center mr-6" href="../index.html">
+<img alt="Logo" class="mr-2 dark:invert" height="24" src="../_static/logo_wo_text.svg" width="24"/><span class="hidden font-bold sm:inline-block text-clip whitespace-nowrap">TuFT</span>
+</a></div><button @click="showSidebar = true" class="inline-flex items-center justify-center h-10 px-0 py-2 mr-2 text-base font-medium transition-colors rounded-md hover:text-accent-foreground hover:bg-transparent md:hidden" type="button">
+<svg aria-hidden="true" fill="currentColor" height="24" viewbox="0 96 960 960" width="24" xmlns="http://www.w3.org/2000/svg">
+<path d="M152.587 825.087q-19.152 0-32.326-13.174t-13.174-32.326q0-19.152 13.174-32.326t32.326-13.174h440q19.152 0 32.326 13.174t13.174 32.326q0 19.152-13.174 32.326t-32.326 13.174h-440Zm0-203.587q-19.152 0-32.326-13.174T107.087 576q0-19.152 13.174-32.326t32.326-13.174h320q19.152 0 32.326 13.174T518.087 576q0 19.152-13.174 32.326T472.587 621.5h-320Zm0-203.587q-19.152 0-32.326-13.174t-13.174-32.326q0-19.152 13.174-32.326t32.326-13.174h440q19.152 0 32.326 13.174t13.174 32.326q0 19.152-13.174 32.326t-32.326 13.174h-440ZM708.913 576l112.174 112.174q12.674 12.674 12.674 31.826t-12.674 31.826Q808.413 764.5 789.261 764.5t-31.826-12.674l-144-144Q600 594.391 600 576t13.435-31.826l144-144q12.674-12.674 31.826-12.674t31.826 12.674q12.674 12.674 12.674 31.826t-12.674 31.826L708.913 576Z"></path>
+</svg>
+<span class="sr-only">Toggle navigation menu</span>
+</button>
+<div class="flex items-center justify-between flex-1 gap-2 sm:gap-4 md:justify-end">
+<div class="flex-1 w-full md:w-auto md:flex-none"><form @keydown.k.window.meta="$refs.search.focus()" action="../search.html" class="relative flex items-center group" id="searchbox" method="get">
+<input aria-label="Search the docs" class="inline-flex items-center font-medium transition-colors bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background border border-input hover:bg-accent focus:bg-accent hover:text-accent-foreground focus:text-accent-foreground hover:placeholder-accent-foreground py-2 px-4 relative h-9 w-full justify-start rounded-[0.5rem] text-sm text-muted-foreground sm:pr-12 md:w-40 lg:w-64" id="search-input" name="q" placeholder="Search ..." type="search" x-ref="search"/>
+<kbd class="pointer-events-none absolute right-1.5 top-2 hidden h-5 select-none text-muted-foreground items-center gap-1 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium opacity-100 sm:flex group-hover:bg-accent group-hover:text-accent-foreground">
+<span class="text-xs">⌘</span>
+    K
+  </kbd>
+</form>
+</div>
+<nav class="flex items-center gap-1">
+<a href="https://qr.dingtalk.com/action/joingroup?code=v1,k1,UWvzO6HHSeuvRQ5WXCOMJEijadQV+hDjhMIpiVr8qCs=&amp;_dt_no_comment=1&amp;origin=11?" rel="noopener nofollow" title="Visit DingTalk">
+<div class="inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9">
+<svg fill="currentColor" height="20" viewbox="0 0 24 24" width="20"><circle cx="12" cy="12" opacity="0.2" r="10"></circle><path d="M8 7h4.5a4.5 4.5 0 0 1 0 9H8z"></path></svg>
+</div>
+</a>
+<a href="https://github.com/agentscope-ai/TuFT" rel="noopener nofollow" title="Visit GitHub">
+<div class="inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9">
+<svg fill="currentColor" height="20" viewbox="0 0 16 16" width="20"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" fill-rule="evenodd"></path></svg>
+</div>
+</a>
+<a href="https://discord.gg/wEahC7ZJ" rel="noopener nofollow" title="Visit Discord">
+<div class="inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9">
+<svg fill="currentColor" height="20" viewbox="0 0 16 16" width="20"><path d="M13.545 2.907a13.227 13.227 0 0 0-3.257-1.011.05.05 0 0 0-.052.025c-.141.25-.297.577-.406.833a12.19 12.19 0 0 0-3.658 0 8.258 8.258 0 0 0-.412-.833.051.051 0 0 0-.052-.025c-1.125.194-2.22.534-3.257 1.011a.041.041 0 0 0-.021.018C.356 6.024-.213 9.047.066 12.032c.001.014.01.028.021.037a13.276 13.276 0 0 0 3.995 2.02.05.05 0 0 0 .056-.019c.308-.42.582-.863.818-1.329a.05.05 0 0 0-.01-.059.051.051 0 0 0-.018-.011 8.875 8.875 0 0 1-1.248-.595.05.05 0 0 1-.02-.066.051.051 0 0 1 .015-.019c.084-.063.168-.129.248-.195a.05.05 0 0 1 .051-.007c2.619 1.196 5.454 1.196 8.041 0a.052.052 0 0 1 .053.007c.08.066.164.132.248 .195a.051.051 0 0 1-.004.085 8.254 8.254 0 0 1-1.249 .594.05.05 0 0 0-.03.03.052.052 0 0 0 .003.041c.24.465.515.909.817 1.329a.05.05 0 0 0 .056.019 13.235 13.235 0 0 0 4.001-2.02.049.049 0 0 0 .021-.037c.334-3.451-.559-6.449-2.366-9.106a.034.034 0 0 0-.02-.019Zm-8.198 7.307c-.789 0-1.438-.724-1.438-1.612 0-.889.637-1.613 1.438-1.613.807 0 1.45.73 1.438 1.613 0 .888-.637 1.612-1.438 1.612Zm5.316 0c-.788 0-1.438-.724-1.438-1.612 0-.889.637-1.613 1.438-1.613.807 0 1.451.73 1.438 1.613 0 .888-.631 1.612-1.438 1.612Z"></path></svg>
+</div>
+</a>
+<button @click="darkMode = !darkMode" class="relative inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9" title="Toggle color scheme" type="button">
+<svg class="absolute transition-all scale-100 rotate-0 dark:-rotate-90 dark:scale-0" fill="currentColor" height="16" viewbox="0 96 960 960" width="16" xmlns="http://www.w3.org/2000/svg">
+<path d="M480 685q45.456 0 77.228-31.772Q589 621.456 589 576q0-45.456-31.772-77.228Q525.456 467 480 467q-45.456 0-77.228 31.772Q371 530.544 371 576q0 45.456 31.772 77.228Q434.544 685 480 685Zm0 91q-83 0-141.5-58.5T280 576q0-83 58.5-141.5T480 376q83 0 141.5 58.5T680 576q0 83-58.5 141.5T480 776ZM80 621.5q-19.152 0-32.326-13.174T34.5 576q0-19.152 13.174-32.326T80 530.5h80q19.152 0 32.326 13.174T205.5 576q0 19.152-13.174 32.326T160 621.5H80Zm720 0q-19.152 0-32.326-13.174T754.5 576q0-19.152 13.174-32.326T800 530.5h80q19.152 0 32.326 13.174T925.5 576q0 19.152-13.174 32.326T880 621.5h-80Zm-320-320q-19.152 0-32.326-13.174T434.5 256v-80q0-19.152 13.174-32.326T480 130.5q19.152 0 32.326 13.174T525.5 176v80q0 19.152-13.174 32.326T480 301.5Zm0 720q-19.152 0-32.326-13.17Q434.5 995.152 434.5 976v-80q0-19.152 13.174-32.326T480 850.5q19.152 0 32.326 13.174T525.5 896v80q0 19.152-13.174 32.33-13.174 13.17-32.326 13.17ZM222.174 382.065l-43-42Q165.5 327.391 166 308.239t13.174-33.065q13.435-13.674 32.587-13.674t32.065 13.674l42.239 43q12.674 13.435 12.555 31.706-.12 18.272-12.555 31.946-12.674 13.674-31.445 13.413-18.772-.261-32.446-13.174Zm494 494.761-42.239-43q-12.674-13.435-12.674-32.087t12.674-31.565Q686.609 756.5 705.38 757q18.772.5 32.446 13.174l43 41.761Q794.5 824.609 794 843.761t-13.174 33.065Q767.391 890.5 748.239 890.5t-32.065-13.674Zm-42-494.761Q660.5 369.391 661 350.62q.5-18.772 13.174-32.446l41.761-43Q728.609 261.5 747.761 262t33.065 13.174q13.674 13.435 13.674 32.587t-13.674 32.065l-43 42.239q-13.435 12.674-31.706 12.555-18.272-.12-31.946-12.555Zm-495 494.761Q165.5 863.391 165.5 844.239t13.674-32.065l43-42.239q13.435-12.674 32.087-12.674t31.565 12.674Q299.5 782.609 299 801.38q-.5 18.772-13.174 32.446l-41.761 43Q231.391 890.5 212.239 890t-33.065-13.174ZM480 576Z"></path>
+</svg>
+<svg class="absolute transition-all scale-0 rotate-90 dark:rotate-0 dark:scale-100" fill="currentColor" height="16" viewbox="0 96 960 960" width="16" xmlns="http://www.w3.org/2000/svg">
+<path d="M480 936q-151 0-255.5-104.5T120 576q0-138 90-239.5T440 218q25-3 39 18t-1 44q-17 26-25.5 55t-8.5 61q0 90 63 153t153 63q31 0 61.5-9t54.5-25q21-14 43-1.5t19 39.5q-14 138-117.5 229T480 936Zm0-80q88 0 158-48.5T740 681q-20 5-40 8t-40 3q-123 0-209.5-86.5T364 396q0-20 3-40t8-40q-78 32-126.5 102T200 576q0 116 82 198t198 82Zm-10-270Z"></path>
+</svg>
+</button>
+</nav>
+</div>
+</div>
+</header>
+<div class="flex-1"><div class="container md:grid md:grid-cols-[220px_minmax(0,1fr)] md:gap-6 lg:grid-cols-[240px_minmax(0,1fr)] lg:gap-10"><aside :aria-hidden="!showSidebar" :class="{ 'translate-x-0': showSidebar }" class="fixed inset-y-0 left-0 md:top-14 z-50 md:z-30 bg-background md:bg-transparent transition-all duration-100 -translate-x-full md:translate-x-0 ml-0 p-6 md:p-0 md:-ml-2 md:h-[calc(100vh-3.5rem)] w-5/6 md:w-full overflow-y-auto border-r border-border md:sticky" id="left-sidebar">
+<a class="justify-start text-sm md:!hidden bg-background" href="../index.html">
+<img alt="Logo" class="mr-2 dark:invert" height="16" src="../_static/logo_wo_text.svg" width="16"/><span class="font-bold text-clip whitespace-nowrap">TuFT</span>
+</a>
+<div class="relative overflow-hidden md:overflow-auto my-4 md:my-0">
+<div class="overflow-y-auto h-full w-full relative pr-6"><nav class="table w-full min-w-full my-6 lg:my-8">
+<ul class="current">
+<li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="../getting-started/index.html">Getting Started<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
+<li class="toctree-l2"><a class="reference internal" href="../getting-started/installation.html">Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../getting-started/quickstart.html">Quick Start Example</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="index.html">User Guide<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul class="current" x-show="expanded">
+<li class="toctree-l2"><a class="reference internal" href="chat-sft.html">Chat Supervised Fine-Tuning (SFT)</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">Countdown Reinforcement Learning (RL)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="persistence.html">Persistence</a></li>
+<li class="toctree-l2"><a class="reference internal" href="telemetry.html">Observability (OpenTelemetry)</a></li>
+</ul>
+</li>
+<li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="../development/index.html">Development<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
+<li class="toctree-l2"><a class="reference internal" href="../development/testing.html">Testing Guide</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../roadmap.html">Roadmap</a></li>
+</ul>
+</nav>
+</div>
+</div>
+<button @click="showSidebar = false" class="absolute md:hidden right-4 top-4 rounded-sm opacity-70 transition-opacity hover:opacity-100" type="button">
+<svg class="h-4 w-4" fill="currentColor" height="24" stroke="none" viewbox="0 96 960 960" width="24" xmlns="http://www.w3.org/2000/svg">
+<path d="M480 632 284 828q-11 11-28 11t-28-11q-11-11-11-28t11-28l196-196-196-196q-11-11-11-28t11-28q11-11 28-11t28 11l196 196 196-196q11-11 28-11t28 11q11 11 11 28t-11 28L536 576l196 196q11 11 11 28t-11 28q-11 11-28 11t-28-11L480 632Z"></path>
+</svg>
+</button>
+</aside>
+<main class="relative py-6 lg:gap-10 lg:py-8 xl:grid xl:grid-cols-[1fr_300px]">
+<div class="w-full min-w-0 mx-auto">
+<nav aria-label="breadcrumbs" class="flex items-center mb-4 space-x-1 text-sm text-muted-foreground">
+<a class="overflow-hidden text-ellipsis whitespace-nowrap hover:text-foreground" href="../index.html">
+<span class="hidden md:inline">TuFT</span>
+<svg aria-label="Home" class="md:hidden" fill="currentColor" height="18" stroke="none" viewbox="0 96 960 960" width="18" xmlns="http://www.w3.org/2000/svg">
+<path d="M240 856h120V616h240v240h120V496L480 316 240 496v360Zm-80 80V456l320-240 320 240v480H520V696h-80v240H160Zm320-350Z"></path>
+</svg>
+</a>
+<div class="mr-1">/</div><a class="hover:text-foreground overflow-hidden text-ellipsis whitespace-nowrap" href="index.html">User Guide</a>
+<div class="mr-1">/</div><span aria-current="page" class="font-medium text-foreground overflow-hidden text-ellipsis whitespace-nowrap">Countdown Reinforcement Learning (RL)</span>
+</nav>
+<div id="content" role="main">
+<section id="countdown-reinforcement-learning-rl">
+<h1>Countdown Reinforcement Learning (RL)<a class="headerlink" href="#countdown-reinforcement-learning-rl" title="Link to this heading">¶</a></h1>
+<p>This guide demonstrates <strong>reinforcement learning (RL)</strong> fine-tuning on the <strong>Countdown</strong> dataset using a <strong>running TuFT server</strong>. Full runnable code is in the <code class="docutils literal notranslate"><span class="pre">examples/countdown_rl/countdown_rl.ipynb</span></code> notebook. Although this is a general RL guide, it also documents common issues users may encounter when using TuFT for RL and provides step-by-step guidance to help them successfully complete an end-to-end run.</p>
+<hr class="docutils"/>
+<section id="what-you-ll-learn">
+<h2>What You’ll Learn<a class="headerlink" href="#what-you-ll-learn" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#what-you-ll-learn'">¶</a></h2>
+<ol class="arabic simple">
+<li><p>How to load and split <strong>Countdown</strong> tasks and turn them into <strong>prompt-style</strong> problems</p></li>
+<li><p>How to design a <strong>rule-based reward function</strong> (format + validity + correctness + optional shaping)</p></li>
+<li><p>How to run a minimal <strong>GRPO-like</strong> RL loop in TuFT (group sampling + normalized advantages + importance sampling loss)</p></li>
+<li><p>How to choose and tune <strong>LoRA rank</strong> and <strong>learning rate</strong> using reward curves</p></li>
+</ol>
+</section>
+<hr class="docutils"/>
+<section id="table-of-contents">
+<h2>Table of Contents<a class="headerlink" href="#table-of-contents" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#table-of-contents'">¶</a></h2>
+<ol class="arabic simple">
+<li><p><a class="reference internal" href="#datasets">Datasets</a></p></li>
+<li><p><a class="reference internal" href="#minimal-training-example-rl">Minimal Training Example (RL)</a></p></li>
+<li><p><a class="reference internal" href="#key-concepts">Key Concepts</a></p>
+<ul class="simple">
+<li><p><a class="reference internal" href="#prompting-for-verifiable-outputs">Prompting for Verifiable Outputs</a></p></li>
+<li><p><a class="reference internal" href="#reward-design-format-validity-correctness-shaping">Reward Design: Format, Validity, Correctness, Shaping</a></p></li>
+<li><p><a class="reference internal" href="#group-sampling-and-normalized-advantages">Group Sampling and Normalized Advantages</a></p></li>
+<li><p><a class="reference internal" href="#datum-format-for-rl">Datum Format for RL</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#parameter-selection">Parameter Selection</a></p></li>
+<li><p><a class="reference internal" href="#q-a">Q&amp;A</a></p></li>
+</ol>
+</section>
+<hr class="docutils"/>
+<section id="datasets">
+<h2>Datasets<a class="headerlink" href="#datasets" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#datasets'">¶</a></h2>
+<p>This guide uses <strong><a class="reference external" href="https://huggingface.co/datasets/Jiayi-Pan/Countdown-Tasks-3to4"><code class="docutils literal notranslate"><span class="pre">Jiayi-Pan/Countdown-Tasks-3to4</span></code></a></strong>.</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Dataset</p></th>
+<th class="head"><p>Source</p></th>
+<th class="head"><p>Typical sample fields</p></th>
+<th class="head"><p>Use Case</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Countdown-Tasks-3to4</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Jiayi-Pan/Countdown-Tasks-3to4</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">nums</span></code> (list), <code class="docutils literal notranslate"><span class="pre">target</span></code> (int)</p></td>
+<td><p>Verifiable arithmetic expression generation</p></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Split policy</strong></p>
+<ul class="simple">
+<li><p>Test set: first <code class="docutils literal notranslate"><span class="pre">TEST_SIZE</span></code> rows</p></li>
+<li><p>Train set: remaining rows, shuffled with <code class="docutils literal notranslate"><span class="pre">SEED</span></code></p></li>
+</ul>
+<p>This makes runs reproducible and avoids the need for a predefined “test” split.</p>
+</section>
+<hr class="docutils"/>
+<section id="minimal-training-example-rl">
+<h2>Minimal Training Example (RL)<a class="headerlink" href="#minimal-training-example-rl" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#minimal-training-example-rl'">¶</a></h2>
+<p>Unlike the Tinker, TuFT can run on local GPUs; the experiments below were conducted on a local 2× NVIDIA A100-SXM4-80GB setup (Driver 550.54.15, CUDA 12.9). Before running the example, follow the <a class="reference internal" href="../getting-started/installation.html"><span class="std std-doc">Installation Guide</span></a> to start the TuFT server locally.</p>
+<p>Key TuFT calls (full code in <code class="docutils literal notranslate"><span class="pre">examples/countdown_rl/countdown_rl.ipynb</span></code>):</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="kn">import</span><span class="w"> </span><span class="nn">tinker</span>
+</span><span id="line-2"><span class="kn">from</span><span class="w"> </span><span class="nn">tinker</span><span class="w"> </span><span class="kn">import</span> <span class="n">types</span>
+</span><span id="line-3">
+</span><span id="line-4"><span class="n">service_client</span> <span class="o">=</span> <span class="n">tinker</span><span class="o">.</span><span class="n">ServiceClient</span><span class="p">(</span><span class="n">base_url</span><span class="o">=</span><span class="n">TINKER_BASE_URL</span><span class="p">,</span> <span class="n">api_key</span><span class="o">=</span><span class="n">TINKER_API_KEY</span><span class="p">)</span>
+</span><span id="line-5">
+</span><span id="line-6"><span class="n">training_client</span> <span class="o">=</span> <span class="n">service_client</span><span class="o">.</span><span class="n">create_lora_training_client</span><span class="p">(</span>
+</span><span id="line-7">    <span class="n">base_model</span><span class="o">=</span><span class="n">BASE_MODEL</span><span class="p">,</span>
+</span><span id="line-8">    <span class="n">rank</span><span class="o">=</span><span class="n">LORA_RANK</span><span class="p">,</span>
+</span><span id="line-9">    <span class="n">train_mlp</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="line-10">    <span class="n">train_attn</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="line-11">    <span class="n">train_unembed</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="line-12"><span class="p">)</span>
+</span><span id="line-13">
+</span><span id="line-14"><span class="c1"># RL update uses an importance-sampling style objective:</span>
+</span><span id="line-15"><span class="n">training_client</span><span class="o">.</span><span class="n">forward_backward</span><span class="p">(</span><span class="n">datums</span><span class="p">,</span> <span class="n">loss_fn</span><span class="o">=</span><span class="s2">"importance_sampling"</span><span class="p">)</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+</span><span id="line-16"><span class="n">training_client</span><span class="o">.</span><span class="n">optim_step</span><span class="p">(</span><span class="n">types</span><span class="o">.</span><span class="n">AdamParams</span><span class="p">(</span><span class="n">learning_rate</span><span class="o">=</span><span class="n">LEARNING_RATE</span><span class="p">))</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+</span></code></pre></div>
+</div>
+<p>A practical detail of this RL workflow: each training step exports a sampler-compatible checkpoint, then uses a sampling client to produce rollouts and logprobs for the objective.</p>
+</section>
+<hr class="docutils"/>
+<section id="key-concepts">
+<h2>Key Concepts<a class="headerlink" href="#key-concepts" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#key-concepts'">¶</a></h2>
+<section id="prompting-for-verifiable-outputs">
+<h3>Prompting for Verifiable Outputs<a class="headerlink" href="#prompting-for-verifiable-outputs" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#prompting-for-verifiable-outputs'">¶</a></h3>
+<p>RL works best when the reward signal is reliable. For Countdown, we enforce a <strong>verifiable output contract</strong>:</p>
+<ul>
+<li><p>The model must output <strong>only</strong> a final expression inside:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">&lt;answer&gt; ... &lt;/answer&gt;
+</span></code></pre></div>
+</div>
+</li>
+<li><p>A stop sequence <code class="docutils literal notranslate"><span class="pre">&lt;/answer&gt;</span></code> truncates generation early, reducing junk tokens and reward noise.</p></li>
+</ul>
+<p>A small <strong>few-shot</strong> example is prepended to improve early training stability (models learn the format faster).</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="n">COUNTDOWN_FEWSHOT</span> <span class="o">=</span> <span class="p">(</span>
+</span><span id="line-2">    <span class="s2">"Q: Using the numbers 2, 3, 7, reach the target number 13. "</span>
+</span><span id="line-3">    <span class="s2">"You may use +, -, *, / and parentheses, and each number can only be used once. "</span>
+</span><span id="line-4">    <span class="s2">"Put ONLY the final expression inside &lt;answer&gt;...&lt;/answer&gt;. "</span>
+</span><span id="line-5">    <span class="s2">"Example: &lt;answer&gt;(1+2)/3&lt;/answer&gt;."</span>
+</span><span id="line-6">    <span class="s2">"A: &lt;answer&gt;(2*3)+7&lt;/answer&gt;"</span>
+</span><span id="line-7"><span class="p">)</span>
+</span></code></pre></div>
+</div>
+</section>
+<hr class="docutils"/>
+<section id="reward-design-format-validity-correctness-shaping">
+<h3>Reward Design: Format, Validity, Correctness, Shaping<a class="headerlink" href="#reward-design-format-validity-correctness-shaping" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#reward-design-format-validity-correctness-shaping'">¶</a></h3>
+<p>The reward is intentionally <strong>decomposed</strong> into stages:</p>
+<ol class="arabic simple">
+<li><p><strong>Format reward</strong>: output must contain <code class="docutils literal notranslate"><span class="pre">&lt;answer&gt;...&lt;/answer&gt;</span></code></p></li>
+<li><p><strong>Validity reward</strong>: expression must use <strong>exactly</strong> the provided numbers (multiset match)</p></li>
+<li><p><strong>Safe evaluation</strong>: expression must be parseable under a restricted grammar/character set</p></li>
+<li><p><strong>Correctness</strong>: evaluated numeric result must match <code class="docutils literal notranslate"><span class="pre">target</span></code></p></li>
+</ol>
+<p>A common RL practice is to include <strong>reward shaping</strong> to reduce sparsity:</p>
+<ul class="simple">
+<li><p>If exact match: reward = <code class="docutils literal notranslate"><span class="pre">1.0</span></code></p></li>
+<li><p>If not exact:</p>
+<ul>
+<li><p>either give only a small constant <code class="docutils literal notranslate"><span class="pre">FORMAT_SCORE</span></code> (sparse)</p></li>
+<li><p>or use <strong>continuous shaping</strong>, e.g.: $r = r_{\mathrm{fmt}} + \left(1 - r_{\mathrm{fmt}}\right)\frac{1}{1 + \left|y - \mathrm{target}\right|}$</p></li>
+</ul>
+</li>
+</ul>
+<p>This provides gradients even when the model is “close but not correct”.</p>
+<p><strong>Why the constant <code class="docutils literal notranslate"><span class="pre">FORMAT_SCORE</span></code> matters</strong></p>
+<ul class="simple">
+<li><p>It prevents “all-or-nothing” learning early on.</p></li>
+<li><p>It encourages the policy to at least satisfy formatting/validity constraints before it can reliably solve the math.</p></li>
+</ul>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="k">def</span><span class="w"> </span><span class="nf">compute_reward</span><span class="p">(</span>
+</span><span id="line-2">    <span class="n">response_text</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+</span><span id="line-3">    <span class="n">target</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+</span><span id="line-4">    <span class="n">nums</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">],</span>
+</span><span id="line-5">    <span class="n">format_score</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+</span><span id="line-6">    <span class="n">use_continuous_shaping</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
+</span><span id="line-7"><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+</span><span id="line-8">    <span class="n">equation</span> <span class="o">=</span> <span class="n">extract_solution</span><span class="p">(</span><span class="n">response_text</span><span class="p">)</span>
+</span><span id="line-9">    <span class="k">if</span> <span class="n">equation</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="line-10">        <span class="k">return</span> <span class="mf">0.0</span>
+</span><span id="line-11">
+</span><span id="line-12">    <span class="k">if</span> <span class="ow">not</span> <span class="n">validate_equation</span><span class="p">(</span><span class="n">equation</span><span class="p">,</span> <span class="n">nums</span><span class="p">):</span>
+</span><span id="line-13">        <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">format_score</span><span class="p">)</span>
+</span><span id="line-14">
+</span><span id="line-15">    <span class="n">result</span> <span class="o">=</span> <span class="n">evaluate_equation</span><span class="p">(</span><span class="n">equation</span><span class="p">)</span>
+</span><span id="line-16">    <span class="k">if</span> <span class="n">result</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+</span><span id="line-17">        <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">format_score</span><span class="p">)</span>
+</span><span id="line-18">
+</span><span id="line-19">    <span class="n">err</span> <span class="o">=</span> <span class="nb">abs</span><span class="p">(</span><span class="n">result</span> <span class="o">-</span> <span class="n">target</span><span class="p">)</span>
+</span><span id="line-20">    <span class="k">if</span> <span class="n">err</span> <span class="o">&lt;</span> <span class="mf">1e-5</span><span class="p">:</span>
+</span><span id="line-21">        <span class="k">return</span> <span class="mf">1.0</span>
+</span><span id="line-22">
+</span><span id="line-23">    <span class="k">if</span> <span class="ow">not</span> <span class="n">use_continuous_shaping</span><span class="p">:</span>
+</span><span id="line-24">        <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">format_score</span><span class="p">)</span>
+</span><span id="line-25">
+</span><span id="line-26">    <span class="n">shaped</span> <span class="o">=</span> <span class="n">format_score</span> <span class="o">+</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">format_score</span><span class="p">)</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">/</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">err</span><span class="p">))</span>
+</span><span id="line-27">    <span class="k">return</span> <span class="nb">float</span><span class="p">(</span><span class="n">shaped</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+</section>
+<hr class="docutils"/>
+<section id="group-sampling-and-normalized-advantages">
+<h3>Group Sampling and Normalized Advantages<a class="headerlink" href="#group-sampling-and-normalized-advantages" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#group-sampling-and-normalized-advantages'">¶</a></h3>
+<p>Instead of sampling a single completion per prompt, we sample a <strong>group</strong> of completions:</p>
+<ul class="simple">
+<li><p>For each prompt (problem), sample <code class="docutils literal notranslate"><span class="pre">GROUP_SIZE</span> <span class="pre">=</span> <span class="pre">G</span></code> rollouts.</p></li>
+<li><p>Compute a reward for each rollout.</p></li>
+</ul>
+<p>Then compute <strong>within-group</strong> statistics:</p>
+<ul class="simple">
+<li><p>Within-group mean reward: $\mu$</p></li>
+<li><p>Within-group reward std: $\sigma$</p></li>
+</ul>
+<p>Advantages are normalized <strong>within the same group</strong>:</p>
+<ul class="simple">
+<li><p>For sample $i$: $A_i=\frac{r_i-\mu}{\sigma+\varepsilon}$</p></li>
+</ul>
+<p>This is GRPO-like in spirit:</p>
+<ul class="simple">
+<li><p>It learns from <strong>relative quality</strong> among samples from the same prompt (group-wise comparison/ranking).</p></li>
+<li><p>It reduces the need for a learned value function.</p></li>
+<li><p>It is sensitive to reward variance: if $\sigma$ is ~0, the prompt is skipped because there is no useful learning signal.</p></li>
+</ul>
+<p><strong>Intuition</strong></p>
+<ul class="simple">
+<li><p>The model is encouraged to increase the probability of rollouts that are better than the group average, and decrease the probability of worse ones.</p></li>
+</ul>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="c1"># Sample GROUP_SIZE completions -&gt; compute rewards -&gt; normalize advantages within the group</span>
+</span><span id="line-2"><span class="n">res</span> <span class="o">=</span> <span class="n">sampling_client</span><span class="o">.</span><span class="n">sample</span><span class="p">(</span><span class="n">prompt</span><span class="o">=</span><span class="n">prompt</span><span class="p">,</span> <span class="n">num_samples</span><span class="o">=</span><span class="n">GROUP_SIZE</span><span class="p">,</span>
+</span><span id="line-3">                             <span class="n">sampling_params</span><span class="o">=</span><span class="n">sampling_params_train</span><span class="p">)</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+</span><span id="line-4">
+</span><span id="line-5"><span class="n">rewards</span><span class="p">,</span> <span class="n">toks_list</span><span class="p">,</span> <span class="n">lps_list</span> <span class="o">=</span> <span class="p">[],</span> <span class="p">[],</span> <span class="p">[]</span>
+</span><span id="line-6"><span class="k">for</span> <span class="n">seq</span> <span class="ow">in</span> <span class="n">res</span><span class="o">.</span><span class="n">sequences</span><span class="p">:</span>
+</span><span id="line-7">    <span class="n">toks</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">seq</span><span class="o">.</span><span class="n">tokens</span><span class="p">)</span>
+</span><span id="line-8">    <span class="n">lps</span>  <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">seq</span><span class="o">.</span><span class="n">logprobs</span><span class="p">)</span>  <span class="c1"># must be returned by the sampler</span>
+</span><span id="line-9">    <span class="n">text</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">toks</span><span class="p">,</span> <span class="n">skip_special_tokens</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="line-10">
+</span><span id="line-11">    <span class="n">r</span> <span class="o">=</span> <span class="n">compute_reward</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">target</span><span class="o">=</span><span class="n">prob</span><span class="o">.</span><span class="n">target</span><span class="p">,</span> <span class="n">nums</span><span class="o">=</span><span class="n">prob</span><span class="o">.</span><span class="n">nums</span><span class="p">,</span>
+</span><span id="line-12">                       <span class="n">format_score</span><span class="o">=</span><span class="n">FORMAT_SCORE</span><span class="p">,</span>
+</span><span id="line-13">                       <span class="n">use_continuous_shaping</span><span class="o">=</span><span class="n">USE_CONTINUOUS_SHAPING</span><span class="p">)</span>
+</span><span id="line-14">
+</span><span id="line-15">    <span class="n">rewards</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">r</span><span class="p">))</span>
+</span><span id="line-16">    <span class="n">toks_list</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">toks</span><span class="p">);</span> <span class="n">lps_list</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">lps</span><span class="p">)</span>
+</span><span id="line-17">
+</span><span id="line-18"><span class="n">mu</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">rewards</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">rewards</span><span class="p">)</span>
+</span><span id="line-19"><span class="n">sigma</span> <span class="o">=</span> <span class="p">(</span><span class="nb">sum</span><span class="p">((</span><span class="n">r</span> <span class="o">-</span> <span class="n">mu</span><span class="p">)</span> <span class="o">**</span> <span class="mi">2</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">rewards</span><span class="p">)</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">rewards</span><span class="p">))</span> <span class="o">**</span> <span class="mf">0.5</span>
+</span><span id="line-20"><span class="k">if</span> <span class="n">sigma</span> <span class="o">&lt;</span> <span class="mf">1e-8</span><span class="p">:</span>
+</span><span id="line-21">    <span class="n">skipped_problems</span> <span class="o">+=</span> <span class="mi">1</span>
+</span><span id="line-22">    <span class="k">continue</span>
+</span><span id="line-23">
+</span><span id="line-24"><span class="n">advantages</span> <span class="o">=</span> <span class="p">[(</span><span class="n">r</span> <span class="o">-</span> <span class="n">mu</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">sigma</span> <span class="o">+</span> <span class="mf">1e-6</span><span class="p">)</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">rewards</span><span class="p">]</span>
+</span></code></pre></div>
+</div>
+</section>
+<hr class="docutils"/>
+<section id="datum-format-for-rl">
+<h3>Datum Format for RL<a class="headerlink" href="#datum-format-for-rl" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#datum-format-for-rl'">¶</a></h3>
+<p>Each sampled rollout is converted into a <code class="docutils literal notranslate"><span class="pre">Datum</span></code> that contains:</p>
+<ul class="simple">
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">model_input</span></code></strong>: prompt tokens + generated tokens (used as the input sequence for next-token prediction)</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">loss_fn_inputs</span></code></strong> (extra tensors aligned per token):</p>
+<ul>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">target_tokens</span></code></strong>: the next tokens the model should predict</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">logprobs</span></code></strong>: behavior-policy (sampling-time) log-probabilities for importance sampling</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">advantages</span></code></strong>: per-token weights (typically <strong>0 on the prompt</strong>, and a constant advantage on the generated region)</p></li>
+</ul>
+</li>
+</ul>
+<p>This enables an <strong>importance-sampling style objective</strong> in token space:</p>
+<ul class="simple">
+<li><p>Compare the current policy likelihood to the behavior policy likelihood (from sampling time)</p></li>
+<li><p>Weight updates by the advantage so higher-reward rollouts are reinforced</p></li>
+</ul>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="n">ob_len</span> <span class="o">=</span> <span class="n">prompt</span><span class="o">.</span><span class="n">length</span> <span class="o">-</span> <span class="mi">1</span> 
+</span><span id="line-2">
+</span><span id="line-3"><span class="k">for</span> <span class="n">toks</span><span class="p">,</span> <span class="n">lps</span><span class="p">,</span> <span class="n">adv</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">tokens_G_T</span><span class="p">,</span> <span class="n">logprobs_G_T</span><span class="p">,</span> <span class="n">advantages_G</span><span class="p">):</span>
+</span><span id="line-4">    <span class="n">model_input</span> <span class="o">=</span> <span class="n">prompt</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">types</span><span class="o">.</span><span class="n">EncodedTextChunk</span><span class="p">(</span><span class="n">tokens</span><span class="o">=</span><span class="n">toks</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]))</span>
+</span><span id="line-5">    <span class="n">target_tokens</span> <span class="o">=</span> <span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">*</span> <span class="n">ob_len</span> <span class="o">+</span> <span class="n">toks</span>
+</span><span id="line-6">    <span class="n">padded_sampling_logprobs</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">]</span> <span class="o">*</span> <span class="n">ob_len</span> <span class="o">+</span> <span class="n">lps</span>
+</span><span id="line-7">    <span class="n">padded_advantages</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.0</span><span class="p">]</span> <span class="o">*</span> <span class="n">ob_len</span> <span class="o">+</span> <span class="p">[</span><span class="n">adv</span><span class="p">]</span> <span class="o">*</span> <span class="p">(</span><span class="n">model_input</span><span class="o">.</span><span class="n">length</span> <span class="o">-</span> <span class="n">ob_len</span><span class="p">)</span>
+</span><span id="line-8">
+</span><span id="line-9">    <span class="n">datums_D</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+</span><span id="line-10">        <span class="n">types</span><span class="o">.</span><span class="n">Datum</span><span class="p">(</span>
+</span><span id="line-11">            <span class="n">model_input</span><span class="o">=</span><span class="n">model_input</span><span class="p">,</span>
+</span><span id="line-12">            <span class="n">loss_fn_inputs</span><span class="o">=</span><span class="p">{</span>
+</span><span id="line-13">                <span class="s2">"target_tokens"</span><span class="p">:</span> <span class="n">TensorData</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">target_tokens</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">long</span><span class="p">)),</span>
+</span><span id="line-14">                <span class="s2">"logprobs"</span><span class="p">:</span> <span class="n">TensorData</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">padded_sampling_logprobs</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)),</span>
+</span><span id="line-15">                <span class="s2">"advantages"</span><span class="p">:</span> <span class="n">TensorData</span><span class="o">.</span><span class="n">from_torch</span><span class="p">(</span><span class="n">torch</span><span class="o">.</span><span class="n">tensor</span><span class="p">(</span><span class="n">padded_advantages</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">float32</span><span class="p">)),</span>
+</span><span id="line-16">            <span class="p">},</span>
+</span><span id="line-17">        <span class="p">)</span>
+</span><span id="line-18">    <span class="p">)</span>
+</span></code></pre></div>
+</div>
+</section>
+</section>
+<hr class="docutils"/>
+<section id="parameter-selection">
+<h2>Parameter Selection<a class="headerlink" href="#parameter-selection" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#parameter-selection'">¶</a></h2>
+<p>This section explains how to choose <code class="docutils literal notranslate"><span class="pre">lora_rank</span></code> and <code class="docutils literal notranslate"><span class="pre">learning_rate</span></code> for the Countdown RL task, and summarizes conclusions based on the provided experiment results. This documentation is based on <a class="reference external" href="https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507">Qwen/Qwen3-4B-Instruct-2507</a>.</p>
+<section id="what-do-lora-rank-and-learning-rate-do">
+<h3>What do <code class="docutils literal notranslate"><span class="pre">lora_rank</span></code> and <code class="docutils literal notranslate"><span class="pre">learning_rate</span></code> do?<a class="headerlink" href="#what-do-lora-rank-and-learning-rate-do" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#what-do-lora-rank-and-learning-rate-do'">¶</a></h3>
+<p><strong><code class="docutils literal notranslate"><span class="pre">lora_rank</span></code> (LoRA adapter rank)</strong> controls adapter capacity:</p>
+<ul class="simple">
+<li><p>Higher rank → more trainable parameters → potentially higher ceiling, but more compute/memory and can be less stable in RL</p></li>
+<li><p>Lower rank → cheaper and often more stable; usually enough for policy/behavior shaping</p></li>
+</ul>
+<p><strong><code class="docutils literal notranslate"><span class="pre">learning_rate</span></code></strong> controls the step size of policy updates:</p>
+<ul class="simple">
+<li><p>Too low → slow improvement (under-updating)</p></li>
+<li><p>Moderate → fast and stable reward gains</p></li>
+<li><p>Too high → unstable training / reward collapse (over-updating), which is common in RL fine-tuning</p></li>
+</ul>
+</section>
+<hr class="docutils"/>
+<section id="experimental-conclusions-from-the-plot">
+<h3>Experimental conclusions from the plot<a class="headerlink" href="#experimental-conclusions-from-the-plot" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#experimental-conclusions-from-the-plot'">¶</a></h3>
+<p>Based on <strong>Figure 1</strong> (Final Reward vs. Learning Rate for <code class="docutils literal notranslate"><span class="pre">lora_rank</span> <span class="pre">∈</span> <span class="pre">{8,</span> <span class="pre">32,</span> <span class="pre">128}</span></code>):</p>
+<ol class="arabic simple">
+<li><p><strong>Reward increases as LR grows from <code class="docutils literal notranslate"><span class="pre">1e-6</span></code> to around <code class="docutils literal notranslate"><span class="pre">1e-4</span></code>.</strong><br/>
+All ranks trend upward in this range, indicating the optimizer needs a sufficiently large LR to make meaningful policy progress.</p></li>
+<li><p><strong>The best-performing region is around <code class="docutils literal notranslate"><span class="pre">5e-5</span></code> to <code class="docutils literal notranslate"><span class="pre">1e-4</span></code>.</strong><br/>
+Final reward peaks near <code class="docutils literal notranslate"><span class="pre">1e-4</span></code> (and is already strong at <code class="docutils literal notranslate"><span class="pre">5e-5</span></code>) across ranks. This range is a practical “sweet spot” for stable learning + good performance.</p></li>
+<li><p><strong>Too large LR (<code class="docutils literal notranslate"><span class="pre">5e-4</span></code>) causes reward collapse, especially for higher ranks.</strong><br/>
+At <code class="docutils literal notranslate"><span class="pre">5e-4</span></code>, <code class="docutils literal notranslate"><span class="pre">lora_rank=32</span></code> and <code class="docutils literal notranslate"><span class="pre">128</span></code> drop sharply (near failure), while <code class="docutils literal notranslate"><span class="pre">rank=8</span></code> degrades but remains noticeably better. This suggests update instability at overly aggressive LR.</p></li>
+<li><p><strong>Rank has diminishing returns; larger rank is not consistently better.</strong><br/>
+In the optimal LR region (<code class="docutils literal notranslate"><span class="pre">5e-5</span></code>–<code class="docutils literal notranslate"><span class="pre">1e-4</span></code>), ranks <code class="docutils literal notranslate"><span class="pre">8/32/128</span></code> are relatively close. In this setup, <strong>LR is the dominant factor</strong>, and increasing rank beyond moderate values does not reliably improve reward.</p></li>
+<li><p><strong>Smaller rank is more forgiving under aggressive learning rates.</strong><br/>
+When LR is pushed too high, <code class="docutils literal notranslate"><span class="pre">rank=8</span></code> degrades less than <code class="docutils literal notranslate"><span class="pre">rank=32/128</span></code>, indicating better robustness to large updates.</p></li>
+</ol>
+<figure class="align-center" id="id1">
+<a class="reference internal image-reference" href="../_images/countdown_rl.png"><img alt="Countdown RL final reward vs. learning rate" src="../_images/countdown_rl.png" style="width: 720px;"/>
+</a>
+<figcaption>
+<p><span class="caption-text"><strong>Figure 1. Countdown RL final reward vs. learning rate under different LoRA ranks</strong></span><a class="headerlink" href="#id1" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+</section>
+<section id="practical-recommendations">
+<h3>Practical recommendations<a class="headerlink" href="#practical-recommendations" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#practical-recommendations'">¶</a></h3>
+<p><strong>Strong default (recommended starting point)</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">lora_rank</span> <span class="pre">=</span> <span class="pre">8</span> <span class="pre">or</span> <span class="pre">32</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">learning_rate</span> <span class="pre">=</span> <span class="pre">1e-4</span></code></p></li>
+</ul>
+<p><strong>If training is unstable (reward spikes then drops / collapses)</strong></p>
+<ul class="simple">
+<li><p>Lower LR first: <code class="docutils literal notranslate"><span class="pre">1e-4</span> <span class="pre">→</span> <span class="pre">5e-5</span> <span class="pre">→</span> <span class="pre">1e-5</span></code></p></li>
+<li><p>If still unstable, lower rank: <code class="docutils literal notranslate"><span class="pre">32/128</span> <span class="pre">→</span> <span class="pre">8</span></code></p></li>
+<li><p>Avoid <code class="docutils literal notranslate"><span class="pre">5e-4</span></code> for this setting (Figure 1 shows high collapse risk, especially for <code class="docutils literal notranslate"><span class="pre">rank</span> <span class="pre">≥</span> <span class="pre">32</span></code>)</p></li>
+</ul>
+<p><strong>If learning is too slow / reward plateaus</strong></p>
+<ul class="simple">
+<li><p>Increase LR gradually toward <code class="docutils literal notranslate"><span class="pre">5e-5</span></code> or <code class="docutils literal notranslate"><span class="pre">1e-4</span></code></p></li>
+<li><p>Prefer more training steps (and/or stronger stabilization if applicable) before increasing rank</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils"/>
+<section id="q-a">
+<h2>Q&amp;A<a class="headerlink" href="#q-a" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#q-a'">¶</a></h2>
+<p>You can refer to the Q&amp;A section in the <a class="reference internal" href="chat-sft.html"><span class="std std-doc">Chat SFT Guide</span></a>. We will also add more RL-related Q&amp;A in the future.</p>
+</section>
+</section>
+</div></div><aside class="hidden text-sm xl:block" id="right-sidebar">
+<div class="sticky top-16 -mt-10 max-h-[calc(100vh-5rem)] h-full overflow-y-auto pt-6 space-y-2"><p class="font-medium">On this page</p>
+<ul>
+<li><a :data-current="activeSection === '#what-you-ll-learn'" class="reference internal" href="#what-you-ll-learn">What You’ll Learn</a></li>
+<li><a :data-current="activeSection === '#table-of-contents'" class="reference internal" href="#table-of-contents">Table of Contents</a></li>
+<li><a :data-current="activeSection === '#datasets'" class="reference internal" href="#datasets">Datasets</a></li>
+<li><a :data-current="activeSection === '#minimal-training-example-rl'" class="reference internal" href="#minimal-training-example-rl">Minimal Training Example (RL)</a></li>
+<li><a :data-current="activeSection === '#key-concepts'" class="reference internal" href="#key-concepts">Key Concepts</a><ul>
+<li><a :data-current="activeSection === '#prompting-for-verifiable-outputs'" class="reference internal" href="#prompting-for-verifiable-outputs">Prompting for Verifiable Outputs</a></li>
+<li><a :data-current="activeSection === '#reward-design-format-validity-correctness-shaping'" class="reference internal" href="#reward-design-format-validity-correctness-shaping">Reward Design: Format, Validity, Correctness, Shaping</a></li>
+<li><a :data-current="activeSection === '#group-sampling-and-normalized-advantages'" class="reference internal" href="#group-sampling-and-normalized-advantages">Group Sampling and Normalized Advantages</a></li>
+<li><a :data-current="activeSection === '#datum-format-for-rl'" class="reference internal" href="#datum-format-for-rl">Datum Format for RL</a></li>
+</ul>
+</li>
+<li><a :data-current="activeSection === '#parameter-selection'" class="reference internal" href="#parameter-selection">Parameter Selection</a><ul>
+<li><a :data-current="activeSection === '#what-do-lora-rank-and-learning-rate-do'" class="reference internal" href="#what-do-lora-rank-and-learning-rate-do">What do <code class="docutils literal notranslate"><span class="pre">lora_rank</span></code> and <code class="docutils literal notranslate"><span class="pre">learning_rate</span></code> do?</a></li>
+<li><a :data-current="activeSection === '#experimental-conclusions-from-the-plot'" class="reference internal" href="#experimental-conclusions-from-the-plot">Experimental conclusions from the plot</a></li>
+<li><a :data-current="activeSection === '#practical-recommendations'" class="reference internal" href="#practical-recommendations">Practical recommendations</a></li>
+</ul>
+</li>
+<li><a :data-current="activeSection === '#q-a'" class="reference internal" href="#q-a">Q&amp;A</a></li>
+</ul>
+</div>
+</aside>
+</main>
+</div>
+</div><footer class="py-6 border-t border-border md:py-0">
+<div class="container flex flex-col items-center justify-between gap-4 md:h-24 md:flex-row">
+<div class="flex flex-col items-center gap-4 px-8 md:flex-row md:gap-2 md:px-0">
+<p class="text-sm leading-loose text-center text-muted-foreground md:text-left"></p>
+</div>
+</div>
+</footer>
+</div>
+<script src="../_static/documentation_options.js?v=360bc84d"></script>
+<script src="../_static/doctools.js?v=9bcbadda"></script>
+<script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+<script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+<script src="../_static/copybutton.js?v=f281be69"></script>
+<script defer="defer" src="../_static/theme.js?v=582b20c5"></script>
+<script src="../_static/design-tabs.js?v=f930bc37"></script>
+<script src="../_static/custom.js?v=d0898e36"></script>
+</body>
+</html>

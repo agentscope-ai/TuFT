@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+
+<html :class="{ 'dark' : darkMode === true }" data-content_root="../" lang="zh-CN" x-data="{ darkMode: $persist(window.matchMedia('(prefers-color-scheme: dark)').matches), activeSection: ''}">
+<head>
+<script>
+    (function () {
+      // Set initial color scheme
+      if ((localStorage.getItem("_x_darkMode") === "true") || (window.matchMedia("(prefers-color-scheme: dark)").matches)) {
+        document.documentElement.classList.add("dark");
+      }
+
+      // Watch for media preference changes
+      window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (event) => {
+        localStorage.setItem("_x_darkMode", event.matches);
+        document.documentElement.classList.toggle("dark", event.matches);
+      });
+    })();
+  </script>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<meta charset="utf-8"/>
+<meta content="#ffffff" media="(prefers-color-scheme: light)" name="theme-color"/>
+<meta content="#030711" media="(prefers-color-scheme: dark)" name="theme-color"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<title>持久化 | TuFT</title>
+<meta content="持久化 | TuFT" property="og:title"/>
+<meta content="持久化 | TuFT" name="twitter:title"/>
+<link href="../_static/pygments.css?v=03e43079" rel="stylesheet" type="text/css"/>
+<link href="../_static/theme.css?v=73505e79" rel="stylesheet" type="text/css"/>
+<link href="../_static/copybutton.css?v=76b2166b" rel="stylesheet" type="text/css"/>
+<link href="../_static/sphinx-design.min.css?v=95c83b7e" rel="stylesheet" type="text/css"/>
+<link href="../_static/custom.css?v=31585404" rel="stylesheet" type="text/css"/>
+<link href="../_static/awesome-sphinx-design.css?v=c54898a4" rel="stylesheet" type="text/css"/>
+<link href="../_static/logo_wo_text.svg" rel="icon"/>
+<link href="../search.html" rel="search" title="搜索"/>
+<link href="../genindex.html" rel="index" title="索引"/>
+<link href="telemetry.html" rel="next" title="可观测性（OpenTelemetry）"/>
+<link href="countdown-rl.html" rel="prev" title="Countdown 强化学习（RL）"/>
+</head>
+<body :class="{ 'overflow-hidden': showSidebar }" class="min-h-screen font-sans antialiased bg-background text-foreground" x-data="{ showSidebar: false, showScrollTop: false }">
+<div @click.self="showSidebar = false" class="fixed inset-0 z-50 overflow-hidden bg-background/80 backdrop-blur-sm md:hidden" x-cloak="" x-show="showSidebar"></div><div class="relative flex flex-col min-h-screen" id="page"><a class="absolute top-0 left-0 z-[100] block bg-background p-4 text-xl transition -translate-x-full opacity-0 focus:translate-x-0 focus:opacity-100" href="#content">
+      Skip to content
+    </a><header class="sticky top-0 z-40 w-full border-b shadow-xs border-border bg-background/90 backdrop-blur"><div class="container flex items-center h-14">
+<div class="hidden mr-4 md:flex">
+<a class="flex items-center mr-6" href="../index.html">
+<img alt="Logo" class="mr-2 dark:invert" height="24" src="../_static/logo_wo_text.svg" width="24"/><span class="hidden font-bold sm:inline-block text-clip whitespace-nowrap">TuFT</span>
+</a></div><button @click="showSidebar = true" class="inline-flex items-center justify-center h-10 px-0 py-2 mr-2 text-base font-medium transition-colors rounded-md hover:text-accent-foreground hover:bg-transparent md:hidden" type="button">
+<svg aria-hidden="true" fill="currentColor" height="24" viewbox="0 96 960 960" width="24" xmlns="http://www.w3.org/2000/svg">
+<path d="M152.587 825.087q-19.152 0-32.326-13.174t-13.174-32.326q0-19.152 13.174-32.326t32.326-13.174h440q19.152 0 32.326 13.174t13.174 32.326q0 19.152-13.174 32.326t-32.326 13.174h-440Zm0-203.587q-19.152 0-32.326-13.174T107.087 576q0-19.152 13.174-32.326t32.326-13.174h320q19.152 0 32.326 13.174T518.087 576q0 19.152-13.174 32.326T472.587 621.5h-320Zm0-203.587q-19.152 0-32.326-13.174t-13.174-32.326q0-19.152 13.174-32.326t32.326-13.174h440q19.152 0 32.326 13.174t13.174 32.326q0 19.152-13.174 32.326t-32.326 13.174h-440ZM708.913 576l112.174 112.174q12.674 12.674 12.674 31.826t-12.674 31.826Q808.413 764.5 789.261 764.5t-31.826-12.674l-144-144Q600 594.391 600 576t13.435-31.826l144-144q12.674-12.674 31.826-12.674t31.826 12.674q12.674 12.674 12.674 31.826t-12.674 31.826L708.913 576Z"></path>
+</svg>
+<span class="sr-only">Toggle navigation menu</span>
+</button>
+<div class="flex items-center justify-between flex-1 gap-2 sm:gap-4 md:justify-end">
+<div class="flex-1 w-full md:w-auto md:flex-none"><form @keydown.k.window.meta="$refs.search.focus()" action="../search.html" class="relative flex items-center group" id="searchbox" method="get">
+<input aria-label="Search the docs" class="inline-flex items-center font-medium transition-colors bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background border border-input hover:bg-accent focus:bg-accent hover:text-accent-foreground focus:text-accent-foreground hover:placeholder-accent-foreground py-2 px-4 relative h-9 w-full justify-start rounded-[0.5rem] text-sm text-muted-foreground sm:pr-12 md:w-40 lg:w-64" id="search-input" name="q" placeholder="Search ..." type="search" x-ref="search"/>
+<kbd class="pointer-events-none absolute right-1.5 top-2 hidden h-5 select-none text-muted-foreground items-center gap-1 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium opacity-100 sm:flex group-hover:bg-accent group-hover:text-accent-foreground">
+<span class="text-xs">⌘</span>
+    K
+  </kbd>
+</form>
+</div>
+<nav class="flex items-center gap-1">
+<a href="https://qr.dingtalk.com/action/joingroup?code=v1,k1,UWvzO6HHSeuvRQ5WXCOMJEijadQV+hDjhMIpiVr8qCs=&amp;_dt_no_comment=1&amp;origin=11?" rel="noopener nofollow" title="Visit DingTalk">
+<div class="inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9">
+<svg fill="currentColor" height="20" viewbox="0 0 24 24" width="20"><circle cx="12" cy="12" opacity="0.2" r="10"></circle><path d="M8 7h4.5a4.5 4.5 0 0 1 0 9H8z"></path></svg>
+</div>
+</a>
+<a href="https://github.com/agentscope-ai/TuFT" rel="noopener nofollow" title="Visit GitHub">
+<div class="inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9">
+<svg fill="currentColor" height="20" viewbox="0 0 16 16" width="20"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" fill-rule="evenodd"></path></svg>
+</div>
+</a>
+<a href="https://discord.gg/wEahC7ZJ" rel="noopener nofollow" title="Visit Discord">
+<div class="inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9">
+<svg fill="currentColor" height="20" viewbox="0 0 16 16" width="20"><path d="M13.545 2.907a13.227 13.227 0 0 0-3.257-1.011.05.05 0 0 0-.052.025c-.141.25-.297.577-.406.833a12.19 12.19 0 0 0-3.658 0 8.258 8.258 0 0 0-.412-.833.051.051 0 0 0-.052-.025c-1.125.194-2.22.534-3.257 1.011a.041.041 0 0 0-.021.018C.356 6.024-.213 9.047.066 12.032c.001.014.01.028.021.037a13.276 13.276 0 0 0 3.995 2.02.05.05 0 0 0 .056-.019c.308-.42.582-.863.818-1.329a.05.05 0 0 0-.01-.059.051.051 0 0 0-.018-.011 8.875 8.875 0 0 1-1.248-.595.05.05 0 0 1-.02-.066.051.051 0 0 1 .015-.019c.084-.063.168-.129.248-.195a.05.05 0 0 1 .051-.007c2.619 1.196 5.454 1.196 8.041 0a.052.052 0 0 1 .053.007c.08.066.164.132.248 .195a.051.051 0 0 1-.004.085 8.254 8.254 0 0 1-1.249 .594.05.05 0 0 0-.03.03.052.052 0 0 0 .003.041c.24.465.515.909.817 1.329a.05.05 0 0 0 .056.019 13.235 13.235 0 0 0 4.001-2.02.049.049 0 0 0 .021-.037c.334-3.451-.559-6.449-2.366-9.106a.034.034 0 0 0-.02-.019Zm-8.198 7.307c-.789 0-1.438-.724-1.438-1.612 0-.889.637-1.613 1.438-1.613.807 0 1.45.73 1.438 1.613 0 .888-.637 1.612-1.438 1.612Zm5.316 0c-.788 0-1.438-.724-1.438-1.612 0-.889.637-1.613 1.438-1.613.807 0 1.451.73 1.438 1.613 0 .888-.631 1.612-1.438 1.612Z"></path></svg>
+</div>
+</a>
+<button @click="darkMode = !darkMode" class="relative inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9" title="Toggle color scheme" type="button">
+<svg class="absolute transition-all scale-100 rotate-0 dark:-rotate-90 dark:scale-0" fill="currentColor" height="16" viewbox="0 96 960 960" width="16" xmlns="http://www.w3.org/2000/svg">
+<path d="M480 685q45.456 0 77.228-31.772Q589 621.456 589 576q0-45.456-31.772-77.228Q525.456 467 480 467q-45.456 0-77.228 31.772Q371 530.544 371 576q0 45.456 31.772 77.228Q434.544 685 480 685Zm0 91q-83 0-141.5-58.5T280 576q0-83 58.5-141.5T480 376q83 0 141.5 58.5T680 576q0 83-58.5 141.5T480 776ZM80 621.5q-19.152 0-32.326-13.174T34.5 576q0-19.152 13.174-32.326T80 530.5h80q19.152 0 32.326 13.174T205.5 576q0 19.152-13.174 32.326T160 621.5H80Zm720 0q-19.152 0-32.326-13.174T754.5 576q0-19.152 13.174-32.326T800 530.5h80q19.152 0 32.326 13.174T925.5 576q0 19.152-13.174 32.326T880 621.5h-80Zm-320-320q-19.152 0-32.326-13.174T434.5 256v-80q0-19.152 13.174-32.326T480 130.5q19.152 0 32.326 13.174T525.5 176v80q0 19.152-13.174 32.326T480 301.5Zm0 720q-19.152 0-32.326-13.17Q434.5 995.152 434.5 976v-80q0-19.152 13.174-32.326T480 850.5q19.152 0 32.326 13.174T525.5 896v80q0 19.152-13.174 32.33-13.174 13.17-32.326 13.17ZM222.174 382.065l-43-42Q165.5 327.391 166 308.239t13.174-33.065q13.435-13.674 32.587-13.674t32.065 13.674l42.239 43q12.674 13.435 12.555 31.706-.12 18.272-12.555 31.946-12.674 13.674-31.445 13.413-18.772-.261-32.446-13.174Zm494 494.761-42.239-43q-12.674-13.435-12.674-32.087t12.674-31.565Q686.609 756.5 705.38 757q18.772.5 32.446 13.174l43 41.761Q794.5 824.609 794 843.761t-13.174 33.065Q767.391 890.5 748.239 890.5t-32.065-13.674Zm-42-494.761Q660.5 369.391 661 350.62q.5-18.772 13.174-32.446l41.761-43Q728.609 261.5 747.761 262t33.065 13.174q13.674 13.435 13.674 32.587t-13.674 32.065l-43 42.239q-13.435 12.674-31.706 12.555-18.272-.12-31.946-12.555Zm-495 494.761Q165.5 863.391 165.5 844.239t13.674-32.065l43-42.239q13.435-12.674 32.087-12.674t31.565 12.674Q299.5 782.609 299 801.38q-.5 18.772-13.174 32.446l-41.761 43Q231.391 890.5 212.239 890t-33.065-13.174ZM480 576Z"></path>
+</svg>
+<svg class="absolute transition-all scale-0 rotate-90 dark:rotate-0 dark:scale-100" fill="currentColor" height="16" viewbox="0 96 960 960" width="16" xmlns="http://www.w3.org/2000/svg">
+<path d="M480 936q-151 0-255.5-104.5T120 576q0-138 90-239.5T440 218q25-3 39 18t-1 44q-17 26-25.5 55t-8.5 61q0 90 63 153t153 63q31 0 61.5-9t54.5-25q21-14 43-1.5t19 39.5q-14 138-117.5 229T480 936Zm0-80q88 0 158-48.5T740 681q-20 5-40 8t-40 3q-123 0-209.5-86.5T364 396q0-20 3-40t8-40q-78 32-126.5 102T200 576q0 116 82 198t198 82Zm-10-270Z"></path>
+</svg>
+</button>
+</nav>
+</div>
+</div>
+</header>
+<div class="flex-1"><div class="container md:grid md:grid-cols-[220px_minmax(0,1fr)] md:gap-6 lg:grid-cols-[240px_minmax(0,1fr)] lg:gap-10"><aside :aria-hidden="!showSidebar" :class="{ 'translate-x-0': showSidebar }" class="fixed inset-y-0 left-0 md:top-14 z-50 md:z-30 bg-background md:bg-transparent transition-all duration-100 -translate-x-full md:translate-x-0 ml-0 p-6 md:p-0 md:-ml-2 md:h-[calc(100vh-3.5rem)] w-5/6 md:w-full overflow-y-auto border-r border-border md:sticky" id="left-sidebar">
+<a class="justify-start text-sm md:!hidden bg-background" href="../index.html">
+<img alt="Logo" class="mr-2 dark:invert" height="16" src="../_static/logo_wo_text.svg" width="16"/><span class="font-bold text-clip whitespace-nowrap">TuFT</span>
+</a>
+<div class="relative overflow-hidden md:overflow-auto my-4 md:my-0">
+<div class="overflow-y-auto h-full w-full relative pr-6"><nav class="table w-full min-w-full my-6 lg:my-8">
+<ul class="current">
+<li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="../getting-started/index.html">快速开始<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
+<li class="toctree-l2"><a class="reference internal" href="../getting-started/installation.html">安装</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../getting-started/quickstart.html">快速开始示例</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="index.html">用户指南<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul class="current" x-show="expanded">
+<li class="toctree-l2"><a class="reference internal" href="chat-sft.html">Chat 监督微调（SFT）</a></li>
+<li class="toctree-l2"><a class="reference internal" href="countdown-rl.html">Countdown 强化学习（RL）</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">持久化</a></li>
+<li class="toctree-l2"><a class="reference internal" href="telemetry.html">可观测性（OpenTelemetry）</a></li>
+</ul>
+</li>
+<li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="../development/index.html">开发<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
+<li class="toctree-l2"><a class="reference internal" href="../development/testing.html">测试指南</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../roadmap.html">路线图</a></li>
+</ul>
+</nav>
+</div>
+</div>
+<button @click="showSidebar = false" class="absolute md:hidden right-4 top-4 rounded-sm opacity-70 transition-opacity hover:opacity-100" type="button">
+<svg class="h-4 w-4" fill="currentColor" height="24" stroke="none" viewbox="0 96 960 960" width="24" xmlns="http://www.w3.org/2000/svg">
+<path d="M480 632 284 828q-11 11-28 11t-28-11q-11-11-11-28t11-28l196-196-196-196q-11-11-11-28t11-28q11-11 28-11t28 11l196 196 196-196q11-11 28-11t28 11q11 11 11 28t-11 28L536 576l196 196q11 11 11 28t-11 28q-11 11-28 11t-28-11L480 632Z"></path>
+</svg>
+</button>
+</aside>
+<main class="relative py-6 lg:gap-10 lg:py-8 xl:grid xl:grid-cols-[1fr_300px]">
+<div class="w-full min-w-0 mx-auto">
+<nav aria-label="breadcrumbs" class="flex items-center mb-4 space-x-1 text-sm text-muted-foreground">
+<a class="overflow-hidden text-ellipsis whitespace-nowrap hover:text-foreground" href="../index.html">
+<span class="hidden md:inline">TuFT</span>
+<svg aria-label="Home" class="md:hidden" fill="currentColor" height="18" stroke="none" viewbox="0 96 960 960" width="18" xmlns="http://www.w3.org/2000/svg">
+<path d="M240 856h120V616h240v240h120V496L480 316 240 496v360Zm-80 80V456l320-240 320 240v480H520V696h-80v240H160Zm320-350Z"></path>
+</svg>
+</a>
+<div class="mr-1">/</div><a class="hover:text-foreground overflow-hidden text-ellipsis whitespace-nowrap" href="index.html">用户指南</a>
+<div class="mr-1">/</div><span aria-current="page" class="font-medium text-foreground overflow-hidden text-ellipsis whitespace-nowrap">持久化</span>
+</nav>
+<div id="content" role="main">
+<section id="id1">
+<h1>持久化<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h1>
+<p>TuFT 支持<strong>可选的持久化</strong>来保存服务器状态。启用后，TuFT 可以在服务器重启后恢复关键的运行时元数据（会话、训练运行、采样会话、future），然后<strong>从磁盘上的检查点重建模型运行时状态</strong>。</p>
+<p>本文档分为两部分：</p>
+<ul class="simple">
+<li><p><strong>第一部分：用户指南</strong> – 如何配置和使用持久化</p></li>
+<li><p><strong>第二部分：设计与内部实现</strong> – 持久化的工作原理</p></li>
+</ul>
+<hr class="docutils"/>
+<section id="id2">
+<h2>目录<a class="headerlink" href="#id2" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id2'">¶</a></h2>
+<section id="id3">
+<h3>第一部分：用户指南<a class="headerlink" href="#id3" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id3'">¶</a></h3>
+<ul class="simple">
+<li><p><a class="reference internal" href="#id6">快速开始</a></p></li>
+<li><p><a class="reference internal" href="#id9">配置选项</a></p></li>
+<li><p><a class="reference internal" href="#id11">持久化后端</a></p></li>
+<li><p><a class="reference internal" href="#id12">持久化的内容</a></p></li>
+<li><p><a class="reference internal" href="#id13">操作工作流</a></p></li>
+<li><p><a class="reference internal" href="#id16">故障排除</a></p></li>
+</ul>
+</section>
+<section id="id4">
+<h3>第二部分：设计与内部实现<a class="headerlink" href="#id4" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id4'">¶</a></h3>
+<ul class="simple">
+<li><p><a class="reference internal" href="#id20">目标和非目标</a></p></li>
+<li><p><a class="reference internal" href="#id23">Redis 键设计</a></p></li>
+<li><p><a class="reference internal" href="#id25">启动恢复语义</a></p></li>
+<li><p><a class="reference internal" href="#id29">安全检查</a></p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils"/>
+<section id="id5">
+<h2>第一部分：用户指南<a class="headerlink" href="#id5" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id5'">¶</a></h2>
+</section>
+<hr class="docutils"/>
+<section id="id6">
+<h2>快速开始<a class="headerlink" href="#id6" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id6'">¶</a></h2>
+<section id="id7">
+<h3>安装可选依赖<a class="headerlink" href="#id7" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id7'">¶</a></h3>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"tuft[persistence]"</span>
+</span></code></pre></div>
+</div>
+</section>
+<section id="id8">
+<h3>启用持久化<a class="headerlink" href="#id8" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id8'">¶</a></h3>
+<p>在 <code class="docutils literal notranslate"><span class="pre">tuft_config.yaml</span></code> 中添加 <code class="docutils literal notranslate"><span class="pre">persistence</span></code> 部分：</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="nt">persistence</span><span class="p">:</span>
+</span><span id="line-2"><span class="w">  </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">REDIS</span>
+</span><span id="line-3"><span class="w">  </span><span class="nt">redis_url</span><span class="p">:</span><span class="w"> </span><span class="s">"redis://localhost:6379/0"</span>
+</span><span id="line-4"><span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="s">"persistence-tuft-server"</span>
+</span></code></pre></div>
+</div>
+<p>基于文件的存储（演示/测试）：</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="nt">persistence</span><span class="p">:</span>
+</span><span id="line-2"><span class="w">  </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">FILE</span>
+</span><span id="line-3"><span class="w">  </span><span class="nt">file_path</span><span class="p">:</span><span class="w"> </span><span class="s">"~/.cache/tuft/file_redis.json"</span>
+</span><span id="line-4"><span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="s">"persistence-tuft-server"</span>
+</span></code></pre></div>
+</div>
+</section>
+</section>
+<hr class="docutils"/>
+<section id="id9">
+<h2>配置选项<a class="headerlink" href="#id9" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id9'">¶</a></h2>
+<p>持久化通过 <code class="docutils literal notranslate"><span class="pre">tuft_config.yaml</span></code> 配置文件中的 <code class="docutils literal notranslate"><span class="pre">persistence</span></code> 部分进行配置。可用的选项如下：</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>选项</p></th>
+<th class="head"><p>类型</p></th>
+<th class="head"><p>默认值</p></th>
+<th class="head"><p>描述</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">mode</span></code></p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">DISABLE</span></code></p></td>
+<td><p>持久化模式：<code class="docutils literal notranslate"><span class="pre">DISABLE</span></code>、<code class="docutils literal notranslate"><span class="pre">REDIS</span></code> 或 <code class="docutils literal notranslate"><span class="pre">FILE</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">redis_url</span></code></p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">redis://localhost:6379/0</span></code></p></td>
+<td><p>Redis 服务器 URL（仅当 <code class="docutils literal notranslate"><span class="pre">mode:</span> <span class="pre">REDIS</span></code> 时使用）</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">file_path</span></code></p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">~/.cache/tuft/file_redis.json</span></code></p></td>
+<td><p>JSON 文件路径（仅当 <code class="docutils literal notranslate"><span class="pre">mode:</span> <span class="pre">FILE</span></code> 时使用）</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">namespace</span></code></p></td>
+<td><p>string</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">persistence-tuft-server</span></code></p></td>
+<td><p>Redis 键的命名空间前缀</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">future_ttl_seconds</span></code></p></td>
+<td><p>integer 或 null</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">86400</span></code>（1天）</p></td>
+<td><p>future 记录的 TTL（秒）。设置为 <code class="docutils literal notranslate"><span class="pre">null</span></code> 表示永不过期。</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">check_fields</span></code></p></td>
+<td><p>list</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">["SUPPORTED_MODELS"]</span></code></p></td>
+<td><p>重启时验证的配置字段列表（参见<a class="reference internal" href="#id29">安全检查</a>）</p></td>
+</tr>
+</tbody>
+</table>
+<section id="id10">
+<h3>完整配置示例<a class="headerlink" href="#id10" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id10'">¶</a></h3>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="nt">persistence</span><span class="p">:</span>
+</span><span id="line-2"><span class="w">  </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">REDIS</span>
+</span><span id="line-3"><span class="w">  </span><span class="nt">redis_url</span><span class="p">:</span><span class="w"> </span><span class="s">"redis://localhost:6379/0"</span>
+</span><span id="line-4"><span class="w">  </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="s">"my-tuft-deployment"</span>
+</span><span id="line-5"><span class="w">  </span><span class="nt">future_ttl_seconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">86400</span><span class="w">  </span><span class="c1"># 1 天</span>
+</span><span id="line-6"><span class="w">  </span><span class="nt">check_fields</span><span class="p">:</span>
+</span><span id="line-7"><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">SUPPORTED_MODELS</span>
+</span><span id="line-8"><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">CHECKPOINT_DIR</span>
+</span></code></pre></div>
+</div>
+</section>
+</section>
+<hr class="docutils"/>
+<section id="id11">
+<h2>持久化后端<a class="headerlink" href="#id11" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id11'">¶</a></h2>
+<p>TuFT 通过 <code class="docutils literal notranslate"><span class="pre">persistence.mode</span></code> 暴露三种模式：</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">DISABLE</span></code>：仅内存；重启时一切丢失。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">REDIS</span></code>：通过 <code class="docutils literal notranslate"><span class="pre">redis-py</span></code> 使用外部 Redis（推荐用于生产）。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">FILE</span></code>：基于文件的类 Redis 存储（用于演示/测试；使用 JSON 文件，不针对并发/性能优化）。</p></li>
+</ul>
+<p>内部，所有记录都存储为 <strong>JSON 序列化的 Pydantic 模型</strong>，每个键一条记录。</p>
+</section>
+<hr class="docutils"/>
+<section id="id12">
+<h2>持久化的内容<a class="headerlink" href="#id12" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id12'">¶</a></h2>
+<p>TuFT 在变更发生时增量持久化<strong>主要服务器子系统的元数据</strong>。具体包括以下子系统的状态：</p>
+<ul class="simple">
+<li><p><strong>会话</strong>（<code class="docutils literal notranslate"><span class="pre">SessionManager</span></code>）</p>
+<ul>
+<li><p>会话元数据、标签、<code class="docutils literal notranslate"><span class="pre">user_id</span></code>、心跳时间戳</p></li>
+<li><p>存储为永久记录（无 TTL）</p></li>
+</ul>
+</li>
+<li><p><strong>训练运行</strong>（<code class="docutils literal notranslate"><span class="pre">TrainingController</span></code>）</p>
+<ul>
+<li><p>训练运行元数据（<code class="docutils literal notranslate"><span class="pre">training_run_id</span></code>、<code class="docutils literal notranslate"><span class="pre">base_model</span></code>、<code class="docutils literal notranslate"><span class="pre">lora_rank</span></code>、<code class="docutils literal notranslate"><span class="pre">model_owner</span></code>、<code class="docutils literal notranslate"><span class="pre">next_seq_id</span></code> 等）</p></li>
+<li><p><strong>检查点记录（仅元数据）</strong>（训练检查点和采样器检查点）存储在单独的键下
+（实际的检查点权重工件位于 <code class="docutils literal notranslate"><span class="pre">checkpoint_dir</span></code> 下的磁盘上，不在 Redis 中）</p></li>
+<li><p>存储为永久记录（无 TTL）</p></li>
+</ul>
+</li>
+<li><p><strong>采样会话</strong>（<code class="docutils literal notranslate"><span class="pre">SamplingController</span></code>）</p>
+<ul>
+<li><p>采样会话元数据 + <strong>采样历史</strong>（seq id + 提示词哈希）</p></li>
+<li><p>存储为永久记录（无 TTL）</p></li>
+</ul>
+</li>
+<li><p><strong>Future</strong>（<code class="docutils literal notranslate"><span class="pre">FutureStore</span></code>）</p>
+<ul>
+<li><p>请求生命周期记录：<code class="docutils literal notranslate"><span class="pre">pending</span></code> / <code class="docutils literal notranslate"><span class="pre">ready</span></code> / <code class="docutils literal notranslate"><span class="pre">failed</span></code></p></li>
+<li><p>包括 <code class="docutils literal notranslate"><span class="pre">operation_type</span></code>、<code class="docutils literal notranslate"><span class="pre">operation_args</span></code>、<code class="docutils literal notranslate"><span class="pre">future_id</span></code>、payload 或 error</p></li>
+<li><p>带 <strong>TTL</strong> 存储（默认：1 天，可通过 <code class="docutils literal notranslate"><span class="pre">future_ttl_seconds</span></code> 配置）</p></li>
+</ul>
+</li>
+<li><p><strong>配置签名</strong>（<code class="docutils literal notranslate"><span class="pre">ConfigSignature</span></code>）</p>
+<ul>
+<li><p>选定 <code class="docutils literal notranslate"><span class="pre">AppConfig</span></code> 字段的快照，用于恢复安全</p></li>
+</ul>
+</li>
+</ul>
+</section>
+<hr class="docutils"/>
+<section id="id13">
+<h2>操作工作流<a class="headerlink" href="#id13" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id13'">¶</a></h2>
+<section id="id14">
+<h3>清除持久化状态<a class="headerlink" href="#id14" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id14'">¶</a></h3>
+<p>如果您有意更改了配置并想重新开始，清除持久化数据：</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">tuft<span class="w"> </span>clear<span class="w"> </span>persistence<span class="w"> </span>--config<span class="w"> </span>/path/to/tuft_config.yaml
+</span></code></pre></div>
+</div>
+<p>这会删除配置的 <code class="docutils literal notranslate"><span class="pre">namespace</span></code> 下的键。它<strong>不会</strong>删除磁盘上的检查点文件。</p>
+</section>
+<section id="id15">
+<h3>安全更改配置<a class="headerlink" href="#id15" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id15'">¶</a></h3>
+<p>更改任何影响恢复安全的字段时的推荐工作流：</p>
+<ul class="simple">
+<li><p>使用<strong>新命名空间</strong>部署，或</p></li>
+<li><p>在重启前显式清除旧命名空间。</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils"/>
+<section id="id16">
+<h2>故障排除<a class="headerlink" href="#id16" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id16'">¶</a></h2>
+<section id="id17">
+<h3>启动失败并显示"配置不匹配"<a class="headerlink" href="#id17" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id17'">¶</a></h3>
+<ul class="simple">
+<li><p><strong>原因</strong>：您使用签名与同一命名空间中存储的签名不同的配置重启了 TuFT。</p></li>
+<li><p><strong>解决方法</strong>：</p>
+<ul>
+<li><p>要么恢复配置更改，</p></li>
+<li><p>要么清除持久化状态（破坏性）并重启，</p></li>
+<li><p>要么为新部署切换到新的 <code class="docutils literal notranslate"><span class="pre">persistence.namespace</span></code>。</p></li>
+</ul>
+</li>
+</ul>
+</section>
+<section id="id18">
+<h3>重启后某些结果标记为失败<a class="headerlink" href="#id18" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id18'">¶</a></h3>
+<p>如果这些 future 是在最新恢复的检查点<strong>之后</strong>创建的（或当不存在检查点时），这是预期的。从客户端重新运行这些操作。</p>
+</section>
+<section id="redis">
+<h3>Redis 无限增长<a class="headerlink" href="#redis" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#redis'">¶</a></h3>
+<p>长期记录（会话、训练运行、采样会话、检查点元数据）不会过期。Future 会按配置的 <code class="docutils literal notranslate"><span class="pre">future_ttl_seconds</span></code>（默认：1 天）过期。您还应该为每个部署设置命名空间并清除未使用的命名空间。</p>
+</section>
+</section>
+<hr class="docutils"/>
+<section id="id19">
+<h2>第二部分：设计与内部实现<a class="headerlink" href="#id19" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id19'">¶</a></h2>
+</section>
+<hr class="docutils"/>
+<section id="id20">
+<h2>目标和非目标<a class="headerlink" href="#id20" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id20'">¶</a></h2>
+<section id="id21">
+<h3>目标<a class="headerlink" href="#id21" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id21'">¶</a></h3>
+<ul class="simple">
+<li><p><strong>崩溃/重启恢复</strong>服务器状态元数据，使用户可以：</p>
+<ul>
+<li><p>重启后列出会话/训练运行/采样会话</p></li>
+<li><p>重启后检索已完成的 future（在 TTL 内）</p></li>
+<li><p>从每个训练运行的<strong>最新检查点</strong>继续训练</p></li>
+</ul>
+</li>
+<li><p><strong>安全优先恢复</strong>：防止服务器配置更改时的静默损坏。</p></li>
+</ul>
+</section>
+<section id="id22">
+<h3>非目标<a class="headerlink" href="#id22" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id22'">¶</a></h3>
+<ul class="simple">
+<li><p>持久化<strong>不会</strong>快照实时 GPU 内存/进行中的模型执行状态。</p></li>
+<li><p>TuFT <strong>不会</strong>在崩溃后重新运行待处理任务。待处理工作被视为不安全，必须重试。</p></li>
+<li><p>持久化<strong>不会</strong>在 Redis 中存储模型权重 blob；权重工件位于 <code class="docutils literal notranslate"><span class="pre">checkpoint_dir</span></code> 下的磁盘上（可以通过 API 归档）。</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils"/>
+<section id="id23">
+<h2>Redis 键设计<a class="headerlink" href="#id23" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id23'">¶</a></h2>
+<p>所有键都以可配置的 <code class="docutils literal notranslate"><span class="pre">namespace</span></code>（默认：<code class="docutils literal notranslate"><span class="pre">persistence-tuft-server</span></code>）为前缀，使用 <code class="docutils literal notranslate"><span class="pre">::</span></code> 作为分隔符：</p>
+<ul class="simple">
+<li><p>顶级记录：
+<code class="docutils literal notranslate"><span class="pre">"{namespace}::{type}::{id}"</span></code></p></li>
+<li><p>嵌套记录：
+<code class="docutils literal notranslate"><span class="pre">"{namespace}::{type}::{parent_id}::{nested_type}::{nested_id}"</span></code></p></li>
+</ul>
+<blockquote>
+<div><p>注意：为避免歧义，部分中的任何字面 <code class="docutils literal notranslate"><span class="pre">::</span></code> 在内部被转义。</p>
+</div></blockquote>
+<section id="id24">
+<h3>键族（高层）<a class="headerlink" href="#id24" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id24'">¶</a></h3>
+<p>使用默认命名空间，TuFT 使用这些主要键族：</p>
+<ul class="simple">
+<li><p><strong>会话</strong>
+<code class="docutils literal notranslate"><span class="pre">persistence-tuft-server::session::{session_id}</span></code></p></li>
+<li><p><strong>训练运行</strong>
+<code class="docutils literal notranslate"><span class="pre">persistence-tuft-server::training_run::{training_run_id}</span></code></p></li>
+<li><p><strong>训练检查点元数据</strong>（嵌套在训练运行下）
+<code class="docutils literal notranslate"><span class="pre">persistence-tuft-server::training_run::{training_run_id}::ckpt::{checkpoint_id}</span></code></p></li>
+<li><p><strong>采样器检查点元数据</strong>（嵌套在训练运行下）
+<code class="docutils literal notranslate"><span class="pre">persistence-tuft-server::training_run::{training_run_id}::sampler_ckpt::{checkpoint_id}</span></code></p></li>
+<li><p><strong>采样会话</strong>
+<code class="docutils literal notranslate"><span class="pre">persistence-tuft-server::sampling_session::{sampling_session_id}</span></code></p></li>
+<li><p><strong>Future</strong>（基于 TTL）
+<code class="docutils literal notranslate"><span class="pre">persistence-tuft-server::future::{request_id}</span></code></p></li>
+<li><p><strong>配置签名</strong>
+<code class="docutils literal notranslate"><span class="pre">persistence-tuft-server::config_signature</span></code></p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils"/>
+<section id="id25">
+<h2>启动恢复语义<a class="headerlink" href="#id25" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id25'">¶</a></h2>
+<p>恢复有<strong>一个预检步骤</strong>加上<strong>两个恢复阶段</strong>：</p>
+<section id="id26">
+<h3>阶段 0：配置验证（服务器启动前）<a class="headerlink" href="#id26" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id26'">¶</a></h3>
+<p>当启用持久化时，TuFT 在启动服务器<strong>之前</strong>验证当前的 <code class="docutils literal notranslate"><span class="pre">AppConfig</span></code> 与存储的配置签名。这旨在防止重启时使用新的不兼容配置静默解释旧状态。</p>
+<p>如果检测到不匹配，TuFT 会中止启动并显示致命错误和差异。</p>
+</section>
+<section id="id27">
+<h3>阶段 1：从持久化后端恢复到内存（控制器构建）<a class="headerlink" href="#id27" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id27'">¶</a></h3>
+<p>在进程启动时，这些组件通过扫描其键前缀并反序列化记录来恢复其内存注册表：</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">SessionManager</span></code> 恢复会话。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">TrainingController</span></code> 恢复训练运行 + 检查点记录。</p>
+<ul>
+<li><p>如果训练运行引用了当前配置中不存在的 <code class="docutils literal notranslate"><span class="pre">base_model</span></code>，则标记为<strong>已损坏</strong>。</p></li>
+</ul>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">SamplingController</span></code> 恢复采样会话。</p>
+<ul>
+<li><p>其 <code class="docutils literal notranslate"><span class="pre">base_model</span></code> 不再支持的采样会话从存储中删除。</p></li>
+</ul>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">FutureStore</span></code> 恢复 future。</p>
+<ul>
+<li><p>已完成的 future（<code class="docutils literal notranslate"><span class="pre">ready</span></code> / <code class="docutils literal notranslate"><span class="pre">failed</span></code>）立即标记为已完成。</p></li>
+<li><p>恢复的 future 还重建 <code class="docutils literal notranslate"><span class="pre">future_id</span></code> 分配状态以保持单调排序。</p></li>
+</ul>
+</li>
+</ul>
+<p>在阶段 1 结束时，TuFT 已恢复<em>元数据</em>，但模型运行时状态（GPU 内存中的适配器/权重）尚未重建。</p>
+</section>
+<section id="id28">
+<h3>阶段 2：基于检查点的恢复（异步初始化）<a class="headerlink" href="#id28" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id28'">¶</a></h3>
+<p>在控制器恢复后，TuFT 执行基于检查点的恢复：</p>
+<ul class="simple">
+<li><p>对于每个未损坏且有可用后端的训练运行：</p>
+<ul>
+<li><p>加载磁盘上的<strong>最新检查点</strong>（并重建适配器状态）</p></li>
+<li><p>将该检查点视为服务器的恢复边界</p></li>
+</ul>
+</li>
+<li><p>Future 与此边界对账：</p>
+<ul>
+<li><p>如果训练运行有一个有效的最新检查点，其 <code class="docutils literal notranslate"><span class="pre">future_id</span> <span class="pre">=</span> <span class="pre">F</span></code>，<strong>所有该运行的 <code class="docutils literal notranslate"><span class="pre">future_id</span> <span class="pre">&gt;</span> <span class="pre">F</span></code> 的 future 都标记为失败</strong>（必须重试）</p></li>
+<li><p>如果不存在检查点，<strong>该运行的所有 future 都标记为失败</strong></p></li>
+</ul>
+</li>
+</ul>
+<p>这意味着 TuFT 保证：</p>
+<ul class="simple">
+<li><p><strong>可以从最新检查点继续训练</strong>，但</p></li>
+<li><p>该检查点之后的任何操作都被认为不安全，需要重试。</p></li>
+</ul>
+<blockquote>
+<div><p>重要：序列 ID 即使在重启后也保持<strong>单调递增</strong>。TuFT 设计上不会将 <code class="docutils literal notranslate"><span class="pre">next_seq_id</span></code> "倒带"到检查点边界。</p>
+</div></blockquote>
+</section>
+</section>
+<hr class="docutils"/>
+<section id="id29">
+<h2>安全检查<a class="headerlink" href="#id29" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id29'">¶</a></h2>
+<p>TuFT 包含重启安全检查，以防止配置在重启之间更改时的静默损坏。</p>
+<section id="id30">
+<h3>配置签名验证（重启安全）<a class="headerlink" href="#id30" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id30'">¶</a></h3>
+<p>TuFT 存储从 <code class="docutils literal notranslate"><span class="pre">AppConfig.get_config_for_persistence()</span></code> 派生的 <code class="docutils literal notranslate"><span class="pre">ConfigSignature</span></code>（特别排除持久化配置本身）。</p>
+<p>启动时，TuFT 比较选定的字段（默认：<code class="docutils literal notranslate"><span class="pre">SUPPORTED_MODELS</span></code>），并可配置为检查额外字段：</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">SUPPORTED_MODELS</span></code>（始终检查；强制）</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">CHECKPOINT_DIR</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">MODEL_OWNER</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">TOY_BACKEND_SEED</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">AUTHORIZED_USERS</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">TELEMETRY</span></code></p></li>
+</ul>
+<p>如果验证失败，启动中止并打印差异。这避免了旧状态引用不再配置的模型，或新部署意外指向旧命名空间的情况。</p>
+</section>
+</section>
+</section>
+</div></div><aside class="hidden text-sm xl:block" id="right-sidebar">
+<div class="sticky top-16 -mt-10 max-h-[calc(100vh-5rem)] h-full overflow-y-auto pt-6 space-y-2"><p class="font-medium">On this page</p>
+<ul>
+<li><a :data-current="activeSection === '#id2'" class="reference internal" href="#id2">目录</a><ul>
+<li><a :data-current="activeSection === '#id3'" class="reference internal" href="#id3">第一部分：用户指南</a></li>
+<li><a :data-current="activeSection === '#id4'" class="reference internal" href="#id4">第二部分：设计与内部实现</a></li>
+</ul>
+</li>
+<li><a :data-current="activeSection === '#id5'" class="reference internal" href="#id5">第一部分：用户指南</a></li>
+<li><a :data-current="activeSection === '#id6'" class="reference internal" href="#id6">快速开始</a><ul>
+<li><a :data-current="activeSection === '#id7'" class="reference internal" href="#id7">安装可选依赖</a></li>
+<li><a :data-current="activeSection === '#id8'" class="reference internal" href="#id8">启用持久化</a></li>
+</ul>
+</li>
+<li><a :data-current="activeSection === '#id9'" class="reference internal" href="#id9">配置选项</a><ul>
+<li><a :data-current="activeSection === '#id10'" class="reference internal" href="#id10">完整配置示例</a></li>
+</ul>
+</li>
+<li><a :data-current="activeSection === '#id11'" class="reference internal" href="#id11">持久化后端</a></li>
+<li><a :data-current="activeSection === '#id12'" class="reference internal" href="#id12">持久化的内容</a></li>
+<li><a :data-current="activeSection === '#id13'" class="reference internal" href="#id13">操作工作流</a><ul>
+<li><a :data-current="activeSection === '#id14'" class="reference internal" href="#id14">清除持久化状态</a></li>
+<li><a :data-current="activeSection === '#id15'" class="reference internal" href="#id15">安全更改配置</a></li>
+</ul>
+</li>
+<li><a :data-current="activeSection === '#id16'" class="reference internal" href="#id16">故障排除</a><ul>
+<li><a :data-current="activeSection === '#id17'" class="reference internal" href="#id17">启动失败并显示"配置不匹配"</a></li>
+<li><a :data-current="activeSection === '#id18'" class="reference internal" href="#id18">重启后某些结果标记为失败</a></li>
+<li><a :data-current="activeSection === '#redis'" class="reference internal" href="#redis">Redis 无限增长</a></li>
+</ul>
+</li>
+<li><a :data-current="activeSection === '#id19'" class="reference internal" href="#id19">第二部分：设计与内部实现</a></li>
+<li><a :data-current="activeSection === '#id20'" class="reference internal" href="#id20">目标和非目标</a><ul>
+<li><a :data-current="activeSection === '#id21'" class="reference internal" href="#id21">目标</a></li>
+<li><a :data-current="activeSection === '#id22'" class="reference internal" href="#id22">非目标</a></li>
+</ul>
+</li>
+<li><a :data-current="activeSection === '#id23'" class="reference internal" href="#id23">Redis 键设计</a><ul>
+<li><a :data-current="activeSection === '#id24'" class="reference internal" href="#id24">键族（高层）</a></li>
+</ul>
+</li>
+<li><a :data-current="activeSection === '#id25'" class="reference internal" href="#id25">启动恢复语义</a><ul>
+<li><a :data-current="activeSection === '#id26'" class="reference internal" href="#id26">阶段 0：配置验证（服务器启动前）</a></li>
+<li><a :data-current="activeSection === '#id27'" class="reference internal" href="#id27">阶段 1：从持久化后端恢复到内存（控制器构建）</a></li>
+<li><a :data-current="activeSection === '#id28'" class="reference internal" href="#id28">阶段 2：基于检查点的恢复（异步初始化）</a></li>
+</ul>
+</li>
+<li><a :data-current="activeSection === '#id29'" class="reference internal" href="#id29">安全检查</a><ul>
+<li><a :data-current="activeSection === '#id30'" class="reference internal" href="#id30">配置签名验证（重启安全）</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</aside>
+</main>
+</div>
+</div><footer class="py-6 border-t border-border md:py-0">
+<div class="container flex flex-col items-center justify-between gap-4 md:h-24 md:flex-row">
+<div class="flex flex-col items-center gap-4 px-8 md:flex-row md:gap-2 md:px-0">
+<p class="text-sm leading-loose text-center text-muted-foreground md:text-left"></p>
+</div>
+</div>
+</footer>
+</div>
+<script src="../_static/documentation_options.js?v=e0ccff72"></script>
+<script src="../_static/doctools.js?v=9bcbadda"></script>
+<script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+<script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+<script src="../_static/copybutton.js?v=f281be69"></script>
+<script defer="defer" src="../_static/theme.js?v=582b20c5"></script>
+<script src="../_static/translations.js?v=beaddf03"></script>
+<script src="../_static/design-tabs.js?v=f930bc37"></script>
+<script src="../_static/custom.js?v=d0898e36"></script>
+</body>
+</html>

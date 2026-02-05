@@ -1,0 +1,155 @@
+/* Custom styles for TuFT documentation (Sphinx Awesome Theme) */
+
+.hero-subtitle {
+    text-align: center;
+    font-size: 1.1rem;
+    font-weight: 500;
+    color: var(--muted);
+    margin-bottom: 2rem;
+}
+
+.quickstart-cta {
+    margin: 1.5rem auto 2.5rem;
+    max-width: 720px;
+}
+
+.quickstart-cta-link {
+    display: block;
+    width: 100%;
+    padding: 0.9rem 1.2rem;
+    border-radius: 0.75rem;
+    border: 1px solid var(--color-gray-200);
+    background: var(--background);
+    color: var(--foreground);
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+    transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+}
+
+.quickstart-cta-link:hover {
+    border-color: var(--color-blue-400);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
+    transform: translateY(-1px);
+}
+
+html.dark .quickstart-cta-link {
+    border-color: var(--color-gray-700);
+}
+
+.sd-card {
+    transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+}
+
+.sd-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.tuft-version-select {
+    margin-left: 0.75rem;
+}
+
+.tuft-version-select-inner {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 0.5rem;
+    border-radius: 0.6rem;
+    border: 1px solid var(--color-gray-200);
+    background: var(--background);
+    width: 9.5rem;
+    position: relative;
+    padding-right: 1.8rem;
+}
+
+.tuft-version-select-inner:focus-within {
+    border-color: var(--color-blue-400);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-blue-400) 20%, transparent);
+}
+
+.tuft-version-icon svg {
+    width: 1rem;
+    height: 1rem;
+    color: var(--color-gray-500);
+}
+
+.tuft-version-select select {
+    flex: 1;
+    min-width: 8.5rem;
+    border: none;
+    background: transparent;
+    color: var(--foreground);
+    font-weight: 600;
+    font-size: 0.8rem;
+    appearance: none;
+    padding-right: 0.5rem;
+}
+
+.tuft-version-select select:focus {
+    outline: none;
+}
+
+html.dark .tuft-version-select-inner {
+    border-color: var(--color-gray-700);
+}
+
+/* Keep sidebar fully expanded */
+#left-sidebar ul[x-show] {
+    display: block !important;
+}
+
+html.dark .tuft-version-icon svg {
+    color: var(--color-gray-300);
+}
+
+html.dark .tuft-version-select select {
+}
+
+.tuft-version-select-inner::after {
+    content: "";
+    position: absolute;
+    right: 0.6rem;
+    width: 1rem;
+    height: 1rem;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%236b7280'%3E%3Cpath d='M5.5 7.5l4.5 4.5 4.5-4.5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 1rem 1rem;
+    pointer-events: none;
+}
+
+html.dark .tuft-version-select-inner::after {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%239ca3af'%3E%3Cpath d='M5.5 7.5l4.5 4.5 4.5-4.5'/%3E%3C/svg%3E");
+}
+
+header a[href="#"] img[alt="Logo"] {
+    width: 36px;
+    height: 36px;
+}
+
+header a[href="#"] span {
+    font-size: 1.125rem;
+}
+
+.tuft-lang-switch {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 2.25rem;
+    padding: 0 0.6rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    border-radius: 0.5rem;
+    border: 1px solid var(--border);
+    background: var(--background);
+    color: var(--foreground);
+    transition: background-color 0.2s, color 0.2s, border-color 0.2s;
+}
+
+.tuft-lang-switch:hover {
+    background: var(--accent);
+    color: var(--accent-foreground);
+}
+

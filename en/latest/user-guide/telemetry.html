@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+
+<html :class="{ 'dark' : darkMode === true }" data-content_root="../" lang="en" x-data="{ darkMode: $persist(window.matchMedia('(prefers-color-scheme: dark)').matches), activeSection: ''}">
+<head>
+<script>
+    (function () {
+      // Set initial color scheme
+      if ((localStorage.getItem("_x_darkMode") === "true") || (window.matchMedia("(prefers-color-scheme: dark)").matches)) {
+        document.documentElement.classList.add("dark");
+      }
+
+      // Watch for media preference changes
+      window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (event) => {
+        localStorage.setItem("_x_darkMode", event.matches);
+        document.documentElement.classList.toggle("dark", event.matches);
+      });
+    })();
+  </script>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<meta charset="utf-8"/>
+<meta content="#ffffff" media="(prefers-color-scheme: light)" name="theme-color"/>
+<meta content="#030711" media="(prefers-color-scheme: dark)" name="theme-color"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<title>Observability (OpenTelemetry) | TuFT</title>
+<meta content="Observability (OpenTelemetry) | TuFT" property="og:title"/>
+<meta content="Observability (OpenTelemetry) | TuFT" name="twitter:title"/>
+<link href="../_static/pygments.css?v=03e43079" rel="stylesheet" type="text/css"/>
+<link href="../_static/theme.css?v=73505e79" rel="stylesheet" type="text/css"/>
+<link href="../_static/copybutton.css?v=76b2166b" rel="stylesheet" type="text/css"/>
+<link href="../_static/sphinx-design.min.css?v=95c83b7e" rel="stylesheet" type="text/css"/>
+<link href="../_static/custom.css?v=31585404" rel="stylesheet" type="text/css"/>
+<link href="../_static/awesome-sphinx-design.css?v=c54898a4" rel="stylesheet" type="text/css"/>
+<link href="../_static/logo_wo_text.svg" rel="icon"/>
+<link href="../search.html" rel="search" title="Search"/>
+<link href="../genindex.html" rel="index" title="Index"/>
+<link href="../development/index.html" rel="next" title="Development"/>
+<link href="persistence.html" rel="prev" title="Persistence"/>
+</head>
+<body :class="{ 'overflow-hidden': showSidebar }" class="min-h-screen font-sans antialiased bg-background text-foreground" x-data="{ showSidebar: false, showScrollTop: false }">
+<div @click.self="showSidebar = false" class="fixed inset-0 z-50 overflow-hidden bg-background/80 backdrop-blur-sm md:hidden" x-cloak="" x-show="showSidebar"></div><div class="relative flex flex-col min-h-screen" id="page"><a class="absolute top-0 left-0 z-[100] block bg-background p-4 text-xl transition -translate-x-full opacity-0 focus:translate-x-0 focus:opacity-100" href="#content">
+      Skip to content
+    </a><header class="sticky top-0 z-40 w-full border-b shadow-xs border-border bg-background/90 backdrop-blur"><div class="container flex items-center h-14">
+<div class="hidden mr-4 md:flex">
+<a class="flex items-center mr-6" href="../index.html">
+<img alt="Logo" class="mr-2 dark:invert" height="24" src="../_static/logo_wo_text.svg" width="24"/><span class="hidden font-bold sm:inline-block text-clip whitespace-nowrap">TuFT</span>
+</a></div><button @click="showSidebar = true" class="inline-flex items-center justify-center h-10 px-0 py-2 mr-2 text-base font-medium transition-colors rounded-md hover:text-accent-foreground hover:bg-transparent md:hidden" type="button">
+<svg aria-hidden="true" fill="currentColor" height="24" viewbox="0 96 960 960" width="24" xmlns="http://www.w3.org/2000/svg">
+<path d="M152.587 825.087q-19.152 0-32.326-13.174t-13.174-32.326q0-19.152 13.174-32.326t32.326-13.174h440q19.152 0 32.326 13.174t13.174 32.326q0 19.152-13.174 32.326t-32.326 13.174h-440Zm0-203.587q-19.152 0-32.326-13.174T107.087 576q0-19.152 13.174-32.326t32.326-13.174h320q19.152 0 32.326 13.174T518.087 576q0 19.152-13.174 32.326T472.587 621.5h-320Zm0-203.587q-19.152 0-32.326-13.174t-13.174-32.326q0-19.152 13.174-32.326t32.326-13.174h440q19.152 0 32.326 13.174t13.174 32.326q0 19.152-13.174 32.326t-32.326 13.174h-440ZM708.913 576l112.174 112.174q12.674 12.674 12.674 31.826t-12.674 31.826Q808.413 764.5 789.261 764.5t-31.826-12.674l-144-144Q600 594.391 600 576t13.435-31.826l144-144q12.674-12.674 31.826-12.674t31.826 12.674q12.674 12.674 12.674 31.826t-12.674 31.826L708.913 576Z"></path>
+</svg>
+<span class="sr-only">Toggle navigation menu</span>
+</button>
+<div class="flex items-center justify-between flex-1 gap-2 sm:gap-4 md:justify-end">
+<div class="flex-1 w-full md:w-auto md:flex-none"><form @keydown.k.window.meta="$refs.search.focus()" action="../search.html" class="relative flex items-center group" id="searchbox" method="get">
+<input aria-label="Search the docs" class="inline-flex items-center font-medium transition-colors bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background border border-input hover:bg-accent focus:bg-accent hover:text-accent-foreground focus:text-accent-foreground hover:placeholder-accent-foreground py-2 px-4 relative h-9 w-full justify-start rounded-[0.5rem] text-sm text-muted-foreground sm:pr-12 md:w-40 lg:w-64" id="search-input" name="q" placeholder="Search ..." type="search" x-ref="search"/>
+<kbd class="pointer-events-none absolute right-1.5 top-2 hidden h-5 select-none text-muted-foreground items-center gap-1 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium opacity-100 sm:flex group-hover:bg-accent group-hover:text-accent-foreground">
+<span class="text-xs">⌘</span>
+    K
+  </kbd>
+</form>
+</div>
+<nav class="flex items-center gap-1">
+<a href="https://qr.dingtalk.com/action/joingroup?code=v1,k1,UWvzO6HHSeuvRQ5WXCOMJEijadQV+hDjhMIpiVr8qCs=&amp;_dt_no_comment=1&amp;origin=11?" rel="noopener nofollow" title="Visit DingTalk">
+<div class="inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9">
+<svg fill="currentColor" height="20" viewbox="0 0 24 24" width="20"><circle cx="12" cy="12" opacity="0.2" r="10"></circle><path d="M8 7h4.5a4.5 4.5 0 0 1 0 9H8z"></path></svg>
+</div>
+</a>
+<a href="https://github.com/agentscope-ai/TuFT" rel="noopener nofollow" title="Visit GitHub">
+<div class="inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9">
+<svg fill="currentColor" height="20" viewbox="0 0 16 16" width="20"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" fill-rule="evenodd"></path></svg>
+</div>
+</a>
+<a href="https://discord.gg/wEahC7ZJ" rel="noopener nofollow" title="Visit Discord">
+<div class="inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9">
+<svg fill="currentColor" height="20" viewbox="0 0 16 16" width="20"><path d="M13.545 2.907a13.227 13.227 0 0 0-3.257-1.011.05.05 0 0 0-.052.025c-.141.25-.297.577-.406.833a12.19 12.19 0 0 0-3.658 0 8.258 8.258 0 0 0-.412-.833.051.051 0 0 0-.052-.025c-1.125.194-2.22.534-3.257 1.011a.041.041 0 0 0-.021.018C.356 6.024-.213 9.047.066 12.032c.001.014.01.028.021.037a13.276 13.276 0 0 0 3.995 2.02.05.05 0 0 0 .056-.019c.308-.42.582-.863.818-1.329a.05.05 0 0 0-.01-.059.051.051 0 0 0-.018-.011 8.875 8.875 0 0 1-1.248-.595.05.05 0 0 1-.02-.066.051.051 0 0 1 .015-.019c.084-.063.168-.129.248-.195a.05.05 0 0 1 .051-.007c2.619 1.196 5.454 1.196 8.041 0a.052.052 0 0 1 .053.007c.08.066.164.132.248 .195a.051.051 0 0 1-.004.085 8.254 8.254 0 0 1-1.249 .594.05.05 0 0 0-.03.03.052.052 0 0 0 .003.041c.24.465.515.909.817 1.329a.05.05 0 0 0 .056.019 13.235 13.235 0 0 0 4.001-2.02.049.049 0 0 0 .021-.037c.334-3.451-.559-6.449-2.366-9.106a.034.034 0 0 0-.02-.019Zm-8.198 7.307c-.789 0-1.438-.724-1.438-1.612 0-.889.637-1.613 1.438-1.613.807 0 1.45.73 1.438 1.613 0 .888-.637 1.612-1.438 1.612Zm5.316 0c-.788 0-1.438-.724-1.438-1.612 0-.889.637-1.613 1.438-1.613.807 0 1.451.73 1.438 1.613 0 .888-.631 1.612-1.438 1.612Z"></path></svg>
+</div>
+</a>
+<button @click="darkMode = !darkMode" class="relative inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9" title="Toggle color scheme" type="button">
+<svg class="absolute transition-all scale-100 rotate-0 dark:-rotate-90 dark:scale-0" fill="currentColor" height="16" viewbox="0 96 960 960" width="16" xmlns="http://www.w3.org/2000/svg">
+<path d="M480 685q45.456 0 77.228-31.772Q589 621.456 589 576q0-45.456-31.772-77.228Q525.456 467 480 467q-45.456 0-77.228 31.772Q371 530.544 371 576q0 45.456 31.772 77.228Q434.544 685 480 685Zm0 91q-83 0-141.5-58.5T280 576q0-83 58.5-141.5T480 376q83 0 141.5 58.5T680 576q0 83-58.5 141.5T480 776ZM80 621.5q-19.152 0-32.326-13.174T34.5 576q0-19.152 13.174-32.326T80 530.5h80q19.152 0 32.326 13.174T205.5 576q0 19.152-13.174 32.326T160 621.5H80Zm720 0q-19.152 0-32.326-13.174T754.5 576q0-19.152 13.174-32.326T800 530.5h80q19.152 0 32.326 13.174T925.5 576q0 19.152-13.174 32.326T880 621.5h-80Zm-320-320q-19.152 0-32.326-13.174T434.5 256v-80q0-19.152 13.174-32.326T480 130.5q19.152 0 32.326 13.174T525.5 176v80q0 19.152-13.174 32.326T480 301.5Zm0 720q-19.152 0-32.326-13.17Q434.5 995.152 434.5 976v-80q0-19.152 13.174-32.326T480 850.5q19.152 0 32.326 13.174T525.5 896v80q0 19.152-13.174 32.33-13.174 13.17-32.326 13.17ZM222.174 382.065l-43-42Q165.5 327.391 166 308.239t13.174-33.065q13.435-13.674 32.587-13.674t32.065 13.674l42.239 43q12.674 13.435 12.555 31.706-.12 18.272-12.555 31.946-12.674 13.674-31.445 13.413-18.772-.261-32.446-13.174Zm494 494.761-42.239-43q-12.674-13.435-12.674-32.087t12.674-31.565Q686.609 756.5 705.38 757q18.772.5 32.446 13.174l43 41.761Q794.5 824.609 794 843.761t-13.174 33.065Q767.391 890.5 748.239 890.5t-32.065-13.674Zm-42-494.761Q660.5 369.391 661 350.62q.5-18.772 13.174-32.446l41.761-43Q728.609 261.5 747.761 262t33.065 13.174q13.674 13.435 13.674 32.587t-13.674 32.065l-43 42.239q-13.435 12.674-31.706 12.555-18.272-.12-31.946-12.555Zm-495 494.761Q165.5 863.391 165.5 844.239t13.674-32.065l43-42.239q13.435-12.674 32.087-12.674t31.565 12.674Q299.5 782.609 299 801.38q-.5 18.772-13.174 32.446l-41.761 43Q231.391 890.5 212.239 890t-33.065-13.174ZM480 576Z"></path>
+</svg>
+<svg class="absolute transition-all scale-0 rotate-90 dark:rotate-0 dark:scale-100" fill="currentColor" height="16" viewbox="0 96 960 960" width="16" xmlns="http://www.w3.org/2000/svg">
+<path d="M480 936q-151 0-255.5-104.5T120 576q0-138 90-239.5T440 218q25-3 39 18t-1 44q-17 26-25.5 55t-8.5 61q0 90 63 153t153 63q31 0 61.5-9t54.5-25q21-14 43-1.5t19 39.5q-14 138-117.5 229T480 936Zm0-80q88 0 158-48.5T740 681q-20 5-40 8t-40 3q-123 0-209.5-86.5T364 396q0-20 3-40t8-40q-78 32-126.5 102T200 576q0 116 82 198t198 82Zm-10-270Z"></path>
+</svg>
+</button>
+</nav>
+</div>
+</div>
+</header>
+<div class="flex-1"><div class="container md:grid md:grid-cols-[220px_minmax(0,1fr)] md:gap-6 lg:grid-cols-[240px_minmax(0,1fr)] lg:gap-10"><aside :aria-hidden="!showSidebar" :class="{ 'translate-x-0': showSidebar }" class="fixed inset-y-0 left-0 md:top-14 z-50 md:z-30 bg-background md:bg-transparent transition-all duration-100 -translate-x-full md:translate-x-0 ml-0 p-6 md:p-0 md:-ml-2 md:h-[calc(100vh-3.5rem)] w-5/6 md:w-full overflow-y-auto border-r border-border md:sticky" id="left-sidebar">
+<a class="justify-start text-sm md:!hidden bg-background" href="../index.html">
+<img alt="Logo" class="mr-2 dark:invert" height="16" src="../_static/logo_wo_text.svg" width="16"/><span class="font-bold text-clip whitespace-nowrap">TuFT</span>
+</a>
+<div class="relative overflow-hidden md:overflow-auto my-4 md:my-0">
+<div class="overflow-y-auto h-full w-full relative pr-6"><nav class="table w-full min-w-full my-6 lg:my-8">
+<ul class="current">
+<li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="../getting-started/index.html">Getting Started<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
+<li class="toctree-l2"><a class="reference internal" href="../getting-started/installation.html">Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../getting-started/quickstart.html">Quick Start Example</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="index.html">User Guide<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul class="current" x-show="expanded">
+<li class="toctree-l2"><a class="reference internal" href="chat-sft.html">Chat Supervised Fine-Tuning (SFT)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="countdown-rl.html">Countdown Reinforcement Learning (RL)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="persistence.html">Persistence</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">Observability (OpenTelemetry)</a></li>
+</ul>
+</li>
+<li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="../development/index.html">Development<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
+<li class="toctree-l2"><a class="reference internal" href="../development/testing.html">Testing Guide</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../roadmap.html">Roadmap</a></li>
+</ul>
+</nav>
+</div>
+</div>
+<button @click="showSidebar = false" class="absolute md:hidden right-4 top-4 rounded-sm opacity-70 transition-opacity hover:opacity-100" type="button">
+<svg class="h-4 w-4" fill="currentColor" height="24" stroke="none" viewbox="0 96 960 960" width="24" xmlns="http://www.w3.org/2000/svg">
+<path d="M480 632 284 828q-11 11-28 11t-28-11q-11-11-11-28t11-28l196-196-196-196q-11-11-11-28t11-28q11-11 28-11t28 11l196 196 196-196q11-11 28-11t28 11q11 11 11 28t-11 28L536 576l196 196q11 11 11 28t-11 28q-11 11-28 11t-28-11L480 632Z"></path>
+</svg>
+</button>
+</aside>
+<main class="relative py-6 lg:gap-10 lg:py-8 xl:grid xl:grid-cols-[1fr_300px]">
+<div class="w-full min-w-0 mx-auto">
+<nav aria-label="breadcrumbs" class="flex items-center mb-4 space-x-1 text-sm text-muted-foreground">
+<a class="overflow-hidden text-ellipsis whitespace-nowrap hover:text-foreground" href="../index.html">
+<span class="hidden md:inline">TuFT</span>
+<svg aria-label="Home" class="md:hidden" fill="currentColor" height="18" stroke="none" viewbox="0 96 960 960" width="18" xmlns="http://www.w3.org/2000/svg">
+<path d="M240 856h120V616h240v240h120V496L480 316 240 496v360Zm-80 80V456l320-240 320 240v480H520V696h-80v240H160Zm320-350Z"></path>
+</svg>
+</a>
+<div class="mr-1">/</div><a class="hover:text-foreground overflow-hidden text-ellipsis whitespace-nowrap" href="index.html">User Guide</a>
+<div class="mr-1">/</div><span aria-current="page" class="font-medium text-foreground overflow-hidden text-ellipsis whitespace-nowrap">Observability (OpenTelemetry)</span>
+</nav>
+<div id="content" role="main">
+<section id="observability-opentelemetry">
+<h1>Observability (OpenTelemetry)<a class="headerlink" href="#observability-opentelemetry" title="Link to this heading">¶</a></h1>
+<p>TuFT includes optional <strong>OpenTelemetry</strong> integration for:</p>
+<ul class="simple">
+<li><p><strong>Traces</strong> (distributed tracing across HTTP → controllers → Ray actors)</p></li>
+<li><p><strong>Metrics</strong> (request/workflow + resource metrics)</p></li>
+<li><p><strong>Logs</strong> (Python logging bridged into the OpenTelemetry log pipeline)</p></li>
+</ul>
+<p>This document explains both <strong>how to enable telemetry</strong> and <strong>how TuFT wires it internally</strong> (what gets recorded, correlation keys, and how to extend instrumentation).</p>
+<hr class="docutils"/>
+<section id="table-of-contents">
+<h2>Table of Contents<a class="headerlink" href="#table-of-contents" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#table-of-contents'">¶</a></h2>
+<ul class="simple">
+<li><p><a class="reference internal" href="#quick-start">Quick start</a></p></li>
+<li><p><a class="reference internal" href="#exporters-and-configuration">Exporters and configuration</a></p></li>
+<li><p><a class="reference internal" href="#what-tuft-records">What TuFT records</a></p>
+<ul>
+<li><p><a class="reference internal" href="#traces">Traces</a></p></li>
+<li><p><a class="reference internal" href="#metrics">Metrics</a></p></li>
+<li><p><a class="reference internal" href="#logs">Logs</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#correlation-share-keys">Correlation / share keys</a></p></li>
+<li><p><a class="reference internal" href="#context-propagation-ray-actors">Context propagation (Ray actors)</a></p></li>
+<li><p><a class="reference internal" href="#developer-guide">Developer guide</a></p></li>
+<li><p><a class="reference internal" href="#recommended-collector-configuration">Recommended collector configuration</a></p></li>
+<li><p><a class="reference internal" href="#troubleshooting">Troubleshooting</a></p></li>
+</ul>
+</section>
+<hr class="docutils"/>
+<section id="quick-start">
+<h2>Quick start<a class="headerlink" href="#quick-start" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#quick-start'">¶</a></h2>
+<p>Enable telemetry in <code class="docutils literal notranslate"><span class="pre">tuft_config.yaml</span></code>:</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="nt">telemetry</span><span class="p">:</span>
+</span><span id="line-2"><span class="w">  </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</span><span id="line-3"><span class="w">  </span><span class="nt">service_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tuft</span>
+</span><span id="line-4"><span class="w">  </span><span class="nt">otlp_endpoint</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">http://localhost:4317</span>
+</span><span id="line-5"><span class="w">  </span><span class="nt">resource_attributes</span><span class="p">:</span>
+</span><span id="line-6"><span class="w">    </span><span class="nt">deployment.environment</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">production</span>
+</span><span id="line-7"><span class="w">    </span><span class="nt">service.version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1.0.0</span>
+</span></code></pre></div>
+</div>
+<blockquote>
+<div><p><strong>Note</strong>: <code class="docutils literal notranslate"><span class="pre">resource_attributes</span></code> allows you to attach custom metadata to all telemetry data. Common attributes include:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">deployment.environment</span></code>: e.g., <code class="docutils literal notranslate"><span class="pre">production</span></code>, <code class="docutils literal notranslate"><span class="pre">staging</span></code>, <code class="docutils literal notranslate"><span class="pre">development</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">service.version</span></code>: your application version</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">service.namespace</span></code>: logical grouping of services</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">host.name</span></code>: hostname of the machine</p></li>
+<li><p>Custom attributes for your organization (e.g., <code class="docutils literal notranslate"><span class="pre">team</span></code>, <code class="docutils literal notranslate"><span class="pre">region</span></code>)</p></li>
+</ul>
+</div></blockquote>
+<p>Alternatively set the endpoint via env var:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="nb">export</span><span class="w"> </span><span class="nv">TUFT_OTLP_ENDPOINT</span><span class="o">=</span>http://localhost:4317
+</span></code></pre></div>
+</div>
+<p>Debug mode (prints to console exporters):</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="nb">export</span><span class="w"> </span><span class="nv">TUFT_OTEL_DEBUG</span><span class="o">=</span><span class="m">1</span>
+</span></code></pre></div>
+</div>
+</section>
+<hr class="docutils"/>
+<section id="exporters-and-configuration">
+<h2>Exporters and configuration<a class="headerlink" href="#exporters-and-configuration" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#exporters-and-configuration'">¶</a></h2>
+<p>TuFT initializes OpenTelemetry providers at CLI startup and uses one of two exporter modes:</p>
+<ul class="simple">
+<li><p><strong>Console exporters</strong> if <code class="docutils literal notranslate"><span class="pre">TUFT_OTEL_DEBUG=1</span></code></p></li>
+<li><p><strong>OTLP gRPC exporters</strong> otherwise</p></li>
+</ul>
+<p>The endpoint resolution order is:</p>
+<ol class="arabic simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">telemetry.otlp_endpoint</span></code> from config</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">TUFT_OTLP_ENDPOINT</span></code> environment variable</p></li>
+<li><p>OpenTelemetry exporter default endpoint (if neither is provided)</p></li>
+</ol>
+<p>TuFT exports:</p>
+<ul class="simple">
+<li><p>traces via <code class="docutils literal notranslate"><span class="pre">OTLPSpanExporter</span></code> (gRPC)</p></li>
+<li><p>metrics via <code class="docutils literal notranslate"><span class="pre">OTLPMetricExporter</span></code> (gRPC)</p></li>
+<li><p>logs via <code class="docutils literal notranslate"><span class="pre">OTLPLogExporter</span></code> (gRPC)</p></li>
+</ul>
+<p>Resource metadata:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">service.name</span></code> is set to <code class="docutils literal notranslate"><span class="pre">telemetry.service_name</span></code></p></li>
+<li><p>additional resource attributes can be attached via <code class="docutils literal notranslate"><span class="pre">telemetry.resource_attributes</span></code></p></li>
+</ul>
+</section>
+<hr class="docutils"/>
+<section id="what-tuft-records">
+<h2>What TuFT records<a class="headerlink" href="#what-tuft-records" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#what-tuft-records'">¶</a></h2>
+<section id="traces">
+<h3>Traces<a class="headerlink" href="#traces" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#traces'">¶</a></h3>
+<p>TuFT produces spans at several layers:</p>
+<ul class="simple">
+<li><p><strong>HTTP server spans</strong>: FastAPI is instrumented when telemetry is enabled.</p></li>
+<li><p><strong>Controller spans</strong>: training/sampling operations create spans such as:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">training_controller.create_model</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">training_controller.run_forward</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">training_controller.run_forward_backward</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">training_controller.run_optim_step</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">training_controller.save_checkpoint</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sampling_controller.create_sampling_session</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">sampling_controller.run_sample</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">future_store.execute_operation</span></code></p></li>
+</ul>
+</li>
+<li><p><strong>Persistence spans</strong>: Redis operations create spans such as:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">redis.SET</span></code>, <code class="docutils literal notranslate"><span class="pre">redis.GET</span></code>, <code class="docutils literal notranslate"><span class="pre">redis.DEL</span></code>, <code class="docutils literal notranslate"><span class="pre">redis.SCAN</span></code></p></li>
+</ul>
+</li>
+<li><p><strong>Backend / actor spans</strong> (when running with Ray):</p>
+<ul>
+<li><p>spans inside model actors (e.g. HuggingFace backend) are linked via propagated context</p></li>
+<li><p>examples include <code class="docutils literal notranslate"><span class="pre">hf_model.forward_backward</span></code>, <code class="docutils literal notranslate"><span class="pre">hf_model.optim_step</span></code>, <code class="docutils literal notranslate"><span class="pre">hf_model.save_state</span></code>, etc.</p></li>
+</ul>
+</li>
+</ul>
+<p>TuFT attaches key identifiers as span attributes (see <a class="reference internal" href="#correlation-share-keys">Correlation / share keys</a>).</p>
+</section>
+<section id="metrics">
+<h3>Metrics<a class="headerlink" href="#metrics" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#metrics'">¶</a></h3>
+<p>TuFT emits two broad categories of metrics:</p>
+<section id="workflow-metrics-counters-histograms">
+<h4>1) Workflow metrics (counters/histograms)<a class="headerlink" href="#workflow-metrics-counters-histograms" title="Link to this heading">¶</a></h4>
+<p>Examples (names are stable and can be used as dashboards/alerts):</p>
+<ul class="simple">
+<li><p>Training:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.training.models.active</span></code> (up/down counter)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.training.tokens_per_second</span></code> (histogram)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.training.checkpoints.saved</span></code> (counter)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.training.checkpoint.size_bytes</span></code> (histogram)</p></li>
+</ul>
+</li>
+<li><p>Sampling:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.sampling.sessions.active</span></code> (up/down counter)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.sampling.requests</span></code> (counter)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.sampling.duration</span></code> (histogram, seconds)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.sampling.tokens_per_second</span></code> (histogram)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.sampling.output_tokens</span></code> (histogram)</p></li>
+</ul>
+</li>
+<li><p>Futures:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.futures.queue_length</span></code> (up/down counter)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.futures.created</span></code> (counter)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.futures.completed</span></code> (counter)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.futures.wait_time</span></code> (histogram)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.futures.execution_time</span></code> (histogram)</p></li>
+</ul>
+</li>
+<li><p>Persistence:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.redis.operation.duration</span></code> (histogram)</p></li>
+</ul>
+</li>
+</ul>
+<p>Many metrics include attributes such as <code class="docutils literal notranslate"><span class="pre">base_model</span></code>, <code class="docutils literal notranslate"><span class="pre">operation_type</span></code>, <code class="docutils literal notranslate"><span class="pre">model_id</span></code>, or <code class="docutils literal notranslate"><span class="pre">queue_state</span></code> to support filtering and grouping.</p>
+</section>
+<section id="resource-metrics-observable-gauges">
+<h4>2) Resource metrics (observable gauges)<a class="headerlink" href="#resource-metrics-observable-gauges" title="Link to this heading">¶</a></h4>
+<p>When telemetry is enabled, TuFT starts a background resource collector that exports observable gauges such as:</p>
+<ul class="simple">
+<li><p>CPU:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.resource.cpu.utilization_percent</span></code></p></li>
+</ul>
+</li>
+<li><p>Memory:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.resource.memory.used_bytes</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.resource.memory.total_bytes</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.resource.memory.utilization_percent</span></code></p></li>
+</ul>
+</li>
+<li><p>GPU (if NVML is available):</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.resource.gpu.utilization_percent</span></code> (with attribute <code class="docutils literal notranslate"><span class="pre">gpu_id</span></code>)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.resource.gpu.memory_used_bytes</span></code> (with attribute <code class="docutils literal notranslate"><span class="pre">gpu_id</span></code>)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.resource.gpu.memory_total_bytes</span></code> (with attribute <code class="docutils literal notranslate"><span class="pre">gpu_id</span></code>)</p></li>
+</ul>
+</li>
+<li><p>Process:</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.resource.process.memory_used_bytes</span></code></p></li>
+</ul>
+</li>
+</ul>
+</section>
+</section>
+<section id="logs">
+<h3>Logs<a class="headerlink" href="#logs" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#logs'">¶</a></h3>
+<p>TuFT bridges Python logging into OpenTelemetry:</p>
+<ul class="simple">
+<li><p>log records are exported via the configured OTel log provider</p></li>
+<li><p>existing logging handlers are not removed (OTel handler is added)</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils"/>
+<section id="correlation-share-keys">
+<h2>Correlation / share keys<a class="headerlink" href="#correlation-share-keys" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#correlation-share-keys'">¶</a></h2>
+<p>TuFT is multi-tenant and multi-client. To make traces searchable and linkable across components, TuFT sets a small set of <strong>high-signal attributes</strong> on spans.</p>
+<p>You can treat these as “share keys” in your observability backend:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.session_id</span></code></p>
+<ul>
+<li><p>links a user session across training + sampling activity</p></li>
+</ul>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.training_run_id</span></code></p>
+<ul>
+<li><p>links all spans for a specific training run (LoRA adapter lifecycle)</p></li>
+</ul>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.sampling_session_id</span></code></p>
+<ul>
+<li><p>links all spans for a specific sampling session</p></li>
+</ul>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.request_id</span></code></p>
+<ul>
+<li><p>links FutureStore execution spans with the async future lifecycle</p></li>
+</ul>
+</li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.operation_type</span></code></p>
+<ul>
+<li><p>categorizes futures (e.g. <code class="docutils literal notranslate"><span class="pre">forward_backward</span></code>, <code class="docutils literal notranslate"><span class="pre">optim_step</span></code>, <code class="docutils literal notranslate"><span class="pre">sample</span></code>)</p></li>
+</ul>
+</li>
+<li><p>(additional common attributes)</p>
+<ul>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.base_model</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.lora_rank</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.backward</span></code></p></li>
+</ul>
+</li>
+</ul>
+<section id="how-to-use-these-keys-in-practice">
+<h3>How to use these keys in practice<a class="headerlink" href="#how-to-use-these-keys-in-practice" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#how-to-use-these-keys-in-practice'">¶</a></h3>
+<ul class="simple">
+<li><p>Given a <strong>session_id</strong> from the client, filter traces by <code class="docutils literal notranslate"><span class="pre">tuft.session_id</span> <span class="pre">=</span> <span class="pre">&lt;id&gt;</span></code>.</p></li>
+<li><p>Given a <strong>training_run_id</strong>, filter by <code class="docutils literal notranslate"><span class="pre">tuft.training_run_id</span> <span class="pre">=</span> <span class="pre">&lt;id&gt;</span></code>.</p></li>
+<li><p>Given a <strong>sampling_session_id</strong>, filter by <code class="docutils literal notranslate"><span class="pre">tuft.sampling_session_id</span> <span class="pre">=</span> <span class="pre">&lt;id&gt;</span></code>.</p></li>
+<li><p>Given an async <strong>request_id</strong> (future), filter by <code class="docutils literal notranslate"><span class="pre">tuft.request_id</span> <span class="pre">=</span> <span class="pre">&lt;id&gt;</span></code>.</p></li>
+</ul>
+<p>This is the recommended way to trace activity across:</p>
+<ul class="simple">
+<li><p>session → training client → training controller → backend execution</p></li>
+<li><p>session → sampling client → sampling controller → backend execution</p></li>
+<li><p>API call → future enqueue → future execution → result retrieval</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils"/>
+<section id="context-propagation-ray-actors">
+<h2>Context propagation (Ray actors)<a class="headerlink" href="#context-propagation-ray-actors" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#context-propagation-ray-actors'">¶</a></h2>
+<p>When TuFT executes work inside Ray actors, it propagates the OpenTelemetry context explicitly:</p>
+<ul class="simple">
+<li><p>At the controller/backend boundary, TuFT <strong>injects</strong> the current trace context into a serializable dict.</p></li>
+<li><p>The Ray actor side <strong>extracts</strong> that context and starts child spans under that context.</p></li>
+</ul>
+<p>This provides end-to-end traces that cross process boundaries even when Ray scheduling changes the execution location.</p>
+</section>
+<hr class="docutils"/>
+<section id="developer-guide">
+<h2>Developer guide<a class="headerlink" href="#developer-guide" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#developer-guide'">¶</a></h2>
+<section id="creating-spans">
+<h3>Creating spans<a class="headerlink" href="#creating-spans" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#creating-spans'">¶</a></h3>
+<p>Use <code class="docutils literal notranslate"><span class="pre">get_tracer()</span></code> and standard OpenTelemetry span APIs:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="kn">from</span><span class="w"> </span><span class="nn">tuft.telemetry.tracing</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_tracer</span>
+</span><span id="line-2">
+</span><span id="line-3"><span class="n">tracer</span> <span class="o">=</span> <span class="n">get_tracer</span><span class="p">(</span><span class="s2">"tuft.my_module"</span><span class="p">)</span>
+</span><span id="line-4"><span class="k">with</span> <span class="n">tracer</span><span class="o">.</span><span class="n">start_as_current_span</span><span class="p">(</span><span class="s2">"my_operation"</span><span class="p">)</span> <span class="k">as</span> <span class="n">span</span><span class="p">:</span>
+</span><span id="line-5">    <span class="n">span</span><span class="o">.</span><span class="n">set_attribute</span><span class="p">(</span><span class="s2">"tuft.session_id"</span><span class="p">,</span> <span class="n">session_id</span><span class="p">)</span>
+</span><span id="line-6">    <span class="n">span</span><span class="o">.</span><span class="n">set_attribute</span><span class="p">(</span><span class="s2">"tuft.training_run_id"</span><span class="p">,</span> <span class="n">training_run_id</span><span class="p">)</span>
+</span><span id="line-7">    <span class="c1"># ... your logic ...</span>
+</span></code></pre></div>
+</div>
+</section>
+<section id="recording-metrics">
+<h3>Recording metrics<a class="headerlink" href="#recording-metrics" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#recording-metrics'">¶</a></h3>
+<p>Use the centralized metrics registry:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="kn">from</span><span class="w"> </span><span class="nn">tuft.telemetry.metrics</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_metrics</span>
+</span><span id="line-2">
+</span><span id="line-3"><span class="n">metrics</span> <span class="o">=</span> <span class="n">get_metrics</span><span class="p">()</span>
+</span><span id="line-4"><span class="n">metrics</span><span class="o">.</span><span class="n">futures_created</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="p">{</span><span class="s2">"operation_type"</span><span class="p">:</span> <span class="s2">"forward_backward"</span><span class="p">})</span>
+</span><span id="line-5"><span class="n">metrics</span><span class="o">.</span><span class="n">futures_execution_time</span><span class="o">.</span><span class="n">record</span><span class="p">(</span><span class="mf">0.123</span><span class="p">,</span> <span class="p">{</span><span class="s2">"operation_type"</span><span class="p">:</span> <span class="s2">"forward_backward"</span><span class="p">})</span>
+</span></code></pre></div>
+</div>
+</section>
+<section id="choosing-attributes">
+<h3>Choosing attributes<a class="headerlink" href="#choosing-attributes" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#choosing-attributes'">¶</a></h3>
+<p>Prefer:</p>
+<ul class="simple">
+<li><p>stable identifiers (<code class="docutils literal notranslate"><span class="pre">session_id</span></code>, <code class="docutils literal notranslate"><span class="pre">training_run_id</span></code>, <code class="docutils literal notranslate"><span class="pre">sampling_session_id</span></code>, <code class="docutils literal notranslate"><span class="pre">request_id</span></code>)</p></li>
+<li><p>low-cardinality labels for metrics (e.g. <code class="docutils literal notranslate"><span class="pre">base_model</span></code>, <code class="docutils literal notranslate"><span class="pre">operation_type</span></code>, <code class="docutils literal notranslate"><span class="pre">queue_state</span></code>)</p></li>
+</ul>
+<p>Avoid putting user prompts or raw payloads into span attributes.</p>
+</section>
+</section>
+<hr class="docutils"/>
+<section id="recommended-collector-configuration">
+<h2>Recommended collector configuration<a class="headerlink" href="#recommended-collector-configuration" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#recommended-collector-configuration'">¶</a></h2>
+<p>TuFT exports OTLP over <strong>gRPC</strong> by default. We recommend running an OpenTelemetry Collector (or an observability backend that provides an OTLP receiver) listening on the configured <code class="docutils literal notranslate"><span class="pre">otlp_endpoint</span></code> (commonly <code class="docutils literal notranslate"><span class="pre">4317</span></code>).</p>
+<p>At minimum, ensure:</p>
+<ul class="simple">
+<li><p>the collector has an <strong>OTLP receiver</strong> enabled (gRPC)</p></li>
+<li><p>traces/metrics/logs pipelines are configured to accept OTLP and forward to your backend (Jaeger/Tempo, Prometheus, SigNoz, etc.)</p></li>
+</ul>
+<p>TuFT-specific knobs:</p>
+<ul class="simple">
+<li><p>set <code class="docutils literal notranslate"><span class="pre">telemetry.service_name</span></code> to a stable value (e.g. <code class="docutils literal notranslate"><span class="pre">tuft-prod</span></code>)</p></li>
+<li><p>use <code class="docutils literal notranslate"><span class="pre">telemetry.resource_attributes</span></code> to tag deployments (e.g. environment, region, version)</p></li>
+</ul>
+</section>
+<hr class="docutils"/>
+<section id="troubleshooting">
+<h2>Troubleshooting<a class="headerlink" href="#troubleshooting" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#troubleshooting'">¶</a></h2>
+<section id="no-telemetry-shows-up">
+<h3>No telemetry shows up<a class="headerlink" href="#no-telemetry-shows-up" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#no-telemetry-shows-up'">¶</a></h3>
+<ul class="simple">
+<li><p>Ensure <code class="docutils literal notranslate"><span class="pre">telemetry.enabled:</span> <span class="pre">true</span></code>.</p></li>
+<li><p>Ensure the OTLP endpoint is reachable from the TuFT server process.</p></li>
+<li><p>Try debug mode to confirm instrumentation works:</p></li>
+</ul>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="nb">export</span><span class="w"> </span><span class="nv">TUFT_OTEL_DEBUG</span><span class="o">=</span><span class="m">1</span>
+</span></code></pre></div>
+</div>
+</section>
+<section id="gpu-metrics-missing">
+<h3>GPU metrics missing<a class="headerlink" href="#gpu-metrics-missing" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#gpu-metrics-missing'">¶</a></h3>
+<ul class="simple">
+<li><p>GPU gauges require NVML (<code class="docutils literal notranslate"><span class="pre">pynvml</span></code>) and a working NVML environment. TuFT will gracefully skip GPU metrics if unavailable.</p></li>
+</ul>
+</section>
+</section>
+</section>
+</div></div><aside class="hidden text-sm xl:block" id="right-sidebar">
+<div class="sticky top-16 -mt-10 max-h-[calc(100vh-5rem)] h-full overflow-y-auto pt-6 space-y-2"><p class="font-medium">On this page</p>
+<ul>
+<li><a :data-current="activeSection === '#table-of-contents'" class="reference internal" href="#table-of-contents">Table of Contents</a></li>
+<li><a :data-current="activeSection === '#quick-start'" class="reference internal" href="#quick-start">Quick start</a></li>
+<li><a :data-current="activeSection === '#exporters-and-configuration'" class="reference internal" href="#exporters-and-configuration">Exporters and configuration</a></li>
+<li><a :data-current="activeSection === '#what-tuft-records'" class="reference internal" href="#what-tuft-records">What TuFT records</a><ul>
+<li><a :data-current="activeSection === '#traces'" class="reference internal" href="#traces">Traces</a></li>
+<li><a :data-current="activeSection === '#metrics'" class="reference internal" href="#metrics">Metrics</a><ul>
+<li><a :data-current="activeSection === '#workflow-metrics-counters-histograms'" class="reference internal" href="#workflow-metrics-counters-histograms">1) Workflow metrics (counters/histograms)</a></li>
+<li><a :data-current="activeSection === '#resource-metrics-observable-gauges'" class="reference internal" href="#resource-metrics-observable-gauges">2) Resource metrics (observable gauges)</a></li>
+</ul>
+</li>
+<li><a :data-current="activeSection === '#logs'" class="reference internal" href="#logs">Logs</a></li>
+</ul>
+</li>
+<li><a :data-current="activeSection === '#correlation-share-keys'" class="reference internal" href="#correlation-share-keys">Correlation / share keys</a><ul>
+<li><a :data-current="activeSection === '#how-to-use-these-keys-in-practice'" class="reference internal" href="#how-to-use-these-keys-in-practice">How to use these keys in practice</a></li>
+</ul>
+</li>
+<li><a :data-current="activeSection === '#context-propagation-ray-actors'" class="reference internal" href="#context-propagation-ray-actors">Context propagation (Ray actors)</a></li>
+<li><a :data-current="activeSection === '#developer-guide'" class="reference internal" href="#developer-guide">Developer guide</a><ul>
+<li><a :data-current="activeSection === '#creating-spans'" class="reference internal" href="#creating-spans">Creating spans</a></li>
+<li><a :data-current="activeSection === '#recording-metrics'" class="reference internal" href="#recording-metrics">Recording metrics</a></li>
+<li><a :data-current="activeSection === '#choosing-attributes'" class="reference internal" href="#choosing-attributes">Choosing attributes</a></li>
+</ul>
+</li>
+<li><a :data-current="activeSection === '#recommended-collector-configuration'" class="reference internal" href="#recommended-collector-configuration">Recommended collector configuration</a></li>
+<li><a :data-current="activeSection === '#troubleshooting'" class="reference internal" href="#troubleshooting">Troubleshooting</a><ul>
+<li><a :data-current="activeSection === '#no-telemetry-shows-up'" class="reference internal" href="#no-telemetry-shows-up">No telemetry shows up</a></li>
+<li><a :data-current="activeSection === '#gpu-metrics-missing'" class="reference internal" href="#gpu-metrics-missing">GPU metrics missing</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</aside>
+</main>
+</div>
+</div><footer class="py-6 border-t border-border md:py-0">
+<div class="container flex flex-col items-center justify-between gap-4 md:h-24 md:flex-row">
+<div class="flex flex-col items-center gap-4 px-8 md:flex-row md:gap-2 md:px-0">
+<p class="text-sm leading-loose text-center text-muted-foreground md:text-left"></p>
+</div>
+</div>
+</footer>
+</div>
+<script src="../_static/documentation_options.js?v=360bc84d"></script>
+<script src="../_static/doctools.js?v=9bcbadda"></script>
+<script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+<script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+<script src="../_static/copybutton.js?v=f281be69"></script>
+<script defer="defer" src="../_static/theme.js?v=582b20c5"></script>
+<script src="../_static/design-tabs.js?v=f930bc37"></script>
+<script src="../_static/custom.js?v=d0898e36"></script>
+</body>
+</html>

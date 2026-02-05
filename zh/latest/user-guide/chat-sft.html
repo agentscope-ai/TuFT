@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+
+<html :class="{ 'dark' : darkMode === true }" data-content_root="../" lang="zh-CN" x-data="{ darkMode: $persist(window.matchMedia('(prefers-color-scheme: dark)').matches), activeSection: ''}">
+<head>
+<script>
+    (function () {
+      // Set initial color scheme
+      if ((localStorage.getItem("_x_darkMode") === "true") || (window.matchMedia("(prefers-color-scheme: dark)").matches)) {
+        document.documentElement.classList.add("dark");
+      }
+
+      // Watch for media preference changes
+      window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (event) => {
+        localStorage.setItem("_x_darkMode", event.matches);
+        document.documentElement.classList.toggle("dark", event.matches);
+      });
+    })();
+  </script>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<meta charset="utf-8"/>
+<meta content="#ffffff" media="(prefers-color-scheme: light)" name="theme-color"/>
+<meta content="#030711" media="(prefers-color-scheme: dark)" name="theme-color"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<title>Chat 监督微调（SFT） | TuFT</title>
+<meta content="Chat 监督微调（SFT） | TuFT" property="og:title"/>
+<meta content="Chat 监督微调（SFT） | TuFT" name="twitter:title"/>
+<link href="../_static/pygments.css?v=03e43079" rel="stylesheet" type="text/css"/>
+<link href="../_static/theme.css?v=73505e79" rel="stylesheet" type="text/css"/>
+<link href="../_static/copybutton.css?v=76b2166b" rel="stylesheet" type="text/css"/>
+<link href="../_static/sphinx-design.min.css?v=95c83b7e" rel="stylesheet" type="text/css"/>
+<link href="../_static/custom.css?v=31585404" rel="stylesheet" type="text/css"/>
+<link href="../_static/awesome-sphinx-design.css?v=c54898a4" rel="stylesheet" type="text/css"/>
+<link href="../_static/logo_wo_text.svg" rel="icon"/>
+<link href="../search.html" rel="search" title="搜索"/>
+<link href="../genindex.html" rel="index" title="索引"/>
+<link href="countdown-rl.html" rel="next" title="Countdown 强化学习（RL）"/>
+<link href="index.html" rel="prev" title="用户指南"/>
+</head>
+<body :class="{ 'overflow-hidden': showSidebar }" class="min-h-screen font-sans antialiased bg-background text-foreground" x-data="{ showSidebar: false, showScrollTop: false }">
+<div @click.self="showSidebar = false" class="fixed inset-0 z-50 overflow-hidden bg-background/80 backdrop-blur-sm md:hidden" x-cloak="" x-show="showSidebar"></div><div class="relative flex flex-col min-h-screen" id="page"><a class="absolute top-0 left-0 z-[100] block bg-background p-4 text-xl transition -translate-x-full opacity-0 focus:translate-x-0 focus:opacity-100" href="#content">
+      Skip to content
+    </a><header class="sticky top-0 z-40 w-full border-b shadow-xs border-border bg-background/90 backdrop-blur"><div class="container flex items-center h-14">
+<div class="hidden mr-4 md:flex">
+<a class="flex items-center mr-6" href="../index.html">
+<img alt="Logo" class="mr-2 dark:invert" height="24" src="../_static/logo_wo_text.svg" width="24"/><span class="hidden font-bold sm:inline-block text-clip whitespace-nowrap">TuFT</span>
+</a></div><button @click="showSidebar = true" class="inline-flex items-center justify-center h-10 px-0 py-2 mr-2 text-base font-medium transition-colors rounded-md hover:text-accent-foreground hover:bg-transparent md:hidden" type="button">
+<svg aria-hidden="true" fill="currentColor" height="24" viewbox="0 96 960 960" width="24" xmlns="http://www.w3.org/2000/svg">
+<path d="M152.587 825.087q-19.152 0-32.326-13.174t-13.174-32.326q0-19.152 13.174-32.326t32.326-13.174h440q19.152 0 32.326 13.174t13.174 32.326q0 19.152-13.174 32.326t-32.326 13.174h-440Zm0-203.587q-19.152 0-32.326-13.174T107.087 576q0-19.152 13.174-32.326t32.326-13.174h320q19.152 0 32.326 13.174T518.087 576q0 19.152-13.174 32.326T472.587 621.5h-320Zm0-203.587q-19.152 0-32.326-13.174t-13.174-32.326q0-19.152 13.174-32.326t32.326-13.174h440q19.152 0 32.326 13.174t13.174 32.326q0 19.152-13.174 32.326t-32.326 13.174h-440ZM708.913 576l112.174 112.174q12.674 12.674 12.674 31.826t-12.674 31.826Q808.413 764.5 789.261 764.5t-31.826-12.674l-144-144Q600 594.391 600 576t13.435-31.826l144-144q12.674-12.674 31.826-12.674t31.826 12.674q12.674 12.674 12.674 31.826t-12.674 31.826L708.913 576Z"></path>
+</svg>
+<span class="sr-only">Toggle navigation menu</span>
+</button>
+<div class="flex items-center justify-between flex-1 gap-2 sm:gap-4 md:justify-end">
+<div class="flex-1 w-full md:w-auto md:flex-none"><form @keydown.k.window.meta="$refs.search.focus()" action="../search.html" class="relative flex items-center group" id="searchbox" method="get">
+<input aria-label="Search the docs" class="inline-flex items-center font-medium transition-colors bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background border border-input hover:bg-accent focus:bg-accent hover:text-accent-foreground focus:text-accent-foreground hover:placeholder-accent-foreground py-2 px-4 relative h-9 w-full justify-start rounded-[0.5rem] text-sm text-muted-foreground sm:pr-12 md:w-40 lg:w-64" id="search-input" name="q" placeholder="Search ..." type="search" x-ref="search"/>
+<kbd class="pointer-events-none absolute right-1.5 top-2 hidden h-5 select-none text-muted-foreground items-center gap-1 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium opacity-100 sm:flex group-hover:bg-accent group-hover:text-accent-foreground">
+<span class="text-xs">⌘</span>
+    K
+  </kbd>
+</form>
+</div>
+<nav class="flex items-center gap-1">
+<a href="https://qr.dingtalk.com/action/joingroup?code=v1,k1,UWvzO6HHSeuvRQ5WXCOMJEijadQV+hDjhMIpiVr8qCs=&amp;_dt_no_comment=1&amp;origin=11?" rel="noopener nofollow" title="Visit DingTalk">
+<div class="inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9">
+<svg fill="currentColor" height="20" viewbox="0 0 24 24" width="20"><circle cx="12" cy="12" opacity="0.2" r="10"></circle><path d="M8 7h4.5a4.5 4.5 0 0 1 0 9H8z"></path></svg>
+</div>
+</a>
+<a href="https://github.com/agentscope-ai/TuFT" rel="noopener nofollow" title="Visit GitHub">
+<div class="inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9">
+<svg fill="currentColor" height="20" viewbox="0 0 16 16" width="20"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" fill-rule="evenodd"></path></svg>
+</div>
+</a>
+<a href="https://discord.gg/wEahC7ZJ" rel="noopener nofollow" title="Visit Discord">
+<div class="inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9">
+<svg fill="currentColor" height="20" viewbox="0 0 16 16" width="20"><path d="M13.545 2.907a13.227 13.227 0 0 0-3.257-1.011.05.05 0 0 0-.052.025c-.141.25-.297.577-.406.833a12.19 12.19 0 0 0-3.658 0 8.258 8.258 0 0 0-.412-.833.051.051 0 0 0-.052-.025c-1.125.194-2.22.534-3.257 1.011a.041.041 0 0 0-.021.018C.356 6.024-.213 9.047.066 12.032c.001.014.01.028.021.037a13.276 13.276 0 0 0 3.995 2.02.05.05 0 0 0 .056-.019c.308-.42.582-.863.818-1.329a.05.05 0 0 0-.01-.059.051.051 0 0 0-.018-.011 8.875 8.875 0 0 1-1.248-.595.05.05 0 0 1-.02-.066.051.051 0 0 1 .015-.019c.084-.063.168-.129.248-.195a.05.05 0 0 1 .051-.007c2.619 1.196 5.454 1.196 8.041 0a.052.052 0 0 1 .053.007c.08.066.164.132.248 .195a.051.051 0 0 1-.004.085 8.254 8.254 0 0 1-1.249 .594.05.05 0 0 0-.03.03.052.052 0 0 0 .003.041c.24.465.515.909.817 1.329a.05.05 0 0 0 .056.019 13.235 13.235 0 0 0 4.001-2.02.049.049 0 0 0 .021-.037c.334-3.451-.559-6.449-2.366-9.106a.034.034 0 0 0-.02-.019Zm-8.198 7.307c-.789 0-1.438-.724-1.438-1.612 0-.889.637-1.613 1.438-1.613.807 0 1.45.73 1.438 1.613 0 .888-.637 1.612-1.438 1.612Zm5.316 0c-.788 0-1.438-.724-1.438-1.612 0-.889.637-1.613 1.438-1.613.807 0 1.451.73 1.438 1.613 0 .888-.631 1.612-1.438 1.612Z"></path></svg>
+</div>
+</a>
+<button @click="darkMode = !darkMode" class="relative inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9" title="Toggle color scheme" type="button">
+<svg class="absolute transition-all scale-100 rotate-0 dark:-rotate-90 dark:scale-0" fill="currentColor" height="16" viewbox="0 96 960 960" width="16" xmlns="http://www.w3.org/2000/svg">
+<path d="M480 685q45.456 0 77.228-31.772Q589 621.456 589 576q0-45.456-31.772-77.228Q525.456 467 480 467q-45.456 0-77.228 31.772Q371 530.544 371 576q0 45.456 31.772 77.228Q434.544 685 480 685Zm0 91q-83 0-141.5-58.5T280 576q0-83 58.5-141.5T480 376q83 0 141.5 58.5T680 576q0 83-58.5 141.5T480 776ZM80 621.5q-19.152 0-32.326-13.174T34.5 576q0-19.152 13.174-32.326T80 530.5h80q19.152 0 32.326 13.174T205.5 576q0 19.152-13.174 32.326T160 621.5H80Zm720 0q-19.152 0-32.326-13.174T754.5 576q0-19.152 13.174-32.326T800 530.5h80q19.152 0 32.326 13.174T925.5 576q0 19.152-13.174 32.326T880 621.5h-80Zm-320-320q-19.152 0-32.326-13.174T434.5 256v-80q0-19.152 13.174-32.326T480 130.5q19.152 0 32.326 13.174T525.5 176v80q0 19.152-13.174 32.326T480 301.5Zm0 720q-19.152 0-32.326-13.17Q434.5 995.152 434.5 976v-80q0-19.152 13.174-32.326T480 850.5q19.152 0 32.326 13.174T525.5 896v80q0 19.152-13.174 32.33-13.174 13.17-32.326 13.17ZM222.174 382.065l-43-42Q165.5 327.391 166 308.239t13.174-33.065q13.435-13.674 32.587-13.674t32.065 13.674l42.239 43q12.674 13.435 12.555 31.706-.12 18.272-12.555 31.946-12.674 13.674-31.445 13.413-18.772-.261-32.446-13.174Zm494 494.761-42.239-43q-12.674-13.435-12.674-32.087t12.674-31.565Q686.609 756.5 705.38 757q18.772.5 32.446 13.174l43 41.761Q794.5 824.609 794 843.761t-13.174 33.065Q767.391 890.5 748.239 890.5t-32.065-13.674Zm-42-494.761Q660.5 369.391 661 350.62q.5-18.772 13.174-32.446l41.761-43Q728.609 261.5 747.761 262t33.065 13.174q13.674 13.435 13.674 32.587t-13.674 32.065l-43 42.239q-13.435 12.674-31.706 12.555-18.272-.12-31.946-12.555Zm-495 494.761Q165.5 863.391 165.5 844.239t13.674-32.065l43-42.239q13.435-12.674 32.087-12.674t31.565 12.674Q299.5 782.609 299 801.38q-.5 18.772-13.174 32.446l-41.761 43Q231.391 890.5 212.239 890t-33.065-13.174ZM480 576Z"></path>
+</svg>
+<svg class="absolute transition-all scale-0 rotate-90 dark:rotate-0 dark:scale-100" fill="currentColor" height="16" viewbox="0 96 960 960" width="16" xmlns="http://www.w3.org/2000/svg">
+<path d="M480 936q-151 0-255.5-104.5T120 576q0-138 90-239.5T440 218q25-3 39 18t-1 44q-17 26-25.5 55t-8.5 61q0 90 63 153t153 63q31 0 61.5-9t54.5-25q21-14 43-1.5t19 39.5q-14 138-117.5 229T480 936Zm0-80q88 0 158-48.5T740 681q-20 5-40 8t-40 3q-123 0-209.5-86.5T364 396q0-20 3-40t8-40q-78 32-126.5 102T200 576q0 116 82 198t198 82Zm-10-270Z"></path>
+</svg>
+</button>
+</nav>
+</div>
+</div>
+</header>
+<div class="flex-1"><div class="container md:grid md:grid-cols-[220px_minmax(0,1fr)] md:gap-6 lg:grid-cols-[240px_minmax(0,1fr)] lg:gap-10"><aside :aria-hidden="!showSidebar" :class="{ 'translate-x-0': showSidebar }" class="fixed inset-y-0 left-0 md:top-14 z-50 md:z-30 bg-background md:bg-transparent transition-all duration-100 -translate-x-full md:translate-x-0 ml-0 p-6 md:p-0 md:-ml-2 md:h-[calc(100vh-3.5rem)] w-5/6 md:w-full overflow-y-auto border-r border-border md:sticky" id="left-sidebar">
+<a class="justify-start text-sm md:!hidden bg-background" href="../index.html">
+<img alt="Logo" class="mr-2 dark:invert" height="16" src="../_static/logo_wo_text.svg" width="16"/><span class="font-bold text-clip whitespace-nowrap">TuFT</span>
+</a>
+<div class="relative overflow-hidden md:overflow-auto my-4 md:my-0">
+<div class="overflow-y-auto h-full w-full relative pr-6"><nav class="table w-full min-w-full my-6 lg:my-8">
+<ul class="current">
+<li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="../getting-started/index.html">快速开始<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
+<li class="toctree-l2"><a class="reference internal" href="../getting-started/installation.html">安装</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../getting-started/quickstart.html">快速开始示例</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="index.html">用户指南<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul class="current" x-show="expanded">
+<li class="toctree-l2 current"><a class="current reference internal" href="#">Chat 监督微调（SFT）</a></li>
+<li class="toctree-l2"><a class="reference internal" href="countdown-rl.html">Countdown 强化学习（RL）</a></li>
+<li class="toctree-l2"><a class="reference internal" href="persistence.html">持久化</a></li>
+<li class="toctree-l2"><a class="reference internal" href="telemetry.html">可观测性（OpenTelemetry）</a></li>
+</ul>
+</li>
+<li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="../development/index.html">开发<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
+<li class="toctree-l2"><a class="reference internal" href="../development/testing.html">测试指南</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../roadmap.html">路线图</a></li>
+</ul>
+</nav>
+</div>
+</div>
+<button @click="showSidebar = false" class="absolute md:hidden right-4 top-4 rounded-sm opacity-70 transition-opacity hover:opacity-100" type="button">
+<svg class="h-4 w-4" fill="currentColor" height="24" stroke="none" viewbox="0 96 960 960" width="24" xmlns="http://www.w3.org/2000/svg">
+<path d="M480 632 284 828q-11 11-28 11t-28-11q-11-11-11-28t11-28l196-196-196-196q-11-11-11-28t11-28q11-11 28-11t28 11l196 196 196-196q11-11 28-11t28 11q11 11 11 28t-11 28L536 576l196 196q11 11 11 28t-11 28q-11 11-28 11t-28-11L480 632Z"></path>
+</svg>
+</button>
+</aside>
+<main class="relative py-6 lg:gap-10 lg:py-8 xl:grid xl:grid-cols-[1fr_300px]">
+<div class="w-full min-w-0 mx-auto">
+<nav aria-label="breadcrumbs" class="flex items-center mb-4 space-x-1 text-sm text-muted-foreground">
+<a class="overflow-hidden text-ellipsis whitespace-nowrap hover:text-foreground" href="../index.html">
+<span class="hidden md:inline">TuFT</span>
+<svg aria-label="Home" class="md:hidden" fill="currentColor" height="18" stroke="none" viewbox="0 96 960 960" width="18" xmlns="http://www.w3.org/2000/svg">
+<path d="M240 856h120V616h240v240h120V496L480 316 240 496v360Zm-80 80V456l320-240 320 240v480H520V696h-80v240H160Zm320-350Z"></path>
+</svg>
+</a>
+<div class="mr-1">/</div><a class="hover:text-foreground overflow-hidden text-ellipsis whitespace-nowrap" href="index.html">用户指南</a>
+<div class="mr-1">/</div><span aria-current="page" class="font-medium text-foreground overflow-hidden text-ellipsis whitespace-nowrap">Chat 监督微调（SFT）</span>
+</nav>
+<div id="content" role="main">
+<section id="chat-sft">
+<h1>Chat 监督微调（SFT）<a class="headerlink" href="#chat-sft" title="Link to this heading">¶</a></h1>
+<p>本指南演示如何使用运行中的 TuFT 服务器对<strong>聊天格式数据</strong>进行<strong>监督微调（SFT）</strong>。完整的可运行代码在 <code class="docutils literal notranslate"><span class="pre">examples/chat_sft/chat_sft.ipynb</span></code> notebook 中。虽然这是一个通用的 SFT 指南，但它也记录了用户在使用 TuFT 进行 SFT 时可能遇到的常见问题，并提供逐步指导帮助他们成功完成端到端运行。</p>
+<hr class="docutils"/>
+<section id="id1">
+<h2>您将学到<a class="headerlink" href="#id1" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id1'">¶</a></h2>
+<ol class="arabic simple">
+<li><p>如何从 HuggingFace 加载<strong>聊天数据集</strong>并提取多轮 <code class="docutils literal notranslate"><span class="pre">messages</span></code></p></li>
+<li><p>如何使用<strong>模型聊天模板</strong>格式化对话（<code class="docutils literal notranslate"><span class="pre">apply_chat_template</span></code>）</p></li>
+<li><p>如何实现<strong>仅助手损失掩码</strong>并计算用于评估的掩码负对数似然</p></li>
+<li><p>如何构建 <code class="docutils literal notranslate"><span class="pre">Datum</span></code> 对象并通过 TuFT 服务器运行端到端的 <strong>LoRA SFT</strong> 循环</p></li>
+<li><p>如何根据训练/测试曲线选择和调优 <strong>LoRA rank</strong> 和<strong>学习率</strong></p></li>
+</ol>
+</section>
+<hr class="docutils"/>
+<section id="id2">
+<h2>目录<a class="headerlink" href="#id2" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id2'">¶</a></h2>
+<ol class="arabic simple">
+<li><p><a class="reference internal" href="#sft-vs-rl">何时使用 SFT vs. RL</a></p></li>
+<li><p><a class="reference internal" href="#id4">数据集</a></p></li>
+<li><p><a class="reference internal" href="#sft">最小训练示例（SFT）</a></p></li>
+<li><p><a class="reference internal" href="#id5">关键概念</a></p>
+<ul class="simple">
+<li><p><a class="reference internal" href="#id6">聊天格式化与模板</a></p></li>
+<li><p><a class="reference internal" href="#id7">损失掩码（仅助手）</a></p></li>
+<li><p><a class="reference internal" href="#datum">Datum 格式</a></p></li>
+<li><p><a class="reference internal" href="#id8">损失函数</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#id9">参数选择</a></p></li>
+<li><p><a class="reference internal" href="#id12">常见问题</a></p></li>
+</ol>
+</section>
+<hr class="docutils"/>
+<section id="sft-vs-rl">
+<h2>何时使用 SFT vs. RL<a class="headerlink" href="#sft-vs-rl" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#sft-vs-rl'">¶</a></h2>
+<section id="id3">
+<h3>SFT vs. RL（高层对比）<a class="headerlink" href="#id3" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id3'">¶</a></h3>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>主题</p></th>
+<th class="head"><p>SFT（监督微调）</p></th>
+<th class="head"><p>RL（强化学习）</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>训练信号</p></td>
+<td><p>示范（目标响应）</p></td>
+<td><p>奖励/偏好（标量或排名）</p></td>
+</tr>
+<tr class="row-odd"><td><p>适用场景</p></td>
+<td><p>风格、格式、指令遵循、基于精选答案的领域行为</p></td>
+<td><p>将行为与偏好/约束对齐、安全策略、多目标权衡</p></td>
+</tr>
+<tr class="row-even"><td><p>所需数据</p></td>
+<td><p>高质量的助手响应</p></td>
+<td><p>奖励模型、偏好对或评估器</p></td>
+</tr>
+<tr class="row-odd"><td><p>典型工作流</p></td>
+<td><p>通常是第一阶段</p></td>
+<td><p>通常在 SFT 之后（SFT → RL）</p></td>
+</tr>
+<tr class="row-even"><td><p>训练数据/信号示例</p></td>
+<td><p>输入输出对，如 prompt："改写成礼貌的邮件..." → target："尊敬的...敬上..."</p></td>
+<td><p>LLM 评判：对 A vs B 排名或打分</p></td>
+</tr>
+</tbody>
+</table>
+<p><strong>经验法则</strong></p>
+<ul class="simple">
+<li><p>当您能提供好的"黄金"助手响应并希望模型模仿明确的目标输出时，使用 <strong>SFT</strong>。</p></li>
+<li><p>当没有单一正确答案，但您可以通过奖励或偏好信号定义什么是"更好"时，使用 <strong>RL</strong>，通常基于任务要求如有用性、安全性、风格、格式或工具使用行为。</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils"/>
+<section id="id4">
+<h2>数据集<a class="headerlink" href="#id4" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id4'">¶</a></h2>
+<p>本指南使用 <strong><a class="reference external" href="https://huggingface.co/datasets/HuggingFaceH4/no_robots"><code class="docutils literal notranslate"><span class="pre">no_robots</span></code></a></strong>。</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>数据集</p></th>
+<th class="head"><p>来源</p></th>
+<th class="head"><p>大小</p></th>
+<th class="head"><p>训练目标</p></th>
+<th class="head"><p>用例</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">no_robots</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">HuggingFaceH4/no_robots</span></code></p></td>
+<td><p>约 9.5K 训练 + 500 测试</p></td>
+<td><p>所有助手消息（掩码）</p></td>
+<td><p>快速实验</p></td>
+</tr>
+</tbody>
+</table>
+<p>最小加载器：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="kn">from</span><span class="w"> </span><span class="nn">datasets</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_dataset</span>
+</span><span id="line-2">
+</span><span id="line-3"><span class="n">ds</span> <span class="o">=</span> <span class="n">load_dataset</span><span class="p">(</span><span class="s2">"HuggingFaceH4/no_robots"</span><span class="p">)</span>
+</span><span id="line-4"><span class="n">train_data</span> <span class="o">=</span> <span class="p">[</span><span class="n">row</span><span class="p">[</span><span class="s2">"messages"</span><span class="p">]</span> <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">ds</span><span class="p">[</span><span class="s2">"train"</span><span class="p">]]</span>
+</span><span id="line-5"><span class="n">test_data</span>  <span class="o">=</span> <span class="p">[</span><span class="n">row</span><span class="p">[</span><span class="s2">"messages"</span><span class="p">]</span> <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">ds</span><span class="p">[</span><span class="s2">"test"</span><span class="p">]]</span>
+</span></code></pre></div>
+</div>
+<p>每个样本是一个聊天消息列表：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">{"role": "user" | "assistant", "content": "..."}
+</span></code></pre></div>
+</div>
+</section>
+<hr class="docutils"/>
+<section id="sft">
+<h2>最小训练示例（SFT）<a class="headerlink" href="#sft" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#sft'">¶</a></h2>
+<p><strong>TuFT</strong>（Tenant-unified FineTuning，租户统一微调）是一个多租户系统，为大语言模型的微调提供统一的服务 API。它支持 Tinker 服务 API，可以与 Tinker SDK 一起使用。与 Tinker 不同，TuFT 可以在本地 GPU 上运行；以下实验在本地 <strong>2× NVIDIA A100-SXM4-80GB</strong> 设置上进行（驱动 550.54.15，CUDA 12.9）。运行示例前，请按照<a class="reference internal" href="../getting-started/installation.html"><span class="std std-doc">安装指南</span></a>在本地启动 TuFT 服务器。</p>
+<p>关键 TuFT 调用（完整代码在 <code class="docutils literal notranslate"><span class="pre">examples/chat_sft/chat_sft.ipynb</span></code>）：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="kn">import</span><span class="w"> </span><span class="nn">tinker</span>
+</span><span id="line-2"><span class="kn">from</span><span class="w"> </span><span class="nn">tinker</span><span class="w"> </span><span class="kn">import</span> <span class="n">types</span>
+</span><span id="line-3">
+</span><span id="line-4"><span class="n">service_client</span> <span class="o">=</span> <span class="n">tinker</span><span class="o">.</span><span class="n">ServiceClient</span><span class="p">(</span><span class="n">base_url</span><span class="o">=</span><span class="s2">"http://localhost:10610"</span><span class="p">,</span> <span class="n">api_key</span><span class="o">=</span><span class="n">TINKER_API_KEY</span><span class="p">)</span>
+</span><span id="line-5">
+</span><span id="line-6"><span class="n">training_client</span> <span class="o">=</span> <span class="n">service_client</span><span class="o">.</span><span class="n">create_lora_training_client</span><span class="p">(</span>
+</span><span id="line-7">    <span class="n">base_model</span><span class="o">=</span><span class="n">BASE_MODEL</span><span class="p">,</span>
+</span><span id="line-8">    <span class="n">rank</span><span class="o">=</span><span class="n">LORA_RANK</span><span class="p">,</span>
+</span><span id="line-9">    <span class="n">train_mlp</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="line-10">    <span class="n">train_attn</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="line-11">    <span class="n">train_unembed</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="line-12"><span class="p">)</span>
+</span><span id="line-13">
+</span><span id="line-14"><span class="n">fwdbwd</span> <span class="o">=</span> <span class="n">training_client</span><span class="o">.</span><span class="n">forward_backward</span><span class="p">(</span><span class="n">datums</span><span class="p">,</span> <span class="n">loss_fn</span><span class="o">=</span><span class="s2">"cross_entropy"</span><span class="p">)</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+</span><span id="line-15"><span class="n">training_client</span><span class="o">.</span><span class="n">optim_step</span><span class="p">(</span><span class="n">types</span><span class="o">.</span><span class="n">AdamParams</span><span class="p">(</span><span class="n">learning_rate</span><span class="o">=</span><span class="n">LEARNING_RATE</span><span class="p">))</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+</span></code></pre></div>
+</div>
+</section>
+<hr class="docutils"/>
+<section id="id5">
+<h2>关键概念<a class="headerlink" href="#id5" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id5'">¶</a></h2>
+<section id="id6">
+<h3>聊天格式化与模板<a class="headerlink" href="#id6" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id6'">¶</a></h3>
+<p>我们使用基础模型的聊天模板，使提示词遵循训练时看到的相同角色/标记格式。</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="n">text</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">apply_chat_template</span><span class="p">(</span>
+</span><span id="line-2">    <span class="n">messages</span><span class="p">,</span>
+</span><span id="line-3">    <span class="n">tokenize</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+</span><span id="line-4">    <span class="n">add_generation_prompt</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+</span><span id="line-5"><span class="p">)</span>
+</span><span id="line-6"><span class="n">tokens</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">add_special_tokens</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+<ul class="simple">
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">tokenize=False</span></code></strong>：返回渲染的<strong>文本</strong>（字符串），而不是 token ID；我们在下一行显式进行分词。</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">add_generation_prompt=False</span></code></strong>：不追加最终的"助手开始"标记；对于训练/编码现有轮次很有用。（对于推理，通常设置为 <code class="docutils literal notranslate"><span class="pre">True</span></code> 以提示模型生成下一个助手回复。）</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">add_special_tokens=False</span></code></strong>：避免重复特殊 token，因为聊天模板已经包含了所需的标记。</p></li>
+</ul>
+</section>
+<section id="id7">
+<h3>损失掩码（仅助手）<a class="headerlink" href="#id7" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id7'">¶</a></h3>
+<p>对于聊天 SFT，我们通常希望模型学习生成<strong>助手响应</strong>，而不是预测<strong>用户提示词</strong>。因此我们构建每个 token 的权重：</p>
+<ul class="simple">
+<li><p><strong>助手</strong>轮次的 token → <code class="docutils literal notranslate"><span class="pre">weight</span> <span class="pre">=</span> <span class="pre">1.0</span></code></p></li>
+<li><p><strong>用户</strong>轮次的 token → <code class="docutils literal notranslate"><span class="pre">weight</span> <span class="pre">=</span> <span class="pre">0.0</span></code></p></li>
+</ul>
+<p>因为训练是<strong>下一个 token 预测</strong>，掩码必须与<strong>目标 token</strong>（被预测的 token）对齐。如果我们为原始 token 流 <code class="docutils literal notranslate"><span class="pre">tokens[0..N-1]</span></code> 构建权重，那么步骤 <code class="docutils literal notranslate"><span class="pre">t</span></code> 的损失预测 <code class="docutils literal notranslate"><span class="pre">tokens[t+1]</span></code>，所以我们使用 <code class="docutils literal notranslate"><span class="pre">weights[1:]</span></code> 与 <code class="docutils literal notranslate"><span class="pre">target_tokens</span> <span class="pre">=</span> <span class="pre">tokens[1:]</span></code> 对齐。</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="k">def</span><span class="w"> </span><span class="nf">build_sft_example</span><span class="p">(</span><span class="n">messages</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="n">max_length</span><span class="o">=</span><span class="mi">2048</span><span class="p">):</span>
+</span><span id="line-2">    <span class="c1"># 构建 token 流 + 每个 token 的权重（assistant=1, user=0）</span>
+</span><span id="line-3">    <span class="n">tokens</span><span class="p">,</span> <span class="n">weights</span> <span class="o">=</span> <span class="p">[],</span> <span class="p">[]</span>
+</span><span id="line-4">    <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">messages</span><span class="p">:</span>
+</span><span id="line-5">        <span class="n">turn_tokens</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">msg</span><span class="p">[</span><span class="s2">"content"</span><span class="p">],</span> <span class="n">add_special_tokens</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</span><span id="line-6">        <span class="n">tokens</span> <span class="o">+=</span> <span class="n">turn_tokens</span>
+</span><span id="line-7">        <span class="n">weights</span> <span class="o">+=</span> <span class="p">[</span><span class="mf">1.0</span> <span class="k">if</span> <span class="n">msg</span><span class="p">[</span><span class="s2">"role"</span><span class="p">]</span> <span class="o">==</span> <span class="s2">"assistant"</span> <span class="k">else</span> <span class="mf">0.0</span><span class="p">]</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">turn_tokens</span><span class="p">)</span>
+</span><span id="line-8">
+</span><span id="line-9">    <span class="c1"># 可选截断</span>
+</span><span id="line-10">    <span class="n">tokens</span><span class="p">,</span> <span class="n">weights</span> <span class="o">=</span> <span class="n">tokens</span><span class="p">[:</span><span class="n">max_length</span><span class="p">],</span> <span class="n">weights</span><span class="p">[:</span><span class="n">max_length</span><span class="p">]</span>
+</span><span id="line-11">
+</span><span id="line-12">    <span class="c1"># 下一个 token 预测：input[t] -&gt; target[t] = tokens[t+1]</span>
+</span><span id="line-13">    <span class="n">input_tokens</span>  <span class="o">=</span> <span class="n">tokens</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+</span><span id="line-14">    <span class="n">target_tokens</span> <span class="o">=</span> <span class="n">tokens</span><span class="p">[</span><span class="mi">1</span><span class="p">:]</span>
+</span><span id="line-15">
+</span><span id="line-16">    <span class="c1"># 将掩码对齐到目标（被预测的 token）</span>
+</span><span id="line-17">    <span class="n">target_weights</span> <span class="o">=</span> <span class="n">weights</span><span class="p">[</span><span class="mi">1</span><span class="p">:]</span>
+</span><span id="line-18">
+</span><span id="line-19">    <span class="k">return</span> <span class="n">input_tokens</span><span class="p">,</span> <span class="n">target_tokens</span><span class="p">,</span> <span class="n">target_weights</span>
+</span></code></pre></div>
+</div>
+</section>
+<section id="datum">
+<h3>Datum 格式<a class="headerlink" href="#datum" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#datum'">¶</a></h3>
+<p>每个对话被转换为下一个 token 预测样本：</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">model_input</span></code>：token <code class="docutils literal notranslate"><span class="pre">[0..T-2]</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">target_tokens</span></code>：token <code class="docutils literal notranslate"><span class="pre">[1..T-1]</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">weights</span></code>：应用于目标的掩码（仅助手）</p></li>
+</ul>
+<p>示例：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="kn">from</span><span class="w"> </span><span class="nn">tinker</span><span class="w"> </span><span class="kn">import</span> <span class="n">types</span>
+</span><span id="line-2">
+</span><span id="line-3"><span class="n">datum</span> <span class="o">=</span> <span class="n">types</span><span class="o">.</span><span class="n">Datum</span><span class="p">(</span>
+</span><span id="line-4">    <span class="n">model_input</span><span class="o">=</span><span class="n">types</span><span class="o">.</span><span class="n">ModelInput</span><span class="o">.</span><span class="n">from_ints</span><span class="p">(</span><span class="n">input_tokens</span><span class="p">),</span>
+</span><span id="line-5">    <span class="n">loss_fn_inputs</span><span class="o">=</span><span class="p">{</span>
+</span><span id="line-6">        <span class="s2">"target_tokens"</span><span class="p">:</span> <span class="nb">list</span><span class="p">(</span><span class="n">target_tokens</span><span class="p">),</span>
+</span><span id="line-7">        <span class="s2">"weights"</span><span class="p">:</span> <span class="n">target_weights</span><span class="o">.</span><span class="n">tolist</span><span class="p">(),</span>
+</span><span id="line-8">    <span class="p">},</span>
+</span><span id="line-9"><span class="p">)</span>
+</span></code></pre></div>
+</div>
+</section>
+<section id="id8">
+<h3>损失函数<a class="headerlink" href="#id8" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id8'">¶</a></h3>
+<p>训练使用以下损失函数：</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">loss_fn="cross_entropy"</span></code></p></li>
+</ul>
+<p>TuFT 返回每个 token 的对数概率（<code class="docutils literal notranslate"><span class="pre">logprobs</span></code>）。本指南计算<strong>掩码负对数似然（NLL）</strong>：</p>
+<p>$$
+\mathrm{NLL}=\frac{\sum_{t}\bigl(-\log p(y_t)\bigr),w_t}{\sum_{t} w_t}
+$$</p>
+<p>最小计算：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="k">def</span><span class="w"> </span><span class="nf">masked_nll</span><span class="p">(</span><span class="n">loss_fn_outputs</span><span class="p">,</span> <span class="n">datums</span><span class="p">):</span>
+</span><span id="line-2">    <span class="n">total_loss</span><span class="p">,</span> <span class="n">total_w</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span>
+</span><span id="line-3">    <span class="k">for</span> <span class="n">out</span><span class="p">,</span> <span class="n">d</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">loss_fn_outputs</span><span class="p">,</span> <span class="n">datums</span><span class="p">):</span>
+</span><span id="line-4">        <span class="k">for</span> <span class="n">lp</span><span class="p">,</span> <span class="n">w</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">out</span><span class="p">[</span><span class="s2">"logprobs"</span><span class="p">],</span> <span class="n">d</span><span class="o">.</span><span class="n">loss_fn_inputs</span><span class="p">[</span><span class="s2">"weights"</span><span class="p">]):</span>
+</span><span id="line-5">            <span class="n">total_loss</span> <span class="o">+=</span> <span class="o">-</span><span class="n">lp</span> <span class="o">*</span> <span class="n">w</span>
+</span><span id="line-6">            <span class="n">total_w</span> <span class="o">+=</span> <span class="n">w</span>
+</span><span id="line-7">    <span class="k">return</span> <span class="n">total_loss</span> <span class="o">/</span> <span class="nb">max</span><span class="p">(</span><span class="n">total_w</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+</section>
+</section>
+<hr class="docutils"/>
+<section id="id9">
+<h2>参数选择<a class="headerlink" href="#id9" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id9'">¶</a></h2>
+<p>本节解释如何选择 <code class="docutils literal notranslate"><span class="pre">lora_rank</span></code> 和 <code class="docutils literal notranslate"><span class="pre">learning_rate</span></code>，并总结实验结果的结论。本文档基于 <a class="reference external" href="https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507">Qwen/Qwen3-4B-Instruct-2507</a>。</p>
+<section id="lora-rank-learning-rate">
+<h3><code class="docutils literal notranslate"><span class="pre">lora_rank</span></code> 和 <code class="docutils literal notranslate"><span class="pre">learning_rate</span></code> 的作用<a class="headerlink" href="#lora-rank-learning-rate" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#lora-rank-learning-rate'">¶</a></h3>
+<p>**<code class="docutils literal notranslate"><span class="pre">lora_rank</span></code>（LoRA 适配器秩）**控制适配器容量：</p>
+<ul class="simple">
+<li><p>更高的秩 = 更多可训练参数 → 可能更好的拟合，更多计算/内存，更高的过拟合风险</p></li>
+<li><p>更低的秩 = 更便宜，通常足以进行风格/小行为变化</p></li>
+</ul>
+<p>**<code class="docutils literal notranslate"><span class="pre">learning_rate</span></code>**控制更新步长：</p>
+<ul class="simple">
+<li><p>太高（如 <code class="docutils literal notranslate"><span class="pre">1e-3</span></code>）：快速但可能不稳定/过拟合</p></li>
+<li><p>太低（如 <code class="docutils literal notranslate"><span class="pre">1e-5</span></code>）：稳定但慢</p></li>
+<li><p>中等（如 <code class="docutils literal notranslate"><span class="pre">1e-4</span></code>）：LoRA SFT 的常见默认值</p></li>
+</ul>
+</section>
+<section id="id10">
+<h3>图表的实验结论<a class="headerlink" href="#id10" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id10'">¶</a></h3>
+<p>基于<strong>图 1</strong>（测试 NLL）和<strong>图 2</strong>（训练平均 NLL）：</p>
+<ol class="arabic simple">
+<li><p>非常低的 LR（<code class="docutils literal notranslate"><span class="pre">1e-5</span></code>）收敛慢得多</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">1e-4</span></code> 和 <code class="docutils literal notranslate"><span class="pre">1e-3</span></code> 早期改进很快</p></li>
+<li><p>秩的收益递减</p></li>
+<li><p>最佳测试损失通常聚集在中等秩 + 中等/高 LR 附近</p></li>
+</ol>
+<blockquote>
+<div><p>注意：确切的"最佳"取决于停止步骤和下游生成质量（不仅是 NLL）。</p>
+</div></blockquote>
+<figure class="align-center" id="id13">
+<a class="reference internal image-reference" href="../_images/test_nll_sft.png"><img alt="测试 NLL" src="../_images/test_nll_sft.png" style="width: 720px;"/>
+</a>
+<figcaption>
+<p><span class="caption-text"><strong>图 1. 测试 NLL</strong></span><a class="headerlink" href="#id13" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id14">
+<a class="reference internal image-reference" href="../_images/train_mean_nll_sft.png"><img alt="训练平均 NLL" src="../_images/train_mean_nll_sft.png" style="width: 720px;"/>
+</a>
+<figcaption>
+<p><span class="caption-text"><strong>图 2. 训练平均 NLL</strong></span><a class="headerlink" href="#id14" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+</section>
+<section id="id11">
+<h3>实用建议<a class="headerlink" href="#id11" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id11'">¶</a></h3>
+<ul class="simple">
+<li><p>强默认值：<code class="docutils literal notranslate"><span class="pre">lora_rank</span> <span class="pre">=</span> <span class="pre">8</span> <span class="pre">或</span> <span class="pre">32</span></code>，<code class="docutils literal notranslate"><span class="pre">learning_rate</span> <span class="pre">=</span> <span class="pre">1e-4</span></code></p></li>
+<li><p>更快的早期进展（风险更高）：<code class="docutils literal notranslate"><span class="pre">lora_rank</span> <span class="pre">=</span> <span class="pre">8</span> <span class="pre">或</span> <span class="pre">32</span></code>，<code class="docutils literal notranslate"><span class="pre">learning_rate</span> <span class="pre">=</span> <span class="pre">1e-3</span></code></p></li>
+<li><p>如果不稳定/过拟合：降低 LR（<code class="docutils literal notranslate"><span class="pre">1e-4</span> <span class="pre">→</span> <span class="pre">5e-5</span> <span class="pre">→</span> <span class="pre">1e-5</span></code>）或降低秩（<code class="docutils literal notranslate"><span class="pre">32</span> <span class="pre">→</span> <span class="pre">8</span></code>）</p></li>
+<li><p>如果任务更难：先尝试 <code class="docutils literal notranslate"><span class="pre">32</span></code> 再尝试 <code class="docutils literal notranslate"><span class="pre">128</span></code>，保持 LR <code class="docutils literal notranslate"><span class="pre">1e-4</span></code>，尽可能先增加步数再增加秩。"更难"意味着学习问题本身更困难（更复杂的输入→输出映射），如更严格的输出约束/格式、更长的上下文、更多推理步骤或更高的输出多样性/歧义性。它不简单意味着"更多数据"；更多数据通常只需要更多训练步骤，而不是更高的 LoRA 秩。</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils"/>
+<section id="id12">
+<h2>常见问题<a class="headerlink" href="#id12" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id12'">¶</a></h2>
+<section id="huggingface-co">
+<h3>(1) 由于访问 <a class="reference external" href="http://huggingface.co">huggingface.co</a> 的网络问题导致数据集下载失败<a class="headerlink" href="#huggingface-co" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#huggingface-co'">¶</a></h3>
+<p>如果您看到类似错误：</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="n">MaxRetryError</span><span class="p">(</span><span class="s1">'HTTPSConnectionPool(host='</span><span class="n">huggingface</span><span class="o">.</span><span class="n">co</span><span class="s1">', port=443): Max retries exceeded ...</span>
+</span><span id="line-2"><span class="p">(</span><span class="n">Caused</span> <span class="n">by</span> <span class="n">NewConnectionError</span><span class="p">(</span><span class="o">...</span> <span class="p">[</span><span class="n">Errno</span> <span class="mi">101</span><span class="p">]</span> <span class="n">Network</span> <span class="ow">is</span> <span class="n">unreachable</span><span class="p">))</span><span class="s1">')</span>
+</span></code></pre></div>
+</div>
+<p>对于 Jupyter notebook 用户，在<strong>第一个单元格的最顶部</strong>添加以下内容：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+</span><span id="line-2"><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"HF_ENDPOINT"</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"https://hf-mirror.com"</span>
+</span></code></pre></div>
+</div>
+<p>然后<strong>重启内核并清除所有输出</strong>。</p>
+</section>
+<hr class="docutils"/>
+<section id="invalid-api-key">
+<h3>(2) <code class="docutils literal notranslate"><span class="pre">invalid</span> <span class="pre">Api_key</span></code><a class="headerlink" href="#invalid-api-key" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#invalid-api-key'">¶</a></h3>
+<p>在 Tinker SDK 中，环境变量 <code class="docutils literal notranslate"><span class="pre">TINKER_API_KEY</span></code> 优先于这里传递的 <code class="docutils literal notranslate"><span class="pre">api_key=</span></code> 参数：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="n">service_client</span> <span class="o">=</span> <span class="n">tinker</span><span class="o">.</span><span class="n">ServiceClient</span><span class="p">(</span><span class="n">base_url</span><span class="o">=</span><span class="n">TINKER_BASE_URL</span><span class="p">,</span> <span class="n">api_key</span><span class="o">=</span><span class="n">TINKER_API_KEY</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+<p>所以如果您的代码传递了正确的密钥但仍然得到 <code class="docutils literal notranslate"><span class="pre">invalid</span> <span class="pre">api_key</span></code>，您需要设置正确的环境变量（通过 <code class="docutils literal notranslate"><span class="pre">export</span> <span class="pre">TINKER_API_KEY=...</span></code>）或清除它并依赖 <code class="docutils literal notranslate"><span class="pre">api_key=</span></code> 参数：</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="nb">unset</span><span class="w"> </span>TINKER_API_KEY
+</span></code></pre></div>
+</div>
+</section>
+<hr class="docutils"/>
+<section id="jupyter-tqdmwarning-iprogress-not-found">
+<h3>(3) Jupyter 警告：<code class="docutils literal notranslate"><span class="pre">TqdmWarning:</span> <span class="pre">IProgress</span> <span class="pre">not</span> <span class="pre">found...</span></code><a class="headerlink" href="#jupyter-tqdmwarning-iprogress-not-found" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#jupyter-tqdmwarning-iprogress-not-found'">¶</a></h3>
+<p>如果您看到：</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="n">TqdmWarning</span><span class="p">:</span> <span class="n">IProgress</span> <span class="ow">not</span> <span class="n">found</span><span class="o">.</span> <span class="n">Please</span> <span class="n">update</span> <span class="n">jupyter</span> <span class="ow">and</span> <span class="n">ipywidgets</span><span class="o">.</span>
+</span></code></pre></div>
+</div>
+<p><strong>选项 A（推荐）：安装/升级 Jupyter widgets</strong></p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">pip<span class="w"> </span>install<span class="w"> </span>-U<span class="w"> </span>ipywidgets<span class="w"> </span>jupyter
+</span></code></pre></div>
+</div>
+<p>然后重启内核。</p>
+<p><strong>选项 B：避免在 notebook 中使用基于 widget 的 tqdm</strong>
+使用标准的 <code class="docutils literal notranslate"><span class="pre">tqdm</span></code> 进度条而不是 <code class="docutils literal notranslate"><span class="pre">tqdm.auto</span></code> / <code class="docutils literal notranslate"><span class="pre">tqdm.notebook</span></code>：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="kn">from</span><span class="w"> </span><span class="nn">tqdm</span><span class="w"> </span><span class="kn">import</span> <span class="n">tqdm</span>
+</span></code></pre></div>
+</div>
+</section>
+<hr class="docutils"/>
+<section id="oom">
+<h3>(4) OOM 或训练缓慢<a class="headerlink" href="#oom" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#oom'">¶</a></h3>
+<p>如果遇到内存不足（OOM）错误或训练太慢，减少以下一个或多个：</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">MAX_LENGTH</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">BATCH_SIZE</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">LORA_RANK</span></code></p></li>
+</ul>
+<p>在大多数情况下，降低 <code class="docutils literal notranslate"><span class="pre">MAX_LENGTH</span></code> 带来最大的内存/速度改进，其次是 <code class="docutils literal notranslate"><span class="pre">BATCH_SIZE</span></code>，然后是 <code class="docutils literal notranslate"><span class="pre">LORA_RANK</span></code>。</p>
+</section>
+<section id="jupyter">
+<h3>(5) 将虚拟环境添加到 Jupyter（注册新内核）<a class="headerlink" href="#jupyter" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#jupyter'">¶</a></h3>
+<p>如果您在远程服务器上工作，将现有的虚拟环境（virtualenv/venv）添加为可选的 Jupyter 内核通常很方便。</p>
+<ol class="arabic simple">
+<li><p><strong>激活虚拟环境</strong></p></li>
+</ol>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="nb">source</span><span class="w"> </span>/path/to/venv/bin/activate
+</span></code></pre></div>
+</div>
+<ol class="arabic simple" start="2">
+<li><p><strong>在环境中安装 <code class="docutils literal notranslate"><span class="pre">ipykernel</span></code></strong></p></li>
+</ol>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">pip<span class="w"> </span>install<span class="w"> </span>ipykernel
+</span></code></pre></div>
+</div>
+<ol class="arabic simple" start="3">
+<li><p><strong>将环境注册为 Jupyter 内核</strong></p></li>
+</ol>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">python<span class="w"> </span>-m<span class="w"> </span>ipykernel<span class="w"> </span>install<span class="w"> </span>--user<span class="w"> </span>--name<span class="o">=</span>myproject<span class="w"> </span>--display-name<span class="w"> </span><span class="s2">"Python (myproject)"</span>
+</span></code></pre></div>
+</div>
+<ol class="arabic simple" start="4">
+<li><p><strong>在 Jupyter 中选择内核</strong></p></li>
+</ol>
+<ul class="simple">
+<li><p>在 Jupyter Notebook/Lab 中：<strong>Kernel → Change Kernel → Python (myproject)</strong></p></li>
+</ul>
+</section>
+</section>
+</section>
+</div></div><aside class="hidden text-sm xl:block" id="right-sidebar">
+<div class="sticky top-16 -mt-10 max-h-[calc(100vh-5rem)] h-full overflow-y-auto pt-6 space-y-2"><p class="font-medium">On this page</p>
+<ul>
+<li><a :data-current="activeSection === '#id1'" class="reference internal" href="#id1">您将学到</a></li>
+<li><a :data-current="activeSection === '#id2'" class="reference internal" href="#id2">目录</a></li>
+<li><a :data-current="activeSection === '#sft-vs-rl'" class="reference internal" href="#sft-vs-rl">何时使用 SFT vs. RL</a><ul>
+<li><a :data-current="activeSection === '#id3'" class="reference internal" href="#id3">SFT vs. RL（高层对比）</a></li>
+</ul>
+</li>
+<li><a :data-current="activeSection === '#id4'" class="reference internal" href="#id4">数据集</a></li>
+<li><a :data-current="activeSection === '#sft'" class="reference internal" href="#sft">最小训练示例（SFT）</a></li>
+<li><a :data-current="activeSection === '#id5'" class="reference internal" href="#id5">关键概念</a><ul>
+<li><a :data-current="activeSection === '#id6'" class="reference internal" href="#id6">聊天格式化与模板</a></li>
+<li><a :data-current="activeSection === '#id7'" class="reference internal" href="#id7">损失掩码（仅助手）</a></li>
+<li><a :data-current="activeSection === '#datum'" class="reference internal" href="#datum">Datum 格式</a></li>
+<li><a :data-current="activeSection === '#id8'" class="reference internal" href="#id8">损失函数</a></li>
+</ul>
+</li>
+<li><a :data-current="activeSection === '#id9'" class="reference internal" href="#id9">参数选择</a><ul>
+<li><a :data-current="activeSection === '#lora-rank-learning-rate'" class="reference internal" href="#lora-rank-learning-rate"><code class="docutils literal notranslate"><span class="pre">lora_rank</span></code> 和 <code class="docutils literal notranslate"><span class="pre">learning_rate</span></code> 的作用</a></li>
+<li><a :data-current="activeSection === '#id10'" class="reference internal" href="#id10">图表的实验结论</a></li>
+<li><a :data-current="activeSection === '#id11'" class="reference internal" href="#id11">实用建议</a></li>
+</ul>
+</li>
+<li><a :data-current="activeSection === '#id12'" class="reference internal" href="#id12">常见问题</a><ul>
+<li><a :data-current="activeSection === '#huggingface-co'" class="reference internal" href="#huggingface-co">(1) 由于访问 huggingface.co 的网络问题导致数据集下载失败</a></li>
+<li><a :data-current="activeSection === '#invalid-api-key'" class="reference internal" href="#invalid-api-key">(2) <code class="docutils literal notranslate"><span class="pre">invalid</span> <span class="pre">Api_key</span></code></a></li>
+<li><a :data-current="activeSection === '#jupyter-tqdmwarning-iprogress-not-found'" class="reference internal" href="#jupyter-tqdmwarning-iprogress-not-found">(3) Jupyter 警告：<code class="docutils literal notranslate"><span class="pre">TqdmWarning:</span> <span class="pre">IProgress</span> <span class="pre">not</span> <span class="pre">found...</span></code></a></li>
+<li><a :data-current="activeSection === '#oom'" class="reference internal" href="#oom">(4) OOM 或训练缓慢</a></li>
+<li><a :data-current="activeSection === '#jupyter'" class="reference internal" href="#jupyter">(5) 将虚拟环境添加到 Jupyter（注册新内核）</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</aside>
+</main>
+</div>
+</div><footer class="py-6 border-t border-border md:py-0">
+<div class="container flex flex-col items-center justify-between gap-4 md:h-24 md:flex-row">
+<div class="flex flex-col items-center gap-4 px-8 md:flex-row md:gap-2 md:px-0">
+<p class="text-sm leading-loose text-center text-muted-foreground md:text-left"></p>
+</div>
+</div>
+</footer>
+</div>
+<script src="../_static/documentation_options.js?v=e0ccff72"></script>
+<script src="../_static/doctools.js?v=9bcbadda"></script>
+<script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+<script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+<script src="../_static/copybutton.js?v=f281be69"></script>
+<script defer="defer" src="../_static/theme.js?v=582b20c5"></script>
+<script src="../_static/translations.js?v=beaddf03"></script>
+<script src="../_static/design-tabs.js?v=f930bc37"></script>
+<script src="../_static/custom.js?v=d0898e36"></script>
+</body>
+</html>

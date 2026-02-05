@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+
+<html :class="{ 'dark' : darkMode === true }" data-content_root="../" lang="en" x-data="{ darkMode: $persist(window.matchMedia('(prefers-color-scheme: dark)').matches), activeSection: ''}">
+<head>
+<script>
+    (function () {
+      // Set initial color scheme
+      if ((localStorage.getItem("_x_darkMode") === "true") || (window.matchMedia("(prefers-color-scheme: dark)").matches)) {
+        document.documentElement.classList.add("dark");
+      }
+
+      // Watch for media preference changes
+      window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (event) => {
+        localStorage.setItem("_x_darkMode", event.matches);
+        document.documentElement.classList.toggle("dark", event.matches);
+      });
+    })();
+  </script>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<meta charset="utf-8"/>
+<meta content="#ffffff" media="(prefers-color-scheme: light)" name="theme-color"/>
+<meta content="#030711" media="(prefers-color-scheme: dark)" name="theme-color"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<title>Chat Supervised Fine-Tuning (SFT) | TuFT</title>
+<meta content="Chat Supervised Fine-Tuning (SFT) | TuFT" property="og:title"/>
+<meta content="Chat Supervised Fine-Tuning (SFT) | TuFT" name="twitter:title"/>
+<link href="../_static/pygments.css?v=03e43079" rel="stylesheet" type="text/css"/>
+<link href="../_static/theme.css?v=73505e79" rel="stylesheet" type="text/css"/>
+<link href="../_static/copybutton.css?v=76b2166b" rel="stylesheet" type="text/css"/>
+<link href="../_static/sphinx-design.min.css?v=95c83b7e" rel="stylesheet" type="text/css"/>
+<link href="../_static/custom.css?v=31585404" rel="stylesheet" type="text/css"/>
+<link href="../_static/awesome-sphinx-design.css?v=c54898a4" rel="stylesheet" type="text/css"/>
+<link href="../_static/logo_wo_text.svg" rel="icon"/>
+<link href="../search.html" rel="search" title="Search"/>
+<link href="../genindex.html" rel="index" title="Index"/>
+<link href="countdown-rl.html" rel="next" title="Countdown Reinforcement Learning (RL)"/>
+<link href="index.html" rel="prev" title="User Guide"/>
+</head>
+<body :class="{ 'overflow-hidden': showSidebar }" class="min-h-screen font-sans antialiased bg-background text-foreground" x-data="{ showSidebar: false, showScrollTop: false }">
+<div @click.self="showSidebar = false" class="fixed inset-0 z-50 overflow-hidden bg-background/80 backdrop-blur-sm md:hidden" x-cloak="" x-show="showSidebar"></div><div class="relative flex flex-col min-h-screen" id="page"><a class="absolute top-0 left-0 z-[100] block bg-background p-4 text-xl transition -translate-x-full opacity-0 focus:translate-x-0 focus:opacity-100" href="#content">
+      Skip to content
+    </a><header class="sticky top-0 z-40 w-full border-b shadow-xs border-border bg-background/90 backdrop-blur"><div class="container flex items-center h-14">
+<div class="hidden mr-4 md:flex">
+<a class="flex items-center mr-6" href="../index.html">
+<img alt="Logo" class="mr-2 dark:invert" height="24" src="../_static/logo_wo_text.svg" width="24"/><span class="hidden font-bold sm:inline-block text-clip whitespace-nowrap">TuFT</span>
+</a></div><button @click="showSidebar = true" class="inline-flex items-center justify-center h-10 px-0 py-2 mr-2 text-base font-medium transition-colors rounded-md hover:text-accent-foreground hover:bg-transparent md:hidden" type="button">
+<svg aria-hidden="true" fill="currentColor" height="24" viewbox="0 96 960 960" width="24" xmlns="http://www.w3.org/2000/svg">
+<path d="M152.587 825.087q-19.152 0-32.326-13.174t-13.174-32.326q0-19.152 13.174-32.326t32.326-13.174h440q19.152 0 32.326 13.174t13.174 32.326q0 19.152-13.174 32.326t-32.326 13.174h-440Zm0-203.587q-19.152 0-32.326-13.174T107.087 576q0-19.152 13.174-32.326t32.326-13.174h320q19.152 0 32.326 13.174T518.087 576q0 19.152-13.174 32.326T472.587 621.5h-320Zm0-203.587q-19.152 0-32.326-13.174t-13.174-32.326q0-19.152 13.174-32.326t32.326-13.174h440q19.152 0 32.326 13.174t13.174 32.326q0 19.152-13.174 32.326t-32.326 13.174h-440ZM708.913 576l112.174 112.174q12.674 12.674 12.674 31.826t-12.674 31.826Q808.413 764.5 789.261 764.5t-31.826-12.674l-144-144Q600 594.391 600 576t13.435-31.826l144-144q12.674-12.674 31.826-12.674t31.826 12.674q12.674 12.674 12.674 31.826t-12.674 31.826L708.913 576Z"></path>
+</svg>
+<span class="sr-only">Toggle navigation menu</span>
+</button>
+<div class="flex items-center justify-between flex-1 gap-2 sm:gap-4 md:justify-end">
+<div class="flex-1 w-full md:w-auto md:flex-none"><form @keydown.k.window.meta="$refs.search.focus()" action="../search.html" class="relative flex items-center group" id="searchbox" method="get">
+<input aria-label="Search the docs" class="inline-flex items-center font-medium transition-colors bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background border border-input hover:bg-accent focus:bg-accent hover:text-accent-foreground focus:text-accent-foreground hover:placeholder-accent-foreground py-2 px-4 relative h-9 w-full justify-start rounded-[0.5rem] text-sm text-muted-foreground sm:pr-12 md:w-40 lg:w-64" id="search-input" name="q" placeholder="Search ..." type="search" x-ref="search"/>
+<kbd class="pointer-events-none absolute right-1.5 top-2 hidden h-5 select-none text-muted-foreground items-center gap-1 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium opacity-100 sm:flex group-hover:bg-accent group-hover:text-accent-foreground">
+<span class="text-xs">⌘</span>
+    K
+  </kbd>
+</form>
+</div>
+<nav class="flex items-center gap-1">
+<a href="https://qr.dingtalk.com/action/joingroup?code=v1,k1,UWvzO6HHSeuvRQ5WXCOMJEijadQV+hDjhMIpiVr8qCs=&amp;_dt_no_comment=1&amp;origin=11?" rel="noopener nofollow" title="Visit DingTalk">
+<div class="inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9">
+<svg fill="currentColor" height="20" viewbox="0 0 24 24" width="20"><circle cx="12" cy="12" opacity="0.2" r="10"></circle><path d="M8 7h4.5a4.5 4.5 0 0 1 0 9H8z"></path></svg>
+</div>
+</a>
+<a href="https://github.com/agentscope-ai/TuFT" rel="noopener nofollow" title="Visit GitHub">
+<div class="inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9">
+<svg fill="currentColor" height="20" viewbox="0 0 16 16" width="20"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" fill-rule="evenodd"></path></svg>
+</div>
+</a>
+<a href="https://discord.gg/wEahC7ZJ" rel="noopener nofollow" title="Visit Discord">
+<div class="inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9">
+<svg fill="currentColor" height="20" viewbox="0 0 16 16" width="20"><path d="M13.545 2.907a13.227 13.227 0 0 0-3.257-1.011.05.05 0 0 0-.052.025c-.141.25-.297.577-.406.833a12.19 12.19 0 0 0-3.658 0 8.258 8.258 0 0 0-.412-.833.051.051 0 0 0-.052-.025c-1.125.194-2.22.534-3.257 1.011a.041.041 0 0 0-.021.018C.356 6.024-.213 9.047.066 12.032c.001.014.01.028.021.037a13.276 13.276 0 0 0 3.995 2.02.05.05 0 0 0 .056-.019c.308-.42.582-.863.818-1.329a.05.05 0 0 0-.01-.059.051.051 0 0 0-.018-.011 8.875 8.875 0 0 1-1.248-.595.05.05 0 0 1-.02-.066.051.051 0 0 1 .015-.019c.084-.063.168-.129.248-.195a.05.05 0 0 1 .051-.007c2.619 1.196 5.454 1.196 8.041 0a.052.052 0 0 1 .053.007c.08.066.164.132.248 .195a.051.051 0 0 1-.004.085 8.254 8.254 0 0 1-1.249 .594.05.05 0 0 0-.03.03.052.052 0 0 0 .003.041c.24.465.515.909.817 1.329a.05.05 0 0 0 .056.019 13.235 13.235 0 0 0 4.001-2.02.049.049 0 0 0 .021-.037c.334-3.451-.559-6.449-2.366-9.106a.034.034 0 0 0-.02-.019Zm-8.198 7.307c-.789 0-1.438-.724-1.438-1.612 0-.889.637-1.613 1.438-1.613.807 0 1.45.73 1.438 1.613 0 .888-.637 1.612-1.438 1.612Zm5.316 0c-.788 0-1.438-.724-1.438-1.612 0-.889.637-1.613 1.438-1.613.807 0 1.451.73 1.438 1.613 0 .888-.631 1.612-1.438 1.612Z"></path></svg>
+</div>
+</a>
+<button @click="darkMode = !darkMode" class="relative inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9" title="Toggle color scheme" type="button">
+<svg class="absolute transition-all scale-100 rotate-0 dark:-rotate-90 dark:scale-0" fill="currentColor" height="16" viewbox="0 96 960 960" width="16" xmlns="http://www.w3.org/2000/svg">
+<path d="M480 685q45.456 0 77.228-31.772Q589 621.456 589 576q0-45.456-31.772-77.228Q525.456 467 480 467q-45.456 0-77.228 31.772Q371 530.544 371 576q0 45.456 31.772 77.228Q434.544 685 480 685Zm0 91q-83 0-141.5-58.5T280 576q0-83 58.5-141.5T480 376q83 0 141.5 58.5T680 576q0 83-58.5 141.5T480 776ZM80 621.5q-19.152 0-32.326-13.174T34.5 576q0-19.152 13.174-32.326T80 530.5h80q19.152 0 32.326 13.174T205.5 576q0 19.152-13.174 32.326T160 621.5H80Zm720 0q-19.152 0-32.326-13.174T754.5 576q0-19.152 13.174-32.326T800 530.5h80q19.152 0 32.326 13.174T925.5 576q0 19.152-13.174 32.326T880 621.5h-80Zm-320-320q-19.152 0-32.326-13.174T434.5 256v-80q0-19.152 13.174-32.326T480 130.5q19.152 0 32.326 13.174T525.5 176v80q0 19.152-13.174 32.326T480 301.5Zm0 720q-19.152 0-32.326-13.17Q434.5 995.152 434.5 976v-80q0-19.152 13.174-32.326T480 850.5q19.152 0 32.326 13.174T525.5 896v80q0 19.152-13.174 32.33-13.174 13.17-32.326 13.17ZM222.174 382.065l-43-42Q165.5 327.391 166 308.239t13.174-33.065q13.435-13.674 32.587-13.674t32.065 13.674l42.239 43q12.674 13.435 12.555 31.706-.12 18.272-12.555 31.946-12.674 13.674-31.445 13.413-18.772-.261-32.446-13.174Zm494 494.761-42.239-43q-12.674-13.435-12.674-32.087t12.674-31.565Q686.609 756.5 705.38 757q18.772.5 32.446 13.174l43 41.761Q794.5 824.609 794 843.761t-13.174 33.065Q767.391 890.5 748.239 890.5t-32.065-13.674Zm-42-494.761Q660.5 369.391 661 350.62q.5-18.772 13.174-32.446l41.761-43Q728.609 261.5 747.761 262t33.065 13.174q13.674 13.435 13.674 32.587t-13.674 32.065l-43 42.239q-13.435 12.674-31.706 12.555-18.272-.12-31.946-12.555Zm-495 494.761Q165.5 863.391 165.5 844.239t13.674-32.065l43-42.239q13.435-12.674 32.087-12.674t31.565 12.674Q299.5 782.609 299 801.38q-.5 18.772-13.174 32.446l-41.761 43Q231.391 890.5 212.239 890t-33.065-13.174ZM480 576Z"></path>
+</svg>
+<svg class="absolute transition-all scale-0 rotate-90 dark:rotate-0 dark:scale-100" fill="currentColor" height="16" viewbox="0 96 960 960" width="16" xmlns="http://www.w3.org/2000/svg">
+<path d="M480 936q-151 0-255.5-104.5T120 576q0-138 90-239.5T440 218q25-3 39 18t-1 44q-17 26-25.5 55t-8.5 61q0 90 63 153t153 63q31 0 61.5-9t54.5-25q21-14 43-1.5t19 39.5q-14 138-117.5 229T480 936Zm0-80q88 0 158-48.5T740 681q-20 5-40 8t-40 3q-123 0-209.5-86.5T364 396q0-20 3-40t8-40q-78 32-126.5 102T200 576q0 116 82 198t198 82Zm-10-270Z"></path>
+</svg>
+</button>
+</nav>
+</div>
+</div>
+</header>
+<div class="flex-1"><div class="container md:grid md:grid-cols-[220px_minmax(0,1fr)] md:gap-6 lg:grid-cols-[240px_minmax(0,1fr)] lg:gap-10"><aside :aria-hidden="!showSidebar" :class="{ 'translate-x-0': showSidebar }" class="fixed inset-y-0 left-0 md:top-14 z-50 md:z-30 bg-background md:bg-transparent transition-all duration-100 -translate-x-full md:translate-x-0 ml-0 p-6 md:p-0 md:-ml-2 md:h-[calc(100vh-3.5rem)] w-5/6 md:w-full overflow-y-auto border-r border-border md:sticky" id="left-sidebar">
+<a class="justify-start text-sm md:!hidden bg-background" href="../index.html">
+<img alt="Logo" class="mr-2 dark:invert" height="16" src="../_static/logo_wo_text.svg" width="16"/><span class="font-bold text-clip whitespace-nowrap">TuFT</span>
+</a>
+<div class="relative overflow-hidden md:overflow-auto my-4 md:my-0">
+<div class="overflow-y-auto h-full w-full relative pr-6"><nav class="table w-full min-w-full my-6 lg:my-8">
+<ul class="current">
+<li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="../getting-started/index.html">Getting Started<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
+<li class="toctree-l2"><a class="reference internal" href="../getting-started/installation.html">Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../getting-started/quickstart.html">Quick Start Example</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="index.html">User Guide<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul class="current" x-show="expanded">
+<li class="toctree-l2 current"><a class="current reference internal" href="#">Chat Supervised Fine-Tuning (SFT)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="countdown-rl.html">Countdown Reinforcement Learning (RL)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="persistence.html">Persistence</a></li>
+<li class="toctree-l2"><a class="reference internal" href="telemetry.html">Observability (OpenTelemetry)</a></li>
+</ul>
+</li>
+<li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="../development/index.html">Development<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
+<li class="toctree-l2"><a class="reference internal" href="../development/testing.html">Testing Guide</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../roadmap.html">Roadmap</a></li>
+</ul>
+</nav>
+</div>
+</div>
+<button @click="showSidebar = false" class="absolute md:hidden right-4 top-4 rounded-sm opacity-70 transition-opacity hover:opacity-100" type="button">
+<svg class="h-4 w-4" fill="currentColor" height="24" stroke="none" viewbox="0 96 960 960" width="24" xmlns="http://www.w3.org/2000/svg">
+<path d="M480 632 284 828q-11 11-28 11t-28-11q-11-11-11-28t11-28l196-196-196-196q-11-11-11-28t11-28q11-11 28-11t28 11l196 196 196-196q11-11 28-11t28 11q11 11 11 28t-11 28L536 576l196 196q11 11 11 28t-11 28q-11 11-28 11t-28-11L480 632Z"></path>
+</svg>
+</button>
+</aside>
+<main class="relative py-6 lg:gap-10 lg:py-8 xl:grid xl:grid-cols-[1fr_300px]">
+<div class="w-full min-w-0 mx-auto">
+<nav aria-label="breadcrumbs" class="flex items-center mb-4 space-x-1 text-sm text-muted-foreground">
+<a class="overflow-hidden text-ellipsis whitespace-nowrap hover:text-foreground" href="../index.html">
+<span class="hidden md:inline">TuFT</span>
+<svg aria-label="Home" class="md:hidden" fill="currentColor" height="18" stroke="none" viewbox="0 96 960 960" width="18" xmlns="http://www.w3.org/2000/svg">
+<path d="M240 856h120V616h240v240h120V496L480 316 240 496v360Zm-80 80V456l320-240 320 240v480H520V696h-80v240H160Zm320-350Z"></path>
+</svg>
+</a>
+<div class="mr-1">/</div><a class="hover:text-foreground overflow-hidden text-ellipsis whitespace-nowrap" href="index.html">User Guide</a>
+<div class="mr-1">/</div><span aria-current="page" class="font-medium text-foreground overflow-hidden text-ellipsis whitespace-nowrap">Chat Supervised Fine-Tuning (SFT)</span>
+</nav>
+<div id="content" role="main">
+<section id="chat-supervised-fine-tuning-sft">
+<h1>Chat Supervised Fine-Tuning (SFT)<a class="headerlink" href="#chat-supervised-fine-tuning-sft" title="Link to this heading">¶</a></h1>
+<p>This guide demonstrates <strong>supervised fine-tuning (SFT)</strong> on <strong>chat-formatted data</strong> using a <strong>running TuFT server</strong>. Full runnable code is in the <code class="docutils literal notranslate"><span class="pre">examples/chat_sft/chat_sft.ipynb</span></code> notebook. Although this is a general SFT guide, it also documents common issues users may encounter when using TuFT for SFT and provides step-by-step guidance to help them successfully complete an end-to-end run.</p>
+<hr class="docutils"/>
+<section id="what-you-ll-learn">
+<h2>What You’ll Learn<a class="headerlink" href="#what-you-ll-learn" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#what-you-ll-learn'">¶</a></h2>
+<ol class="arabic simple">
+<li><p>How to load <strong>chat datasets</strong> from HuggingFace and extract multi-turn <code class="docutils literal notranslate"><span class="pre">messages</span></code></p></li>
+<li><p>How to format conversations using <strong>model chat templates</strong> (<code class="docutils literal notranslate"><span class="pre">apply_chat_template</span></code>)</p></li>
+<li><p>How to implement <strong>assistant-only loss masking</strong> and compute masked negative log-likelihood for evaluation</p></li>
+<li><p>How to construct <code class="docutils literal notranslate"><span class="pre">Datum</span></code> objects and run an end-to-end <strong>LoRA SFT</strong> loop via TuFT server.</p></li>
+<li><p>How to choose and tune <strong>LoRA rank</strong> and <strong>learning rate</strong> based on train/test curves</p></li>
+</ol>
+</section>
+<hr class="docutils"/>
+<section id="table-of-contents">
+<h2>Table of Contents<a class="headerlink" href="#table-of-contents" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#table-of-contents'">¶</a></h2>
+<ol class="arabic simple">
+<li><p><a class="reference internal" href="#when-to-use-sft-vs-rl">When to Use SFT vs. RL</a></p></li>
+<li><p><a class="reference internal" href="#datasets">Datasets</a></p></li>
+<li><p><a class="reference internal" href="#minimal-training-example-sft">Minimal Training Example (SFT)</a></p></li>
+<li><p><a class="reference internal" href="#key-concepts">Key Concepts</a></p>
+<ul class="simple">
+<li><p><a class="reference internal" href="#chat-formatting-templates">Chat Formatting &amp; Templates</a></p></li>
+<li><p><a class="reference internal" href="#loss-masking-assistant-only">Loss Masking (Assistant-only)</a></p></li>
+<li><p><a class="reference internal" href="#datum-format">Datum Format</a></p></li>
+<li><p><a class="reference internal" href="#loss-function">Loss Function</a></p></li>
+</ul>
+</li>
+<li><p><a class="reference internal" href="#parameter-selection">Parameter Selection</a></p></li>
+<li><p><a class="reference internal" href="#q-a">Q&amp;A</a></p></li>
+</ol>
+</section>
+<hr class="docutils"/>
+<section id="when-to-use-sft-vs-rl">
+<h2>When to Use SFT vs. RL<a class="headerlink" href="#when-to-use-sft-vs-rl" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#when-to-use-sft-vs-rl'">¶</a></h2>
+<section id="sft-vs-rl-high-level-comparison">
+<h3>SFT vs. RL (high-level comparison)<a class="headerlink" href="#sft-vs-rl-high-level-comparison" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#sft-vs-rl-high-level-comparison'">¶</a></h3>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Topic</p></th>
+<th class="head"><p>SFT (Supervised Fine-Tuning)</p></th>
+<th class="head"><p>RL (Reinforcement Learning)</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Training signal</p></td>
+<td><p>Demonstrations (target responses)</p></td>
+<td><p>Reward / preferences (scalar or ranking)</p></td>
+</tr>
+<tr class="row-odd"><td><p>Best for</p></td>
+<td><p>Style, format, instruction following, domain behavior from curated answers</p></td>
+<td><p>Aligning behavior to preferences/constraints, safety policies, multi-objective trade-offs</p></td>
+</tr>
+<tr class="row-even"><td><p>Data required</p></td>
+<td><p>High-quality assistant responses</p></td>
+<td><p>Reward model, preference pairs, or evaluators</p></td>
+</tr>
+<tr class="row-odd"><td><p>Typical workflow</p></td>
+<td><p>Often the first stage</p></td>
+<td><p>Often follows SFT (SFT → RL)</p></td>
+</tr>
+<tr class="row-even"><td><p>Examples of training data / signal</p></td>
+<td><p>Input-output pairs, e.g. prompt: “Rewrite as a polite email …” → target: “Dear … Sincerely …”</p></td>
+<td><p>LLM-as-judge: rank A vs B or score responses</p></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Rule of thumb</strong></p>
+<ul class="simple">
+<li><p>Use <strong>SFT</strong> when you can provide good “gold” assistant responses and want the model to imitate a clear target output.</p></li>
+<li><p>Use <strong>RL</strong> when there is no single correct response, but you can define what is “better” via a reward or preference signal, often based on task requirements like helpfulness, safety, style, formatting, or tool-use behavior.</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils"/>
+<section id="datasets">
+<h2>Datasets<a class="headerlink" href="#datasets" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#datasets'">¶</a></h2>
+<p>This guide uses <strong><a class="reference external" href="https://huggingface.co/datasets/HuggingFaceH4/no_robots"><code class="docutils literal notranslate"><span class="pre">no_robots</span></code></a></strong>.</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Dataset</p></th>
+<th class="head"><p>Source</p></th>
+<th class="head"><p>Size</p></th>
+<th class="head"><p>Train On</p></th>
+<th class="head"><p>Use Case</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">no_robots</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">HuggingFaceH4/no_robots</span></code></p></td>
+<td><p>~9.5K train + 500 test</p></td>
+<td><p>All assistant messages (masked)</p></td>
+<td><p>Quick experiments</p></td>
+</tr>
+</tbody>
+</table>
+<p>Minimal loader:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="kn">from</span><span class="w"> </span><span class="nn">datasets</span><span class="w"> </span><span class="kn">import</span> <span class="n">load_dataset</span>
+</span><span id="line-2">
+</span><span id="line-3"><span class="n">ds</span> <span class="o">=</span> <span class="n">load_dataset</span><span class="p">(</span><span class="s2">"HuggingFaceH4/no_robots"</span><span class="p">)</span>
+</span><span id="line-4"><span class="n">train_data</span> <span class="o">=</span> <span class="p">[</span><span class="n">row</span><span class="p">[</span><span class="s2">"messages"</span><span class="p">]</span> <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">ds</span><span class="p">[</span><span class="s2">"train"</span><span class="p">]]</span>
+</span><span id="line-5"><span class="n">test_data</span>  <span class="o">=</span> <span class="p">[</span><span class="n">row</span><span class="p">[</span><span class="s2">"messages"</span><span class="p">]</span> <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">ds</span><span class="p">[</span><span class="s2">"test"</span><span class="p">]]</span>
+</span></code></pre></div>
+</div>
+<p>Each sample is a list of chat messages:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">{"role": "user" | "assistant", "content": "..."}
+</span></code></pre></div>
+</div>
+</section>
+<hr class="docutils"/>
+<section id="minimal-training-example-sft">
+<h2>Minimal Training Example (SFT)<a class="headerlink" href="#minimal-training-example-sft" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#minimal-training-example-sft'">¶</a></h2>
+<p><strong>TuFT</strong> (Tenant-unified FineTuning) is a multi-tenant system that provides a unified service API for fine-tuning large language models (LLMs). It supports the Tinker service API and can be used with the Tinker SDK. Unlike the Tinker, TuFT can run on local GPUs; the experiments below were conducted on a local <strong>2× NVIDIA A100-SXM4-80GB</strong> setup (Driver 550.54.15, CUDA 12.9). Before running the example, follow the <a class="reference internal" href="../getting-started/installation.html"><span class="std std-doc">Installation Guide</span></a> to start the TuFT server locally.</p>
+<p>Key TuFT calls (full code in <code class="docutils literal notranslate"><span class="pre">examples/chat_sft/chat_sft.ipynb</span></code>):</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="kn">import</span><span class="w"> </span><span class="nn">tinker</span>
+</span><span id="line-2"><span class="kn">from</span><span class="w"> </span><span class="nn">tinker</span><span class="w"> </span><span class="kn">import</span> <span class="n">types</span>
+</span><span id="line-3">
+</span><span id="line-4"><span class="n">service_client</span> <span class="o">=</span> <span class="n">tinker</span><span class="o">.</span><span class="n">ServiceClient</span><span class="p">(</span><span class="n">base_url</span><span class="o">=</span><span class="s2">"http://localhost:10610"</span><span class="p">,</span> <span class="n">api_key</span><span class="o">=</span><span class="n">TINKER_API_KEY</span><span class="p">)</span>
+</span><span id="line-5">
+</span><span id="line-6"><span class="n">training_client</span> <span class="o">=</span> <span class="n">service_client</span><span class="o">.</span><span class="n">create_lora_training_client</span><span class="p">(</span>
+</span><span id="line-7">    <span class="n">base_model</span><span class="o">=</span><span class="n">BASE_MODEL</span><span class="p">,</span>
+</span><span id="line-8">    <span class="n">rank</span><span class="o">=</span><span class="n">LORA_RANK</span><span class="p">,</span>
+</span><span id="line-9">    <span class="n">train_mlp</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="line-10">    <span class="n">train_attn</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="line-11">    <span class="n">train_unembed</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="line-12"><span class="p">)</span>
+</span><span id="line-13">
+</span><span id="line-14"><span class="n">fwdbwd</span> <span class="o">=</span> <span class="n">training_client</span><span class="o">.</span><span class="n">forward_backward</span><span class="p">(</span><span class="n">datums</span><span class="p">,</span> <span class="n">loss_fn</span><span class="o">=</span><span class="s2">"cross_entropy"</span><span class="p">)</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+</span><span id="line-15"><span class="n">training_client</span><span class="o">.</span><span class="n">optim_step</span><span class="p">(</span><span class="n">types</span><span class="o">.</span><span class="n">AdamParams</span><span class="p">(</span><span class="n">learning_rate</span><span class="o">=</span><span class="n">LEARNING_RATE</span><span class="p">))</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+</span></code></pre></div>
+</div>
+</section>
+<hr class="docutils"/>
+<section id="key-concepts">
+<h2>Key Concepts<a class="headerlink" href="#key-concepts" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#key-concepts'">¶</a></h2>
+<section id="chat-formatting-templates">
+<h3>Chat Formatting &amp; Templates<a class="headerlink" href="#chat-formatting-templates" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#chat-formatting-templates'">¶</a></h3>
+<p>We use the base model’s chat template so the prompt follows the same role/marker format seen during training.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="n">text</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">apply_chat_template</span><span class="p">(</span>
+</span><span id="line-2">    <span class="n">messages</span><span class="p">,</span>
+</span><span id="line-3">    <span class="n">tokenize</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+</span><span id="line-4">    <span class="n">add_generation_prompt</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+</span><span id="line-5"><span class="p">)</span>
+</span><span id="line-6"><span class="n">tokens</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="n">add_special_tokens</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+<ul class="simple">
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">tokenize=False</span></code></strong>: return rendered <strong>text</strong> (string), not token IDs; we tokenize explicitly in the next line.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">add_generation_prompt=False</span></code></strong>: don’t append the final “assistant start” marker; useful for training/encoding existing turns. (For inference, often set <code class="docutils literal notranslate"><span class="pre">True</span></code> to prompt the model to generate the next assistant reply.)</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">add_special_tokens=False</span></code></strong>: avoid duplicating special tokens since the chat template already includes the needed markers.</p></li>
+</ul>
+</section>
+<section id="loss-masking-assistant-only">
+<h3>Loss Masking (Assistant-only)<a class="headerlink" href="#loss-masking-assistant-only" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#loss-masking-assistant-only'">¶</a></h3>
+<p>For chat SFT, we usually want the model to learn to produce <strong>assistant responses</strong>, not to predict the <strong>user prompt</strong>. We therefore build per-token weights:</p>
+<ul class="simple">
+<li><p>tokens from <strong>assistant</strong> turns → <code class="docutils literal notranslate"><span class="pre">weight</span> <span class="pre">=</span> <span class="pre">1.0</span></code></p></li>
+<li><p>tokens from <strong>user</strong> turns → <code class="docutils literal notranslate"><span class="pre">weight</span> <span class="pre">=</span> <span class="pre">0.0</span></code></p></li>
+</ul>
+<p>Because training is <strong>next-token prediction</strong>, the mask must be aligned to the <strong>target tokens</strong> (the tokens being predicted). If we build weights for the original token stream <code class="docutils literal notranslate"><span class="pre">tokens[0..N-1]</span></code>, then the loss at step <code class="docutils literal notranslate"><span class="pre">t</span></code> predicts <code class="docutils literal notranslate"><span class="pre">tokens[t+1]</span></code>, so we use <code class="docutils literal notranslate"><span class="pre">weights[1:]</span></code> to align with <code class="docutils literal notranslate"><span class="pre">target_tokens</span> <span class="pre">=</span> <span class="pre">tokens[1:]</span></code>.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="k">def</span><span class="w"> </span><span class="nf">build_sft_example</span><span class="p">(</span><span class="n">messages</span><span class="p">,</span> <span class="n">tokenizer</span><span class="p">,</span> <span class="n">max_length</span><span class="o">=</span><span class="mi">2048</span><span class="p">):</span>
+</span><span id="line-2">    <span class="c1"># Build token stream + per-token weights (assistant=1, user=0)</span>
+</span><span id="line-3">    <span class="n">tokens</span><span class="p">,</span> <span class="n">weights</span> <span class="o">=</span> <span class="p">[],</span> <span class="p">[]</span>
+</span><span id="line-4">    <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">messages</span><span class="p">:</span>
+</span><span id="line-5">        <span class="n">turn_tokens</span> <span class="o">=</span> <span class="n">tokenizer</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">msg</span><span class="p">[</span><span class="s2">"content"</span><span class="p">],</span> <span class="n">add_special_tokens</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+</span><span id="line-6">        <span class="n">tokens</span> <span class="o">+=</span> <span class="n">turn_tokens</span>
+</span><span id="line-7">        <span class="n">weights</span> <span class="o">+=</span> <span class="p">[</span><span class="mf">1.0</span> <span class="k">if</span> <span class="n">msg</span><span class="p">[</span><span class="s2">"role"</span><span class="p">]</span> <span class="o">==</span> <span class="s2">"assistant"</span> <span class="k">else</span> <span class="mf">0.0</span><span class="p">]</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">turn_tokens</span><span class="p">)</span>
+</span><span id="line-8">
+</span><span id="line-9">    <span class="c1"># Optional truncation</span>
+</span><span id="line-10">    <span class="n">tokens</span><span class="p">,</span> <span class="n">weights</span> <span class="o">=</span> <span class="n">tokens</span><span class="p">[:</span><span class="n">max_length</span><span class="p">],</span> <span class="n">weights</span><span class="p">[:</span><span class="n">max_length</span><span class="p">]</span>
+</span><span id="line-11">
+</span><span id="line-12">    <span class="c1"># Next-token prediction: input[t] -&gt; target[t] = tokens[t+1]</span>
+</span><span id="line-13">    <span class="n">input_tokens</span>  <span class="o">=</span> <span class="n">tokens</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+</span><span id="line-14">    <span class="n">target_tokens</span> <span class="o">=</span> <span class="n">tokens</span><span class="p">[</span><span class="mi">1</span><span class="p">:]</span>
+</span><span id="line-15">
+</span><span id="line-16">    <span class="c1"># Align mask to targets (the predicted tokens)</span>
+</span><span id="line-17">    <span class="n">target_weights</span> <span class="o">=</span> <span class="n">weights</span><span class="p">[</span><span class="mi">1</span><span class="p">:]</span>
+</span><span id="line-18">
+</span><span id="line-19">    <span class="k">return</span> <span class="n">input_tokens</span><span class="p">,</span> <span class="n">target_tokens</span><span class="p">,</span> <span class="n">target_weights</span>
+</span></code></pre></div>
+</div>
+</section>
+<section id="datum-format">
+<h3>Datum Format<a class="headerlink" href="#datum-format" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#datum-format'">¶</a></h3>
+<p>Each conversation is converted into a next-token-prediction sample:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">model_input</span></code>: tokens <code class="docutils literal notranslate"><span class="pre">[0..T-2]</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">target_tokens</span></code>: tokens <code class="docutils literal notranslate"><span class="pre">[1..T-1]</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">weights</span></code>: mask applied on targets (assistant-only)</p></li>
+</ul>
+<p>Example:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="kn">from</span><span class="w"> </span><span class="nn">tinker</span><span class="w"> </span><span class="kn">import</span> <span class="n">types</span>
+</span><span id="line-2">
+</span><span id="line-3"><span class="n">datum</span> <span class="o">=</span> <span class="n">types</span><span class="o">.</span><span class="n">Datum</span><span class="p">(</span>
+</span><span id="line-4">    <span class="n">model_input</span><span class="o">=</span><span class="n">types</span><span class="o">.</span><span class="n">ModelInput</span><span class="o">.</span><span class="n">from_ints</span><span class="p">(</span><span class="n">input_tokens</span><span class="p">),</span>
+</span><span id="line-5">    <span class="n">loss_fn_inputs</span><span class="o">=</span><span class="p">{</span>
+</span><span id="line-6">        <span class="s2">"target_tokens"</span><span class="p">:</span> <span class="nb">list</span><span class="p">(</span><span class="n">target_tokens</span><span class="p">),</span>
+</span><span id="line-7">        <span class="s2">"weights"</span><span class="p">:</span> <span class="n">target_weights</span><span class="o">.</span><span class="n">tolist</span><span class="p">(),</span>
+</span><span id="line-8">    <span class="p">},</span>
+</span><span id="line-9"><span class="p">)</span>
+</span></code></pre></div>
+</div>
+</section>
+<section id="loss-function">
+<h3>Loss Function<a class="headerlink" href="#loss-function" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#loss-function'">¶</a></h3>
+<p>Training uses the following loss function:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">loss_fn="cross_entropy"</span></code></p></li>
+</ul>
+<p>TuFT returns per-token log probabilities (<code class="docutils literal notranslate"><span class="pre">logprobs</span></code>). The guide computes <strong>masked Negative Log-Likelihood (NLL)</strong>:</p>
+<p>$$
+\mathrm{NLL}=\frac{\sum_{t}\bigl(-\log p(y_t)\bigr),w_t}{\sum_{t} w_t}
+$$</p>
+<p>Minimal computation:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="k">def</span><span class="w"> </span><span class="nf">masked_nll</span><span class="p">(</span><span class="n">loss_fn_outputs</span><span class="p">,</span> <span class="n">datums</span><span class="p">):</span>
+</span><span id="line-2">    <span class="n">total_loss</span><span class="p">,</span> <span class="n">total_w</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span>
+</span><span id="line-3">    <span class="k">for</span> <span class="n">out</span><span class="p">,</span> <span class="n">d</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">loss_fn_outputs</span><span class="p">,</span> <span class="n">datums</span><span class="p">):</span>
+</span><span id="line-4">        <span class="k">for</span> <span class="n">lp</span><span class="p">,</span> <span class="n">w</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">out</span><span class="p">[</span><span class="s2">"logprobs"</span><span class="p">],</span> <span class="n">d</span><span class="o">.</span><span class="n">loss_fn_inputs</span><span class="p">[</span><span class="s2">"weights"</span><span class="p">]):</span>
+</span><span id="line-5">            <span class="n">total_loss</span> <span class="o">+=</span> <span class="o">-</span><span class="n">lp</span> <span class="o">*</span> <span class="n">w</span>
+</span><span id="line-6">            <span class="n">total_w</span> <span class="o">+=</span> <span class="n">w</span>
+</span><span id="line-7">    <span class="k">return</span> <span class="n">total_loss</span> <span class="o">/</span> <span class="nb">max</span><span class="p">(</span><span class="n">total_w</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+</section>
+</section>
+<hr class="docutils"/>
+<section id="parameter-selection">
+<h2>Parameter Selection<a class="headerlink" href="#parameter-selection" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#parameter-selection'">¶</a></h2>
+<p>This section explains how to choose <code class="docutils literal notranslate"><span class="pre">lora_rank</span></code> and <code class="docutils literal notranslate"><span class="pre">learning_rate</span></code>, and summarizes conclusions from the provided experiment results. This documentation is based on <a class="reference external" href="https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507">Qwen/Qwen3-4B-Instruct-2507</a>.</p>
+<section id="what-do-lora-rank-and-learning-rate-do">
+<h3>What do <code class="docutils literal notranslate"><span class="pre">lora_rank</span></code> and <code class="docutils literal notranslate"><span class="pre">learning_rate</span></code> do?<a class="headerlink" href="#what-do-lora-rank-and-learning-rate-do" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#what-do-lora-rank-and-learning-rate-do'">¶</a></h3>
+<p><strong><code class="docutils literal notranslate"><span class="pre">lora_rank</span></code> (LoRA adapter rank)</strong> controls adapter capacity:</p>
+<ul class="simple">
+<li><p>Higher rank = more trainable params → potentially better fit, more compute/memory, higher overfitting risk</p></li>
+<li><p>Lower rank = cheaper, often sufficient for style/small behavior changes</p></li>
+</ul>
+<p><strong><code class="docutils literal notranslate"><span class="pre">learning_rate</span></code></strong> controls update step size:</p>
+<ul class="simple">
+<li><p>Too high (e.g. <code class="docutils literal notranslate"><span class="pre">1e-3</span></code>): fast but can be unstable/overfit</p></li>
+<li><p>Too low (e.g. <code class="docutils literal notranslate"><span class="pre">1e-5</span></code>): stable but slow</p></li>
+<li><p>Middle (e.g. <code class="docutils literal notranslate"><span class="pre">1e-4</span></code>): common default for LoRA SFT</p></li>
+</ul>
+</section>
+<section id="experimental-conclusions-from-the-plots">
+<h3>Experimental conclusions from the plots<a class="headerlink" href="#experimental-conclusions-from-the-plots" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#experimental-conclusions-from-the-plots'">¶</a></h3>
+<p>Based on <strong>Figure 1</strong> (test NLL) and <strong>Figure 2</strong> (train mean NLL):</p>
+<ol class="arabic simple">
+<li><p>Very low LR (<code class="docutils literal notranslate"><span class="pre">1e-5</span></code>) converges much more slowly</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">1e-4</span></code> and <code class="docutils literal notranslate"><span class="pre">1e-3</span></code> improve quickly early</p></li>
+<li><p>Rank has diminishing returns beyond a point</p></li>
+<li><p>Best test losses often cluster around moderate rank + moderate/high LR</p></li>
+</ol>
+<blockquote>
+<div><p>Note: exact “best” depends on stopping step and downstream generation quality (not only NLL).</p>
+</div></blockquote>
+<figure class="align-center" id="id1">
+<a class="reference internal image-reference" href="../_images/test_nll_sft.png"><img alt="Test NLL" src="../_images/test_nll_sft.png" style="width: 720px;"/>
+</a>
+<figcaption>
+<p><span class="caption-text"><strong>Figure 1. Test NLL</strong></span><a class="headerlink" href="#id1" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+<figure class="align-center" id="id2">
+<a class="reference internal image-reference" href="../_images/train_mean_nll_sft.png"><img alt="Train mean NLL" src="../_images/train_mean_nll_sft.png" style="width: 720px;"/>
+</a>
+<figcaption>
+<p><span class="caption-text"><strong>Figure 2. Train mean NLL</strong></span><a class="headerlink" href="#id2" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+</section>
+<section id="practical-recommendations">
+<h3>Practical recommendations<a class="headerlink" href="#practical-recommendations" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#practical-recommendations'">¶</a></h3>
+<ul class="simple">
+<li><p>Strong default: <code class="docutils literal notranslate"><span class="pre">lora_rank</span> <span class="pre">=</span> <span class="pre">8</span> <span class="pre">or</span> <span class="pre">32</span></code>, <code class="docutils literal notranslate"><span class="pre">learning_rate</span> <span class="pre">=</span> <span class="pre">1e-4</span></code></p></li>
+<li><p>Faster early progress (riskier): <code class="docutils literal notranslate"><span class="pre">lora_rank</span> <span class="pre">=</span> <span class="pre">8</span> <span class="pre">or</span> <span class="pre">32</span></code>, <code class="docutils literal notranslate"><span class="pre">learning_rate</span> <span class="pre">=</span> <span class="pre">1e-3</span></code></p></li>
+<li><p>If unstable/overfitting: lower LR (<code class="docutils literal notranslate"><span class="pre">1e-4</span> <span class="pre">→</span> <span class="pre">5e-5</span> <span class="pre">→</span> <span class="pre">1e-5</span></code>) or lower rank (<code class="docutils literal notranslate"><span class="pre">32</span> <span class="pre">→</span> <span class="pre">8</span></code>)</p></li>
+<li><p>If task is harder: try <code class="docutils literal notranslate"><span class="pre">32</span></code> before <code class="docutils literal notranslate"><span class="pre">128</span></code>, keep LR <code class="docutils literal notranslate"><span class="pre">1e-4</span></code>, increase steps before rank if possible. “Harder” means the learning problem is intrinsically more difficult (more complex input→output mapping), such as stricter output constraints/format, longer context, more reasoning steps, or higher output diversity/ambiguity. It does not simply mean “more data”; more data usually just requires more training steps, not a higher LoRA rank.</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils"/>
+<section id="q-a">
+<h2>Q&amp;A<a class="headerlink" href="#q-a" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#q-a'">¶</a></h2>
+<section id="dataset-download-fails-due-to-network-issues-when-accessing-huggingface-co">
+<h3>(1) Dataset download fails due to network issues when accessing <a class="reference external" href="http://huggingface.co">huggingface.co</a><a class="headerlink" href="#dataset-download-fails-due-to-network-issues-when-accessing-huggingface-co" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#dataset-download-fails-due-to-network-issues-when-accessing-huggingface-co'">¶</a></h3>
+<p>If you see an error like:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="n">MaxRetryError</span><span class="p">(</span><span class="s1">'HTTPSConnectionPool(host='</span><span class="n">huggingface</span><span class="o">.</span><span class="n">co</span><span class="s1">', port=443): Max retries exceeded ...</span>
+</span><span id="line-2"><span class="p">(</span><span class="n">Caused</span> <span class="n">by</span> <span class="n">NewConnectionError</span><span class="p">(</span><span class="o">...</span> <span class="p">[</span><span class="n">Errno</span> <span class="mi">101</span><span class="p">]</span> <span class="n">Network</span> <span class="ow">is</span> <span class="n">unreachable</span><span class="p">))</span><span class="s1">')</span>
+</span></code></pre></div>
+</div>
+<p>For Jupyter notebook users, add the following <strong>at the very top of the first cell</strong>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+</span><span id="line-2"><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"HF_ENDPOINT"</span><span class="p">]</span> <span class="o">=</span> <span class="s2">"https://hf-mirror.com"</span>
+</span></code></pre></div>
+</div>
+<p>Then <strong>Restart Kernel and Clear ALL Outputs</strong>.</p>
+</section>
+<hr class="docutils"/>
+<section id="invalid-api-key">
+<h3>(2) <code class="docutils literal notranslate"><span class="pre">invalid</span> <span class="pre">Api_key</span></code><a class="headerlink" href="#invalid-api-key" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#invalid-api-key'">¶</a></h3>
+<p>In the Tinker SDK, the environment variable <code class="docutils literal notranslate"><span class="pre">TINKER_API_KEY</span></code> takes precedence over the <code class="docutils literal notranslate"><span class="pre">api_key=</span></code> argument passed here:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="n">service_client</span> <span class="o">=</span> <span class="n">tinker</span><span class="o">.</span><span class="n">ServiceClient</span><span class="p">(</span><span class="n">base_url</span><span class="o">=</span><span class="n">TINKER_BASE_URL</span><span class="p">,</span> <span class="n">api_key</span><span class="o">=</span><span class="n">TINKER_API_KEY</span><span class="p">)</span>
+</span></code></pre></div>
+</div>
+<p>So if your code is passing the correct key but you still get <code class="docutils literal notranslate"><span class="pre">invalid</span> <span class="pre">api_key</span></code>, you need to either set the correct environment variable (via <code class="docutils literal notranslate"><span class="pre">export</span> <span class="pre">TINKER_API_KEY=...</span></code>) or clear it and rely on the <code class="docutils literal notranslate"><span class="pre">api_key=</span></code> argument:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="nb">unset</span><span class="w"> </span>TINKER_API_KEY
+</span></code></pre></div>
+</div>
+</section>
+<hr class="docutils"/>
+<section id="jupyter-warning-tqdmwarning-iprogress-not-found">
+<h3>(3) Jupyter warning: <code class="docutils literal notranslate"><span class="pre">TqdmWarning:</span> <span class="pre">IProgress</span> <span class="pre">not</span> <span class="pre">found...</span></code><a class="headerlink" href="#jupyter-warning-tqdmwarning-iprogress-not-found" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#jupyter-warning-tqdmwarning-iprogress-not-found'">¶</a></h3>
+<p>If you see:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="n">TqdmWarning</span><span class="p">:</span> <span class="n">IProgress</span> <span class="ow">not</span> <span class="n">found</span><span class="o">.</span> <span class="n">Please</span> <span class="n">update</span> <span class="n">jupyter</span> <span class="ow">and</span> <span class="n">ipywidgets</span><span class="o">.</span>
+</span></code></pre></div>
+</div>
+<p><strong>Option A (recommended): install/upgrade Jupyter widgets</strong></p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">pip<span class="w"> </span>install<span class="w"> </span>-U<span class="w"> </span>ipywidgets<span class="w"> </span>jupyter
+</span></code></pre></div>
+</div>
+<p>Then restart the kernel.</p>
+<p><strong>Option B: avoid widget-based tqdm in notebooks</strong>
+Use the standard <code class="docutils literal notranslate"><span class="pre">tqdm</span></code> progress bar instead of <code class="docutils literal notranslate"><span class="pre">tqdm.auto</span></code> / <code class="docutils literal notranslate"><span class="pre">tqdm.notebook</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="kn">from</span><span class="w"> </span><span class="nn">tqdm</span><span class="w"> </span><span class="kn">import</span> <span class="n">tqdm</span>
+</span></code></pre></div>
+</div>
+</section>
+<hr class="docutils"/>
+<section id="oom-or-slow-training">
+<h3>(4) OOM or slow training<a class="headerlink" href="#oom-or-slow-training" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#oom-or-slow-training'">¶</a></h3>
+<p>If you run into out-of-memory (OOM) errors or training is too slow, reduce one or more of:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">MAX_LENGTH</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">BATCH_SIZE</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">LORA_RANK</span></code></p></li>
+</ul>
+<p>In most cases, lowering <code class="docutils literal notranslate"><span class="pre">MAX_LENGTH</span></code> gives the biggest memory/speed improvement, followed by <code class="docutils literal notranslate"><span class="pre">BATCH_SIZE</span></code>, then <code class="docutils literal notranslate"><span class="pre">LORA_RANK</span></code>.</p>
+</section>
+<section id="add-a-virtual-environment-to-jupyter-register-a-new-kernel">
+<h3>(5) Add a virtual environment to Jupyter (register a new kernel)<a class="headerlink" href="#add-a-virtual-environment-to-jupyter-register-a-new-kernel" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#add-a-virtual-environment-to-jupyter-register-a-new-kernel'">¶</a></h3>
+<p>If you’re working on a remote server, it’s often convenient to add your existing virtual environment (virtualenv/venv) as a selectable Jupyter kernel.</p>
+<ol class="arabic simple">
+<li><p><strong>Activate the virtual environment</strong></p></li>
+</ol>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="nb">source</span><span class="w"> </span>/path/to/venv/bin/activate
+</span></code></pre></div>
+</div>
+<ol class="arabic simple" start="2">
+<li><p><strong>Install <code class="docutils literal notranslate"><span class="pre">ipykernel</span></code> inside the environment</strong></p></li>
+</ol>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">pip<span class="w"> </span>install<span class="w"> </span>ipykernel
+</span></code></pre></div>
+</div>
+<ol class="arabic simple" start="3">
+<li><p><strong>Register the environment as a Jupyter kernel</strong></p></li>
+</ol>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">python<span class="w"> </span>-m<span class="w"> </span>ipykernel<span class="w"> </span>install<span class="w"> </span>--user<span class="w"> </span>--name<span class="o">=</span>myproject<span class="w"> </span>--display-name<span class="w"> </span><span class="s2">"Python (myproject)"</span>
+</span></code></pre></div>
+</div>
+<ol class="arabic simple" start="4">
+<li><p><strong>Select the kernel in Jupyter</strong></p></li>
+</ol>
+<ul class="simple">
+<li><p>In Jupyter Notebook/Lab: <strong>Kernel → Change Kernel → Python (myproject)</strong></p></li>
+</ul>
+</section>
+</section>
+</section>
+</div></div><aside class="hidden text-sm xl:block" id="right-sidebar">
+<div class="sticky top-16 -mt-10 max-h-[calc(100vh-5rem)] h-full overflow-y-auto pt-6 space-y-2"><p class="font-medium">On this page</p>
+<ul>
+<li><a :data-current="activeSection === '#what-you-ll-learn'" class="reference internal" href="#what-you-ll-learn">What You’ll Learn</a></li>
+<li><a :data-current="activeSection === '#table-of-contents'" class="reference internal" href="#table-of-contents">Table of Contents</a></li>
+<li><a :data-current="activeSection === '#when-to-use-sft-vs-rl'" class="reference internal" href="#when-to-use-sft-vs-rl">When to Use SFT vs. RL</a><ul>
+<li><a :data-current="activeSection === '#sft-vs-rl-high-level-comparison'" class="reference internal" href="#sft-vs-rl-high-level-comparison">SFT vs. RL (high-level comparison)</a></li>
+</ul>
+</li>
+<li><a :data-current="activeSection === '#datasets'" class="reference internal" href="#datasets">Datasets</a></li>
+<li><a :data-current="activeSection === '#minimal-training-example-sft'" class="reference internal" href="#minimal-training-example-sft">Minimal Training Example (SFT)</a></li>
+<li><a :data-current="activeSection === '#key-concepts'" class="reference internal" href="#key-concepts">Key Concepts</a><ul>
+<li><a :data-current="activeSection === '#chat-formatting-templates'" class="reference internal" href="#chat-formatting-templates">Chat Formatting &amp; Templates</a></li>
+<li><a :data-current="activeSection === '#loss-masking-assistant-only'" class="reference internal" href="#loss-masking-assistant-only">Loss Masking (Assistant-only)</a></li>
+<li><a :data-current="activeSection === '#datum-format'" class="reference internal" href="#datum-format">Datum Format</a></li>
+<li><a :data-current="activeSection === '#loss-function'" class="reference internal" href="#loss-function">Loss Function</a></li>
+</ul>
+</li>
+<li><a :data-current="activeSection === '#parameter-selection'" class="reference internal" href="#parameter-selection">Parameter Selection</a><ul>
+<li><a :data-current="activeSection === '#what-do-lora-rank-and-learning-rate-do'" class="reference internal" href="#what-do-lora-rank-and-learning-rate-do">What do <code class="docutils literal notranslate"><span class="pre">lora_rank</span></code> and <code class="docutils literal notranslate"><span class="pre">learning_rate</span></code> do?</a></li>
+<li><a :data-current="activeSection === '#experimental-conclusions-from-the-plots'" class="reference internal" href="#experimental-conclusions-from-the-plots">Experimental conclusions from the plots</a></li>
+<li><a :data-current="activeSection === '#practical-recommendations'" class="reference internal" href="#practical-recommendations">Practical recommendations</a></li>
+</ul>
+</li>
+<li><a :data-current="activeSection === '#q-a'" class="reference internal" href="#q-a">Q&amp;A</a><ul>
+<li><a :data-current="activeSection === '#dataset-download-fails-due-to-network-issues-when-accessing-huggingface-co'" class="reference internal" href="#dataset-download-fails-due-to-network-issues-when-accessing-huggingface-co">(1) Dataset download fails due to network issues when accessing huggingface.co</a></li>
+<li><a :data-current="activeSection === '#invalid-api-key'" class="reference internal" href="#invalid-api-key">(2) <code class="docutils literal notranslate"><span class="pre">invalid</span> <span class="pre">Api_key</span></code></a></li>
+<li><a :data-current="activeSection === '#jupyter-warning-tqdmwarning-iprogress-not-found'" class="reference internal" href="#jupyter-warning-tqdmwarning-iprogress-not-found">(3) Jupyter warning: <code class="docutils literal notranslate"><span class="pre">TqdmWarning:</span> <span class="pre">IProgress</span> <span class="pre">not</span> <span class="pre">found...</span></code></a></li>
+<li><a :data-current="activeSection === '#oom-or-slow-training'" class="reference internal" href="#oom-or-slow-training">(4) OOM or slow training</a></li>
+<li><a :data-current="activeSection === '#add-a-virtual-environment-to-jupyter-register-a-new-kernel'" class="reference internal" href="#add-a-virtual-environment-to-jupyter-register-a-new-kernel">(5) Add a virtual environment to Jupyter (register a new kernel)</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</aside>
+</main>
+</div>
+</div><footer class="py-6 border-t border-border md:py-0">
+<div class="container flex flex-col items-center justify-between gap-4 md:h-24 md:flex-row">
+<div class="flex flex-col items-center gap-4 px-8 md:flex-row md:gap-2 md:px-0">
+<p class="text-sm leading-loose text-center text-muted-foreground md:text-left"></p>
+</div>
+</div>
+</footer>
+</div>
+<script src="../_static/documentation_options.js?v=360bc84d"></script>
+<script src="../_static/doctools.js?v=9bcbadda"></script>
+<script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+<script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+<script src="../_static/copybutton.js?v=f281be69"></script>
+<script defer="defer" src="../_static/theme.js?v=582b20c5"></script>
+<script src="../_static/design-tabs.js?v=f930bc37"></script>
+<script src="../_static/custom.js?v=d0898e36"></script>
+</body>
+</html>
