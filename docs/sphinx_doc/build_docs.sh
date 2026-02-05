@@ -9,7 +9,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 SRC_EN="source"
 SRC_ZH="source_zh"
-OUT_ROOT="build/html"
+OUT_ROOT="${ROOT_DIR}/docs/sphinx_doc/build/html"
 OUT_EN="${OUT_ROOT}/en"
 OUT_ZH="${OUT_ROOT}/zh"
 SWITCHER_JSON="${ROOT_DIR}/docs/sphinx_doc/switcher.json"
@@ -98,16 +98,7 @@ while read -r VERSION TAG; do
     fi
   fi
   git -C "${ROOT_DIR}" checkout "${TAG}" >/dev/null
-  # TODO(remove): main may not include docs/sphinx_doc yet.
-  # Build from the current branch so PR checks can still pass.
-  if [[ ! -d "${SRC_EN}" || ! -d "${SRC_ZH}" ]]; then
-    if [[ "${TAG}" == "main" ]]; then
-      echo "[build_docs] docs/sphinx_doc missing on main, building current branch instead."
-      git -C "${ROOT_DIR}" checkout "${ORIG_REF}" >/dev/null
-    fi
-  fi
-  # TODO(remove): end of temporary main fallback block.
-  if [[ ! -d "${SRC_EN}" || ! -d "${SRC_ZH}" ]]; then
+  if [[ ! -d "${ROOT_DIR}/docs/sphinx_doc/${SRC_EN}" || ! -d "${ROOT_DIR}/docs/sphinx_doc/${SRC_ZH}" ]]; then
     echo "[build_docs] Missing docs sources after checkout ${TAG}. Ensure docs/sphinx_doc exists on this ref."
     exit 1
   fi

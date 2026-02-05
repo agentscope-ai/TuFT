@@ -7,7 +7,12 @@ import pytest
 from tinker import types
 from tinker.types.try_again_response import TryAgainResponse
 
-from tuft.exceptions import UnknownModelException, UserMismatchException
+from tuft.exceptions import (
+    FutureCancelledException,
+    ServerException,
+    UnknownModelException,
+    UserMismatchException,
+)
 from tuft.futures import FutureStore
 
 
@@ -61,10 +66,9 @@ async def test_future_store_records_failures_as_request_failed():
         raise UnknownModelException("unknown")
 
     future = await store.enqueue(_operation, user_id="tester")
-    result = await _wait_for_result(store, future.request_id, user_id="tester")
-    assert isinstance(result, types.RequestFailedResponse)
-    assert result.error == "Unknown model: unknown"
-    assert result.category == types.RequestErrorCategory.User
+    with pytest.raises(UnknownModelException):
+        await _wait_for_result(store, future.request_id, user_id="tester")
+
     await store.shutdown()
 
 
@@ -76,10 +80,11 @@ async def test_future_store_handles_unexpected_errors():
         raise RuntimeError("boom")
 
     future = await store.enqueue(_operation, user_id="tester")
-    result = await _wait_for_result(store, future.request_id, user_id="tester")
-    assert isinstance(result, types.RequestFailedResponse)
-    assert result.category == types.RequestErrorCategory.Server
-    assert "boom" in result.error
+
+    with pytest.raises(ServerException) as exc_info:
+        await _wait_for_result(store, future.request_id, user_id="tester")
+    assert "boom" in str(exc_info.value)
+
     await store.shutdown()
 
 
@@ -115,15 +120,15 @@ async def test_mark_pending_sample_futures_failed():
     assert count == 1  # Only the sample future should be marked
 
     # Sample future should now be failed
-    sample_result = await store.retrieve(sample_future.request_id, user_id="tester", timeout=0.1)
-    assert isinstance(sample_result, types.RequestFailedResponse)
-    assert sample_result.category == types.RequestErrorCategory.Server
+    with pytest.raises(FutureCancelledException):
+        sample_result = await store.retrieve(
+            sample_future.request_id, user_id="tester", timeout=0.1
+        )
 
     training_result = await store.retrieve(
         training_future.request_id, user_id="tester", timeout=0.1
     )
     # It should NOT be a RequestFailedResponse from our mark call
-    assert not isinstance(training_result, types.RequestFailedResponse)
     assert isinstance(training_result, TryAgainResponse)
 
     await store.shutdown()

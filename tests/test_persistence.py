@@ -226,10 +226,8 @@ class TestFutureStorePersistence:
         future = await store.enqueue(_operation, user_id="tester")
         request_id = future.request_id
 
-        result = await _wait_for_result(store, request_id, user_id="tester")
-        assert isinstance(result, types.RequestFailedResponse)
-        assert result.error == "Unknown model: unknown"
-        assert result.category == types.RequestErrorCategory.User
+        with pytest.raises(UnknownModelException):
+            await _wait_for_result(store, request_id, user_id="tester")
 
         # === Phase 2: Server crash ===
         await store.shutdown()

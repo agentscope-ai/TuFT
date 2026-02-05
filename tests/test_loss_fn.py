@@ -26,7 +26,7 @@ def test_get_loss_fn():
     invalid_name = "invalid_loss_fn"
     with pytest.raises(LossFunctionNotFoundException) as exc_info:
         get_loss_fn(invalid_name)
-    assert str(exc_info.value) == f"Loss function {invalid_name} not found."
+    assert str(exc_info.value) == f"[404] Loss function {invalid_name} not found."
 
 
 @pytest.mark.gpu

@@ -13,8 +13,19 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from tinker import types
 from tinker.types.try_again_response import TryAgainResponse
 
-from .exceptions import FutureNotFoundException, TuFTException, UserMismatchException
-from .persistence import get_redis_store, is_persistence_enabled, load_record, save_record
+from .exceptions import (
+    FutureCancelledException,
+    FutureNotFoundException,
+    ServerException,
+    TuFTException,
+    UserMismatchException,
+)
+from .persistence import (
+    get_redis_store,
+    is_persistence_enabled,
+    load_record,
+    save_record,
+)
 from .telemetry.metrics import get_metrics
 from .telemetry.tracing import get_tracer
 
@@ -63,7 +74,7 @@ class FutureRecord(BaseModel):
     queue_state: QueueState = "active"
     status: Literal["pending", "ready", "failed"] = "pending"
     payload: Any | None = None
-    error: types.RequestFailedResponse | None = None
+    error: TuFTException | None = None
     operation_type: OperationType | None = None
     operation_args: dict[str, Any] | None = None
     created_at: datetime = Field(default_factory=_now)
@@ -162,10 +173,7 @@ class FutureStore:
                 continue
             if checkpoint_future_id is None or record.future_id > checkpoint_future_id:
                 record.status = "failed"
-                record.error = types.RequestFailedResponse(
-                    error=error_message,
-                    category=types.RequestErrorCategory.Server,
-                )
+                record.error = FutureCancelledException(record.request_id, reason=error_message)
                 record.event.set()
                 self._save_future(record.request_id)
                 count += 1
@@ -180,10 +188,7 @@ class FutureStore:
         for record in self._records.values():
             if record.status == "pending":
                 record.status = "failed"
-                record.error = types.RequestFailedResponse(
-                    error=error_message,
-                    category=types.RequestErrorCategory.Server,
-                )
+                record.error = FutureCancelledException(record.request_id, reason=error_message)
                 record.event.set()
                 self._save_future(record.request_id)
                 count += 1
@@ -198,10 +203,7 @@ class FutureStore:
         for record in self._records.values():
             if record.status == "pending" and record.operation_type == "sample":
                 record.status = "failed"
-                record.error = types.RequestFailedResponse(
-                    error=error_message,
-                    category=types.RequestErrorCategory.Server,
-                )
+                record.error = FutureCancelledException(record.request_id, reason=error_message)
                 record.event.set()
                 self._save_future(record.request_id)
                 count += 1
@@ -246,7 +248,8 @@ class FutureStore:
         # Update metrics
         metrics = get_metrics()
         metrics.futures_created.add(
-            1, {"operation_type": operation_type or "unknown", "model_id": model_id or ""}
+            1,
+            {"operation_type": operation_type or "unknown", "model_id": model_id or ""},
         )
         metrics.futures_queue_length.add(1, {"queue_state": queue_state})
 
@@ -272,19 +275,13 @@ class FutureStore:
                         loop = asyncio.get_running_loop()
                         payload = await loop.run_in_executor(None, operation)
                 except TuFTException as exc:
-                    message = exc.detail
-                    failure = types.RequestFailedResponse(
-                        error=message,
-                        category=types.RequestErrorCategory.User,
-                    )
+                    failure = exc
                     span.record_exception(exc)
                     logger.error("Future failed: %s", record.request_id)
                     await self._mark_failed(record.request_id, failure, operation_type)
                 except Exception as exc:  # pylint: disable=broad-except
-                    failure = types.RequestFailedResponse(
-                        error=str(exc),
-                        category=types.RequestErrorCategory.Server,
-                    )
+                    # Unknown exception
+                    failure = ServerException(str(exc))
                     span.record_exception(exc)
                     logger.error("Future failed: %s", record.request_id)
                     await self._mark_failed(record.request_id, failure, operation_type)
@@ -361,7 +358,7 @@ class FutureStore:
     async def _mark_failed(
         self,
         request_id: str,
-        failure: types.RequestFailedResponse,
+        failure: TuFTException,
         operation_type: str | None = None,
     ) -> None:
         """Mark a future as failed with the given error."""
@@ -415,6 +412,7 @@ class FutureStore:
             # Record not found - may have expired due to TTL or never existed
             raise FutureNotFoundException(request_id)
         if record.user_id != user_id:
+            record.status = "failed"
             raise UserMismatchException()
         # Wait for completion if still pending
         if record.status == "pending":
@@ -426,7 +424,7 @@ class FutureStore:
 
         # Return result
         if record.status == "failed" and record.error is not None:
-            return record.error
+            raise record.error
 
         return record.payload
 

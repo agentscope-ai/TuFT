@@ -176,7 +176,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
             )
         except TuFTException as exc:
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=exc.status_code,
                 detail=f"Failed to create sampling session: {exc.detail}",
             ) from exc
         except Exception as exc:  # pylint: disable=broad-except
@@ -210,7 +210,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
             )
         except TuFTException as exc:
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=exc.status_code,
                 detail=f"Failed to create model: {exc.detail}",
             ) from exc
         except Exception as exc:  # pylint: disable=broad-except
@@ -250,7 +250,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
             await state.unload_model(request.model_id, user_id=user.user_id)
         except TuFTException as exc:
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=exc.status_code,
                 detail=f"Failed to unload model: {exc.detail}",
             ) from exc
         except Exception as exc:  # pylint: disable=broad-except
@@ -527,9 +527,15 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
             payload = await state.future_store.retrieve(
                 request_id=request.request_id, user_id=user.user_id
             )
-        except KeyError as exc:
+        except TuFTException as exc:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Unknown request_id"
+                status_code=exc.status_code,
+                detail=f"Failed to retrieve future: {exc.detail}",
+            ) from exc
+        except Exception as exc:  # pylint: disable=broad-except
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to retrieve future: {str(exc)}",
             ) from exc
         return payload  # FastAPI will serialize the stored Tinker type
 
