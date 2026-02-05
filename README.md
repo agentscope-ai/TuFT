@@ -199,6 +199,16 @@ We recommend using [uv](https://github.com/astral-sh/uv) for dependency manageme
     git clone https://github.com/agentscope-ai/TuFT
     ```
 
+    **Potential environment issues:**
+
+    TuFT relies on open-source platforms, so it may not function correctly if your environment lacks access to these resources. To help you diagnose connectivity or dependency issues, we provide a diagnostic script that checks the status of required prerequisites:
+
+    ```bash
+    cd TuFT
+    bash scripts/net_check.sh
+    ```
+    This script will assess your environment status and suggest possible solutions.
+
 2. Create a virtual environment:
 
     ```bash
@@ -363,9 +373,10 @@ export TUFT_OTEL_DEBUG=1  # Enable console exporter for debugging
 
 ## Console
 
-Tuft provides a dashboard for users to know the details of their traning runs and checkpoints. It also provides a sampling playground for users to try out the finetuned models.
+TuFT provides a dashboard that allows users to view detailed information about their training runs and checkpoints. It also includes a sampling playground where users can experiment with their fine-tuned models.
 
-See [docs/console.md](docs/console.md) for the console setup.
+See [docs/console.md](docs/console.md) for instructions on setting up the console.
+
 ## Architecture
 
 TuFT provides a unified service API for agentic model training and sampling. The system supports multiple LoRA adapters per base model and checkpoint management.
