@@ -4,6 +4,11 @@ sd_hide_title: true
 
 # TuFT
 
+<div class="hero-logo" align="center">
+  <img class="only-light" src="../_static/logo_light.svg" alt="TuFT Logo" width="280"/>
+  <img class="only-dark" src="../_static/logo_dark.svg" alt="TuFT Logo" width="280"/>
+</div>
+
 <p class="hero-subtitle"><strong>TuFT (Tenant-unified Fine-Tuning)</strong> 是一个多租户平台，支持多用户通过统一 API 在共享基础设施上微调大语言模型。可通过 Tinker SDK 或兼容客户端接入使用。</p>
 
 ```{image} https://img.alicdn.com/imgextra/i2/O1CN01hkVXFE1uIvSMCvMxM_!!6000000006015-2-tps-2500-1406.png

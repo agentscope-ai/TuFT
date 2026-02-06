@@ -1,5 +1,9 @@
 <div align="center">
-  <img src="assets/tuft-logo-colorful.svg" alt="TuFT Logo" width="400"/>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/sphinx_doc/_static/logo_dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/sphinx_doc/_static/logo_light.svg">
+    <img alt="TuFT Logo" src="docs/sphinx_doc/_static/logo_light.svg" width="400"/>
+  </picture>
 </div>
 
 <p align="center">
