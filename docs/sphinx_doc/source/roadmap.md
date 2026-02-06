@@ -38,4 +38,4 @@ This roadmap is not fixed, but rather a starting point for our journey with the 
 We welcome suggestions and contributions from the community! Join us on:
 
 - [DingTalk Group](https://qr.dingtalk.com/action/joingroup?code=v1,k1,UWvzO6HHSeuvRQ5WXCOMJEijadQV+hDjhMIpiVr8qCs=&_dt_no_comment=1&origin=11?)
-- [Discord](https://discord.gg/wEahC7ZJ) (on AgentScope's Server)
+- [Discord](https://discord.gg/BCNCaQGxBH) (on AgentScope's Server)

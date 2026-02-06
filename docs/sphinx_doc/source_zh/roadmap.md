@@ -1,6 +1,6 @@
-# 路线图
+# 发展路线图
 
-本页概述了我们对 TuFT 的开发愿景和计划。
+本页概述了 TuFT 的开发愿景与未来规划。
 
 ## 核心方向：Agent 场景的后训练
 
@@ -38,4 +38,4 @@
 我们欢迎社区的建议和贡献！加入我们：
 
 - [钉钉群](https://qr.dingtalk.com/action/joingroup?code=v1,k1,UWvzO6HHSeuvRQ5WXCOMJEijadQV+hDjhMIpiVr8qCs=&_dt_no_comment=1&origin=11?)
-- [Discord](https://discord.gg/wEahC7ZJ)（在 AgentScope 服务器上）
+- [Discord](https://discord.gg/BCNCaQGxBH)（在 AgentScope 服务器上）

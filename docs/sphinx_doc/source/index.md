@@ -11,8 +11,20 @@ sd_hide_title: true
 :class: hero-image
 ```
 
+<div class="install-command">
+
+<p class="install-title">Quick Install</p>
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install.sh)"
+```
+
+<p class="install-more-link">For more installation options (PyPI, source, Docker), see the <a href="getting-started/installation.html">Installation Guide</a>.</p>
+
+</div>
+
 <div class="quickstart-cta">
-  <a class="quickstart-cta-link" href="getting-started/quickstart.html">Start the Quickstart →</a>
+  <a class="quickstart-cta-link" href="getting-started/quickstart.html">Quickstart →</a>
 </div>
 
 ```{toctree}

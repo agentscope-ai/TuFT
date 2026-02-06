@@ -19,7 +19,6 @@ release = _package_version
 extensions = [
     "myst_parser",
     "sphinx_design",
-    "sphinx_copybutton",
 ]
 
 templates_path = ["../_templates"]
@@ -84,7 +83,7 @@ html_theme_options = {
             ),
         },
         "Discord": {
-            "link": "https://discord.gg/wEahC7ZJ",
+            "link": "https://discord.gg/BCNCaQGxBH",
             "icon": (
                 '<svg width="20" height="20" viewBox="0 0 16 16" '
                 'fill="currentColor">'

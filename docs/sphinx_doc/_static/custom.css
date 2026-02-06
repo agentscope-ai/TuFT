@@ -8,8 +8,52 @@
     margin-bottom: 2rem;
 }
 
+.install-command {
+    margin: 1.5rem auto 0.5rem;
+    max-width: 720px;
+    padding: 1.2rem 1.5rem;
+    border-radius: 0.75rem;
+    border: 1px solid var(--color-gray-200);
+    background: var(--background);
+}
+
+html.dark .install-command {
+    border-color: var(--color-gray-700);
+}
+
+.install-title {
+    font-size: 0.85rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    margin-bottom: 0;
+}
+
+.install-command .highlight {
+    margin-top: 0.1rem !important;
+    margin-bottom: 0.4rem !important;
+}
+
+.install-more-link {
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-top: 0;
+    margin-bottom: 0;
+}
+
+.install-more-link a {
+    color: var(--color-blue-500);
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.install-more-link a:hover {
+    text-decoration: underline;
+}
+
 .quickstart-cta {
-    margin: 1.5rem auto 2.5rem;
+    margin: 1rem auto 2.5rem;
     max-width: 720px;
 }
 
@@ -104,9 +148,6 @@ html.dark .tuft-version-icon svg {
     color: var(--color-gray-300);
 }
 
-html.dark .tuft-version-select select {
-}
-
 .tuft-version-select-inner::after {
     content: "";
     position: absolute;
@@ -124,12 +165,13 @@ html.dark .tuft-version-select-inner::after {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%239ca3af'%3E%3Cpath d='M5.5 7.5l4.5 4.5 4.5-4.5'/%3E%3C/svg%3E");
 }
 
-header a[href="#"] img[alt="Logo"] {
+header a img[alt="Logo"] {
     width: 36px;
     height: 36px;
 }
 
-header a[href="#"] span {
+header a span.hidden.font-bold,
+header a span.font-bold {
     font-size: 1.125rem;
 }
 
@@ -152,4 +194,3 @@ header a[href="#"] span {
     background: var(--accent);
     color: var(--accent-foreground);
 }
-

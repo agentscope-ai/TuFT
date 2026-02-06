@@ -94,7 +94,7 @@ TuFT 导出：
 TuFT 在多个层级生成 span：
 
 - **HTTP 服务器 span**：启用遥测时检测 FastAPI。
-- **控制器 span**：训练/采样操作创建如下 span：
+- **控制器 span**：训练/推理操作创建如下 span：
   - `training_controller.create_model`
   - `training_controller.run_forward`
   - `training_controller.run_forward_backward`
@@ -124,7 +124,7 @@ TuFT 发出两大类指标：
   - `tuft.training.tokens_per_second`（直方图）
   - `tuft.training.checkpoints.saved`（计数器）
   - `tuft.training.checkpoint.size_bytes`（直方图）
-- 采样：
+- 推理：
   - `tuft.sampling.sessions.active`（上下计数器）
   - `tuft.sampling.requests`（计数器）
   - `tuft.sampling.duration`（直方图，秒）
@@ -174,11 +174,11 @@ TuFT 是多租户和多客户端的。为了使追踪可搜索并跨组件可链
 您可以将这些视为可观测性后端中的"共享键"：
 
 - `tuft.session_id`
-  - 链接跨训练 + 采样活动的用户会话
+  - 链接跨训练与推理活动的用户会话
 - `tuft.training_run_id`
   - 链接特定训练运行（LoRA 适配器生命周期）的所有 span
 - `tuft.sampling_session_id`
-  - 链接特定采样会话的所有 span
+  - 链接特定推理会话的所有 span
 - `tuft.request_id`
   - 将 FutureStore 执行 span 与异步 future 生命周期链接
 - `tuft.operation_type`
@@ -198,7 +198,7 @@ TuFT 是多租户和多客户端的。为了使追踪可搜索并跨组件可链
 这是追踪跨以下活动的推荐方式：
 
 - 会话 → 训练客户端 → 训练控制器 → 后端执行
-- 会话 → 采样客户端 → 采样控制器 → 后端执行
+- 会话 → 推理客户端 → 推理控制器 → 后端执行
 - API 调用 → future 入队 → future 执行 → 结果检索
 
 ---

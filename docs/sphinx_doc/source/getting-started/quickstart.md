@@ -1,4 +1,4 @@
-# Quick Start Example
+# Quickstart
 
 This example demonstrates how to use TuFT for training and sampling with the [Tinker SDK](https://pypi.org/project/tinker/).
 

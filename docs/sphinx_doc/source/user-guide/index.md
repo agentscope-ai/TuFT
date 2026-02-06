@@ -36,6 +36,14 @@ Enable server state persistence with Redis for crash recovery.
 
 OpenTelemetry integration for tracing, metrics, and logs.
 :::
+
+:::{grid-item-card} Console
+:link: console
+:link-type: doc
+:shadow: none
+
+Dashboard for monitoring training runs, checkpoints, and sampling playground.
+:::
 ```
 
 ```{toctree}
@@ -46,4 +54,5 @@ chat-sft
 countdown-rl
 persistence
 telemetry
+console
 ```

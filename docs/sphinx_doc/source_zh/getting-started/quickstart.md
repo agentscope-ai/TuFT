@@ -1,8 +1,8 @@
-# 快速开始示例
+# 快速开始
 
-本示例演示如何使用 [Tinker SDK](https://pypi.org/project/tinker/) 通过 TuFT 进行训练和采样。
+本示例演示如何使用 [Tinker SDK](https://pypi.org/project/tinker/) 通过 TuFT 进行训练与推理。
 
-在运行代码之前，请确保服务器在端口 10610 上运行。有关启动服务器的说明，请参阅[安装](installation.md)部分。
+在运行代码之前，请确保服务器在端口 10610 上运行。有关启动服务器的说明，请参阅[安装指南](installation.md)。
 
 ## 1. 数据准备
 
@@ -78,16 +78,16 @@ print("优化器指标：", optim.metrics)
 
 ## 3. 保存检查点
 
-保存训练好的模型检查点和采样器权重：
+保存训练好的模型检查点和推理权重：
 
 ```python
 # 保存检查点用于恢复训练
 checkpoint = training.save_state("demo-checkpoint").result(timeout=60)
 print("检查点保存到：", checkpoint.path)
 
-# 保存采样器权重用于推理
+# 保存推理权重
 sampler_weights = training.save_weights_for_sampler("demo-sampler").result(timeout=60)
-print("采样器权重保存到：", sampler_weights.path)
+print("推理权重保存到：", sampler_weights.path)
 
 # 查看会话信息
 rest = client.create_rest_client()
@@ -99,19 +99,19 @@ print("会话包含的训练运行：", session_info.training_run_ids)
 **示例输出：**
 ```
 检查点保存到：tinker://550e8400-e29b-41d4-a716-446655440000/weights/checkpoint-001
-采样器权重保存到：tinker://550e8400-e29b-41d4-a716-446655440000/sampler_weights/sampler-001
+推理权重保存到：tinker://550e8400-e29b-41d4-a716-446655440000/sampler_weights/sampler-001
 会话包含的训练运行：['550e8400-e29b-41d4-a716-446655440000']
 ```
 
-## 4. 采样
+## 4. 推理
 
 加载保存的权重并生成 token：
 
 ```python
-# 使用保存的权重创建采样客户端
+# 使用保存的权重创建推理客户端
 sampling = client.create_sampling_client(model_path=sampler_weights.path)
 
-# 准备采样的提示词
+# 准备推理的提示词
 # sample_prompt = tokenizer.encode("Tell me something inspiring.")
 sample_prompt = [101, 57, 12, 7, 102]
 
@@ -123,7 +123,7 @@ sample = sampling.sample(
 ).result(timeout=30)
 
 if sample.sequences:
-    print("采样 token：", sample.sequences[0].tokens)
+    print("生成的 token：", sample.sequences[0].tokens)
     # 将 token 解码为文本：
     # sample_text = tokenizer.decode(sample.sequences[0].tokens)
     # print("生成的文本：", sample_text)
@@ -131,7 +131,7 @@ if sample.sequences:
 
 **示例输出：**
 ```
-采样 token：[101, 57, 12, 7, 42, 102]
+生成的 token：[101, 57, 12, 7, 42, 102]
 ```
 
 > **注意**：当您本地有可用的 tokenizer 时，请将模拟的 token ID 替换为实际的 tokenizer 调用。

@@ -1,6 +1,6 @@
 # 持久化
 
-TuFT 支持**可选的持久化**来保存服务器状态。启用后，TuFT 可以在服务器重启后恢复关键的运行时元数据（会话、训练运行、采样会话、future），然后**从磁盘上的检查点重建模型运行时状态**。
+TuFT 支持**可选的持久化**来保存服务器状态。启用后，TuFT 可以在服务器重启后恢复关键的运行时元数据（会话、训练运行、推理会话、future），然后**从磁盘上的检查点重建模型运行时状态**。
 
 本文档分为两部分：
 
@@ -113,12 +113,12 @@ TuFT 在变更发生时增量持久化**主要服务器子系统的元数据**�
 
 - **训练运行**（`TrainingController`）
   - 训练运行元数据（`training_run_id`、`base_model`、`lora_rank`、`model_owner`、`next_seq_id` 等）
-  - **检查点记录（仅元数据）**（训练检查点和采样器检查点）存储在单独的键下
+  - **检查点记录（仅元数据）**（训练检查点和推理检查点）存储在单独的键下
     （实际的检查点权重工件位于 `checkpoint_dir` 下的磁盘上，不在 Redis 中）
   - 存储为永久记录（无 TTL）
 
-- **采样会话**（`SamplingController`）
-  - 采样会话元数据 + **采样历史**（seq id + 提示词哈希）
+- **推理会话**（`SamplingController`）
+  - 推理会话元数据 + **推理历史**（seq id + 提示词哈希）
   - 存储为永久记录（无 TTL）
 
 - **Future**（`FutureStore`）
@@ -168,7 +168,7 @@ tuft clear persistence --config /path/to/tuft_config.yaml
 
 ### Redis 无限增长
 
-长期记录（会话、训练运行、采样会话、检查点元数据）不会过期。Future 会按配置的 `future_ttl_seconds`（默认：1 天）过期。您还应该为每个部署设置命名空间并清除未使用的命名空间。
+长期记录（会话、训练运行、推理会话、检查点元数据）不会过期。Future 会按配置的 `future_ttl_seconds`（默认：1 天）过期。您还应该为每个部署设置命名空间并清除未使用的命名空间。
 
 ---
 
@@ -181,7 +181,7 @@ tuft clear persistence --config /path/to/tuft_config.yaml
 ### 目标
 
 - **崩溃/重启恢复**服务器状态元数据，使用户可以：
-  - 重启后列出会话/训练运行/采样会话
+  - 重启后列出会话/训练运行/推理会话
   - 重启后检索已完成的 future（在 TTL 内）
   - 从每个训练运行的**最新检查点**继续训练
 - **安全优先恢复**：防止服务器配置更改时的静默损坏。
@@ -218,10 +218,10 @@ tuft clear persistence --config /path/to/tuft_config.yaml
 - **训练检查点元数据**（嵌套在训练运行下）
   `persistence-tuft-server::training_run::{training_run_id}::ckpt::{checkpoint_id}`
 
-- **采样器检查点元数据**（嵌套在训练运行下）
+- **推理检查点元数据**（嵌套在训练运行下）
   `persistence-tuft-server::training_run::{training_run_id}::sampler_ckpt::{checkpoint_id}`
 
-- **采样会话**
+- **推理会话**
   `persistence-tuft-server::sampling_session::{sampling_session_id}`
 
 - **Future**（基于 TTL）
@@ -249,8 +249,8 @@ tuft clear persistence --config /path/to/tuft_config.yaml
 - `SessionManager` 恢复会话。
 - `TrainingController` 恢复训练运行 + 检查点记录。
   - 如果训练运行引用了当前配置中不存在的 `base_model`，则标记为**已损坏**。
-- `SamplingController` 恢复采样会话。
-  - 其 `base_model` 不再支持的采样会话从存储中删除。
+- `SamplingController` 恢复推理会话。
+  - 其 `base_model` 不再支持的推理会话从存储中删除。
 - `FutureStore` 恢复 future。
   - 已完成的 future（`ready` / `failed`）立即标记为已完成。
   - 恢复的 future 还重建 `future_id` 分配状态以保持单调排序。

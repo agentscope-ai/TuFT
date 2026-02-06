@@ -10,7 +10,7 @@
 :link-type: doc
 :shadow: none
 
-使用仅助手损失掩码对聊天格式数据进行监督微调。
+在聊天格式数据上进行监督微调，支持助手角色损失掩码。
 :::
 
 :::{grid-item-card} Countdown RL
@@ -18,7 +18,7 @@
 :link-type: doc
 :shadow: none
 
-在可验证任务上使用 GRPO 风格训练进行强化学习。
+基于可验证任务的 GRPO 风格强化学习训练。
 :::
 
 :::{grid-item-card} 持久化
@@ -26,7 +26,7 @@
 :link-type: doc
 :shadow: none
 
-使用 Redis 启用服务器状态持久化以实现崩溃恢复。
+通过 Redis 启用服务器状态持久化，实现崩溃恢复。
 :::
 
 :::{grid-item-card} 可观测性
@@ -34,7 +34,15 @@
 :link-type: doc
 :shadow: none
 
-OpenTelemetry 集成，用于追踪、指标和日志。
+集成 OpenTelemetry，用于链路追踪、指标监控和日志记录。
+:::
+
+:::{grid-item-card} 控制台
+:link: console
+:link-type: doc
+:shadow: none
+
+训练运行与检查点监控仪表盘，内置推理试验场。
 :::
 ```
 
@@ -46,4 +54,5 @@ chat-sft
 countdown-rl
 persistence
 telemetry
+console
 ```

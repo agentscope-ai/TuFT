@@ -13,7 +13,7 @@ Welcome to TuFT! This section will help you get up and running quickly.
 Install TuFT from source, PyPI, or Docker.
 :::
 
-:::{grid-item-card} Quick Start
+:::{grid-item-card} Quickstart
 :link: quickstart
 :link-type: doc
 :shadow: none

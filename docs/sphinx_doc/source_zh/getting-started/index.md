@@ -1,11 +1,11 @@
-# 快速开始
+# 入门指南
 
 欢迎使用 TuFT！本节将帮助您快速上手。
 
 ```{grid} 1 2 2 2
 :gutter: 3
 
-:::{grid-item-card} 安装
+:::{grid-item-card} 安装指南
 :link: installation
 :link-type: doc
 :shadow: none
@@ -18,7 +18,7 @@
 :link-type: doc
 :shadow: none
 
-使用 TuFT 运行您的第一个训练和采样示例。
+使用 TuFT 运行您的第一个训练与推理示例。
 :::
 ```
 
