@@ -53,8 +53,13 @@ jobs:
       name: Build Documentation
       run: |
         cd docs/sphinx_doc
-        DOC_VERSION="latest"
-        bash ./build_docs.sh
+        if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+          DOC_VERSION="${{ github.head_ref || github.ref_name }}"
+          bash ./build_docs.sh --debug-current
+        else
+          DOC_VERSION="latest"
+          bash ./build_docs.sh
+        fi
         echo "DOC_VERSION=$DOC_VERSION" >> $GITHUB_ENV
     - name: Add redirect index.html to main version
       run: |
