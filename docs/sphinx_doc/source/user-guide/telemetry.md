@@ -23,6 +23,7 @@ This document explains both **how to enable telemetry** and **how TuFT wires it 
 - [Developer guide](#developer-guide)
 - [Recommended collector configuration](#recommended-collector-configuration)
 - [Troubleshooting](#troubleshooting)
+- [End-to-end example](#end-to-end-example)
 
 ---
 
@@ -188,18 +189,7 @@ You can treat these as "share keys" in your observability backend:
   - `tuft.lora_rank`
   - `tuft.backward`
 
-### How to use these keys in practice
-
-- Given a **session_id** from the client, filter traces by `tuft.session_id = <id>`.
-- Given a **training_run_id**, filter by `tuft.training_run_id = <id>`.
-- Given a **sampling_session_id**, filter by `tuft.sampling_session_id = <id>`.
-- Given an async **request_id** (future), filter by `tuft.request_id = <id>`.
-
-This is the recommended way to trace activity across:
-
-- session → training client → training controller → backend execution
-- session → sampling client → sampling controller → backend execution
-- API call → future enqueue → future execution → result retrieval
+For practical examples of filtering traces by these keys in an observability backend, see the [End-to-end example](#end-to-end-example) section.
 
 ---
 
@@ -284,3 +274,98 @@ export TUFT_OTEL_DEBUG=1
 ### GPU metrics missing
 
 - GPU gauges require NVML (`pynvml`) and a working NVML environment. TuFT will gracefully skip GPU metrics if unavailable.
+
+---
+
+## End-to-end example
+
+This section demonstrates running TuFT with an observability backend. We use [SigNoz](https://signoz.io/) in this example because it provides a unified backend for traces, metrics, and logs in a single platform, making it easy to demonstrate all three observability pillars together.
+
+> **Alternative backends**: TuFT exports standard OTLP data and works with any OpenTelemetry-compatible backend:
+> - **Traces**: Jaeger, Zipkin, Tempo, Datadog, etc.
+> - **Metrics**: Prometheus (via OTLP or Prometheus exporter), Grafana Mimir, etc.
+> - **Logs**: Loki, Elasticsearch, etc.
+>
+> Simply point `telemetry.otlp_endpoint` to your preferred collector or backend.
+
+### Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/) installed
+
+### Step 1: Start SigNoz
+
+We recommend installing SigNoz using Docker Compose as shown below. For alternative installation methods (install script, Docker Swarm, Kubernetes, etc.), refer to the [SigNoz installation guide](https://signoz.io/docs/install/).
+
+```bash
+git clone -b main https://github.com/SigNoz/signoz.git && cd signoz/deploy/docker
+docker compose up -d --remove-orphans
+```
+
+SigNoz will start with an OTLP receiver on `localhost:4317`.
+
+### Step 2: Configure TuFT
+
+Add the following telemetry configuration to your `tuft_config.yaml`:
+
+```yaml
+telemetry:
+  enabled: true
+  service_name: tuft
+  otlp_endpoint: http://localhost:4317
+  resource_attributes:
+    deployment.environment: demo
+```
+
+### Step 3: Launch TuFT and run workloads
+
+```bash
+tuft launch --config /path/to/tuft_config.yaml
+```
+
+Run some training or sampling operations through the TuFT client to generate telemetry data.
+
+### Step 4: View in SigNoz
+
+Open SigNoz at `http://localhost:8080` to explore the collected telemetry data.
+
+#### Traces
+
+TuFT attaches structured correlation keys to every span, enabling powerful filtering in the Traces Explorer.
+
+**Filter by `tuft.session_id`** — track all tasks within a single session. By filtering on a specific `tuft.session_id`, the Explorer surfaces every span across both training and sampling operations initiated in that session, providing a holistic view of all session-level activity:
+
+<img src="../_static/images/otel_examples/traces_filter_by_session_id.png" alt="Traces filtered by session ID" style="width: 100%; border-radius: 8px; margin: 12px 0;" />
+
+**Filter by `tuft.training_run_id`** — track all tasks belonging to a specific training client. Filtering by `tuft.training_run_id` isolates the full lifecycle of a specific training client, showing training operations such as `run_forward_backward`, `run_optim_step`, and `save_checkpoint` along with their execution order:
+
+<img src="../_static/images/otel_examples/traces_filter_by_training_run_id.png" alt="Traces filtered by training run ID" style="width: 100%; border-radius: 8px; margin: 12px 0;" />
+
+**Filter by `tuft.sampling_session_id`** — track all tasks belonging to a specific sampling client. Filtering by `tuft.sampling_session_id` narrows the view to spans from a single inference session, such as `sampling_controller.run_sample` and `sampling_controller.create_sampling_session`:
+
+<img src="../_static/images/otel_examples/traces_filter_by_sampling_session_id.png" alt="Traces filtered by sampling session ID" style="width: 100%; border-radius: 8px; margin: 12px 0;" />
+
+**Inspect a single HTTP request trace** — all spans generated during one HTTP request share the same trace ID, allowing you to view the complete execution path of that request. The flamegraph below shows the span tree from HTTP receive through internal processing, state persistence, and backend execution:
+
+<img src="../_static/images/otel_examples/traces_http_request_spans.png" alt="Spans within a single HTTP request trace" style="width: 100%; border-radius: 8px; margin: 12px 0;" />
+
+#### Logs
+
+Every log entry emitted by TuFT is automatically correlated with a **span ID** and **trace ID**. You can use these two identifiers to pinpoint the exact operation step a log belongs to, or navigate in reverse — from a span to all logs produced during that operation:
+
+<img src="../_static/images/otel_examples/logs_span_trace_correlation.png" alt="Logs correlated with span and trace IDs" style="width: 100%; border-radius: 8px; margin: 12px 0;" />
+
+#### Metrics
+
+All metrics emitted by TuFT can be browsed in the SigNoz Metrics page, which lists every metric along with its type, unit, and sample count:
+
+<img src="../_static/images/otel_examples/metrics_overview.png" alt="Metrics overview in SigNoz" style="width: 100%; border-radius: 8px; margin: 12px 0;" />
+
+You can also configure custom panels in the SigNoz Dashboard to monitor specific metrics. Below are two example panel configurations for training throughput and sampling QPS; additional panels can be created to suit your specific monitoring needs.
+
+**Training throughput (tokens/s)** — a dashboard panel querying `tuft.training.tokens_per_second` with P50 aggregation, grouped by `base_model`, to monitor training efficiency over time:
+
+<img src="../_static/images/otel_examples/dashboard_training_throughput.png" alt="Dashboard panel for training throughput" style="width: 100%; border-radius: 8px; margin: 12px 0;" />
+
+**Sampling request rate (QPS)** — a dashboard panel querying `tuft.sampling.requests` with Rate aggregation, grouped by `base_model`, to monitor inference throughput and detect traffic spikes:
+
+<img src="../_static/images/otel_examples/dashboard_sampling_qps.png" alt="Dashboard panel for sampling QPS" style="width: 100%; border-radius: 8px; margin: 12px 0;" />

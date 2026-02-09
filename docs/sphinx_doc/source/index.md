@@ -5,8 +5,8 @@ sd_hide_title: true
 # TuFT
 
 <div class="hero-logo" align="center">
-  <img class="only-light" src="../_static/logo_light.svg" alt="TuFT Logo" width="280"/>
-  <img class="only-dark" src="../_static/logo_dark.svg" alt="TuFT Logo" width="280"/>
+  <img class="only-light" src="_static/logo_light.svg" alt="TuFT Logo" width="280"/>
+  <img class="only-dark" src="_static/logo_dark.svg" alt="TuFT Logo" width="280"/>
 </div>
 
 <p class="hero-subtitle"><strong>TuFT (Tenant-unified Fine-Tuning)</strong> is a multi-tenant platform that lets multiple users fine-tune LLMs on shared infrastructure through a unified API. Access it via the Tinker SDK or compatible clients.</p>
