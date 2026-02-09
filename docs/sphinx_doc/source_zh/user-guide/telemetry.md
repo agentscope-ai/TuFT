@@ -334,38 +334,62 @@ TuFT 会在每个 span 上附加结构化的关联键，便于在 Traces Explore
 
 **通过 `tuft.session_id` 过滤** — 追踪以 session 为单位的所有任务。通过指定 `tuft.session_id` 进行过滤，可以看到该 session 下横跨训练和推理的所有 span，获得 session 维度的全景视图：
 
-<img src="../_static/images/otel_examples/traces_filter_by_session_id.png" alt="按会话 ID 过滤的追踪" style="width: 100%; border-radius: 8px; margin: 12px 0;" />
+```{image} ../../_static/images/otel_examples/traces_filter_by_session_id.png
+:alt: 按会话 ID 过滤的追踪
+:width: 100%
+```
 
 **通过 `tuft.training_run_id` 过滤** — 追踪以某个训练客户端为单位的所有任务。通过 `tuft.training_run_id` 过滤可隔离出该训练客户端完整生命周期内的所有 span，如 `run_forward_backward`、`run_optim_step`、`save_checkpoint` 等训练操作及其执行顺序：
 
-<img src="../_static/images/otel_examples/traces_filter_by_training_run_id.png" alt="按训练运行 ID 过滤的追踪" style="width: 100%; border-radius: 8px; margin: 12px 0;" />
+```{image} ../../_static/images/otel_examples/traces_filter_by_training_run_id.png
+:alt: 按训练运行 ID 过滤的追踪
+:width: 100%
+```
 
 **通过 `tuft.sampling_session_id` 过滤** — 追踪以某个推理客户端为单位的所有任务。通过 `tuft.sampling_session_id` 过滤可精确定位到单个推理会话内的 span，如 `sampling_controller.run_sample` 和 `sampling_controller.create_sampling_session`：
 
-<img src="../_static/images/otel_examples/traces_filter_by_sampling_session_id.png" alt="按推理会话 ID 过滤的追踪" style="width: 100%; border-radius: 8px; margin: 12px 0;" />
+```{image} ../../_static/images/otel_examples/traces_filter_by_sampling_session_id.png
+:alt: 按推理会话 ID 过滤的追踪
+:width: 100%
+```
 
 **以 HTTP 请求为单位查看链路追踪** — 一次 HTTP 请求产生的所有 span 共享同一个 trace ID，通过该 trace ID 可查看此请求的完整执行路径。下方的 Flamegraph 视图展示了从 HTTP 接收、内部处理、状态持久化到后端执行的完整 span 树：
 
-<img src="../_static/images/otel_examples/traces_http_request_spans.png" alt="单次 HTTP 请求的追踪链路" style="width: 100%; border-radius: 8px; margin: 12px 0;" />
+```{image} ../../_static/images/otel_examples/traces_http_request_spans.png
+:alt: 单次 HTTP 请求的追踪链路
+:width: 100%
+```
 
 #### 日志（Logs）
 
 TuFT 发出的每条日志都自动关联了 **span ID** 和 **trace ID**。通过这两个标识符可精确定位该日志所属的操作步骤；反之，也可从某个 span 导航到其关联的所有日志：
 
-<img src="../_static/images/otel_examples/logs_span_trace_correlation.png" alt="日志与 span ID 和 trace ID 的关联" style="width: 100%; border-radius: 8px; margin: 12px 0;" />
+```{image} ../../_static/images/otel_examples/logs_span_trace_correlation.png
+:alt: 日志与 span ID 和 trace ID 的关联
+:width: 100%
+```
 
 #### 指标（Metrics）
 
 在 SigNoz 的 Metrics 页面可以浏览 TuFT 发出的所有指标，查看每个指标的类型、单位和样本数：
 
-<img src="../_static/images/otel_examples/metrics_overview.png" alt="SigNoz 中的指标概览" style="width: 100%; border-radius: 8px; margin: 12px 0;" />
+```{image} ../../_static/images/otel_examples/metrics_overview.png
+:alt: SigNoz 中的指标概览
+:width: 100%
+```
 
 也可以在 SigNoz Dashboard 中配置自定义 panel 来监控特定指标。以下以训练吞吐量和推理 QPS 为例，展示两个 panel 的配置方式；更多 panel 可根据实际需求自行配置。
 
 **训练吞吐量（tokens/s）监控** — 通过 `tuft.training.tokens_per_second` 指标配置 panel，使用 P50 聚合并按 `base_model` 分组，实时监控训练效率：
 
-<img src="../_static/images/otel_examples/dashboard_training_throughput.png" alt="训练吞吐量仪表盘面板" style="width: 100%; border-radius: 8px; margin: 12px 0;" />
+```{image} ../../_static/images/otel_examples/dashboard_training_throughput.png
+:alt: 训练吞吐量仪表盘面板
+:width: 100%
+```
 
 **推理请求速率（QPS）监控** — 通过 `tuft.sampling.requests` 指标配置 panel，使用 Rate 聚合并按 `base_model` 分组，监控推理吞吐量与流量峰值：
 
-<img src="../_static/images/otel_examples/dashboard_sampling_qps.png" alt="推理吞吐量仪表盘面板" style="width: 100%; border-radius: 8px; margin: 12px 0;" />
+```{image} ../../_static/images/otel_examples/dashboard_sampling_qps.png
+:alt: 推理吞吐量仪表盘面板
+:width: 100%
+```
