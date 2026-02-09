@@ -6,7 +6,7 @@ TuFT 包含可选的 **OpenTelemetry** 集成，用于：
 - **指标**（请求/工作流 + 资源指标）
 - **日志**（Python 日志桥接到 OpenTelemetry 日志管道）
 
-本文档介绍**如何启用 telemetry** 以及 **TuFT 内部的工作机制**（记录哪些数据、关联键、以及如何扩展采集）。
+本文档介绍**如何启用 telemetry** 以及 **TuFT 如何使用 telemetry**（记录哪些数据、关联键、以及如何扩展采集）。
 
 ---
 
