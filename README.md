@@ -1,5 +1,9 @@
 <div align="center">
-  <img src="assets/tuft-logo-colorful.svg" alt="TuFT Logo" width="400"/>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/sphinx_doc/_static/logo_dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="docs/sphinx_doc/_static/logo_light.svg">
+    <img alt="TuFT Logo" src="docs/sphinx_doc/_static/logo_light.svg" width="400"/>
+  </picture>
 </div>
 
 <p align="center">
@@ -13,7 +17,7 @@
 TuFT (**T**enant-**u**nified **F**ine**T**uning) is a multi-tenant platform that lets multiple users fine-tune LLMs on shared infrastructure through a unified API. Access it via the Tinker SDK or compatible clients.
 
 <div align="center">
-  <img src="docs/sphinx_doc/_static/images/index.png" alt="TuFT Overview" width="800"/>
+  <img src="https://img.alicdn.com/imgextra/i3/O1CN01M7FlDa1LkOf90UsHk_!!6000000001337-2-tps-4000-2250.png" alt="TuFT Overview" width="800"/>
 </div>
 
 Check out our [roadmap](#roadmap) to see what we're building next.
