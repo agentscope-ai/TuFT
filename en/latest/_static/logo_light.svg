@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 2 165 56">
+  <!-- TuFT Logo - Light Mode -->
+  <style>
+    .wordmark {
+      fill: #0f172a;
+    }
+  </style>
+  
+  <!-- Icon: Five converging strands -->
+  <g transform="translate(8, 10)">
+    <path d="M0 4 Q10 16, 20 40" stroke="#f97316" stroke-width="4" stroke-linecap="round" fill="none"/>
+    <path d="M10 2 Q15 16, 20 40" stroke="#eab308" stroke-width="4" stroke-linecap="round" fill="none"/>
+    <path d="M20 0 Q20 16, 20 40" stroke="#10b981" stroke-width="4" stroke-linecap="round" fill="none"/>
+    <path d="M30 2 Q25 16, 20 40" stroke="#3b82f6" stroke-width="4" stroke-linecap="round" fill="none"/>
+    <path d="M40 4 Q30 16, 20 40" stroke="#8b5cf6" stroke-width="4" stroke-linecap="round" fill="none"/>
+  </g>
+  
+  <!-- Wordmark -->
+  <text x="56" y="48"
+        font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+        font-size="32"
+        font-weight="700"
+        letter-spacing="-1"
+        class="wordmark">TuFT</text>
+</svg>

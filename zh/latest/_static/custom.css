@@ -1,5 +1,22 @@
 /* Custom styles for TuFT documentation (Sphinx Awesome Theme) */
 
+/* Hero logo: light/dark mode switching */
+.hero-logo {
+    margin-bottom: 1.5rem;
+}
+
+.hero-logo .only-dark {
+    display: none;
+}
+
+html.dark .hero-logo .only-light {
+    display: none;
+}
+
+html.dark .hero-logo .only-dark {
+    display: inline;
+}
+
 .hero-subtitle {
     text-align: center;
     font-size: 1.1rem;
