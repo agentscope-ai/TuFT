@@ -25,19 +25,17 @@ uv pip install fastapi gradio tinker pytz requests
 
 ## 快速开始
 
-启动 TuFT 服务器后，运行以下命令启动用户控制台：
-
-- `--server-url`：TuFT 服务器的 URL
-- `--gui-port`：用户控制台的端口
-- `--backend-port`：控制台后端的端口
-
 推理标签页需要控制台服务器从 Hugging Face 加载 tokenizer。如果无法访问 Hugging Face，请设置镜像以启用推理标签页：
 
 ```bash
 export HF_ENDPOINT=https://hf-mirror.com
 ```
 
-然后启动控制台服务器和控制台 GUI：
+启动 TuFT 服务器后，运行以下命令启动用户控制台：
+
+- `--server-url`：TuFT 服务器的 URL
+- `--gui-port`：用户控制台的端口
+- `--backend-port`：控制台后端的端口
 
 ```bash
 cd src/tuft/console/
