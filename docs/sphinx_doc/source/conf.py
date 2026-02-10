@@ -15,10 +15,7 @@ version = _package_version
 release = _package_version
 
 # -- General configuration ---------------------------------------------------
-extensions = [
-    "myst_parser",
-    "sphinx_design",
-]
+extensions = ["myst_parser", "sphinx_design", "sphinx.ext.mathjax"]
 
 templates_path = ["../_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
@@ -28,6 +25,10 @@ myst_enable_extensions = [
     "colon_fence",
     "linkify",
     "strikethrough",
+    "amsmath",
+    "dollarmath",
+    "html_admonition",
+    "html_image",
 ]
 myst_heading_anchors = 5
 
