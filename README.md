@@ -210,7 +210,7 @@ We recommend using [uv](https://github.com/astral-sh/uv) for dependency manageme
 
     ```bash
     cd TuFT
-    bash scripts/net_check.sh
+    bash scripts/env_check.sh
     ```
     This script will assess your environment status and suggest possible solutions.
 
