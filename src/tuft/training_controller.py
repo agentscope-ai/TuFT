@@ -532,20 +532,23 @@ class TrainingController:
                         checkpoint_record=checkpoint,
                         optimizer=(checkpoint_type == "training"),
                     )
-                checkpoint.size_bytes = compute_tree_size(checkpoint.path)
+
+                # Write metadata once so metadata.json exists
                 checkpoint.save_metadata(
                     base_model=training_run.base_model,
                     session_id=training_run.session_id,
                     lora_rank=training_run.lora_rank,
                 )
-                final_size = compute_tree_size(checkpoint.path)
-                if final_size != checkpoint.size_bytes:
-                    checkpoint.size_bytes = final_size
-                    checkpoint.save_metadata(
-                        base_model=training_run.base_model,
-                        session_id=training_run.session_id,
-                        lora_rank=training_run.lora_rank,
-                    )
+
+                # Compute total size including metadata.json
+                checkpoint.size_bytes = compute_tree_size(checkpoint.path)
+
+                # Persist the correct size into metadata.json
+                checkpoint.save_metadata(
+                    base_model=training_run.base_model,
+                    session_id=training_run.session_id,
+                    lora_rank=training_run.lora_rank,
+                )
                 # save the checkpoint record in the training run
                 target_map[checkpoint_name] = checkpoint
 
