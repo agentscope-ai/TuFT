@@ -106,8 +106,14 @@ class AppConfig(BaseModel):
         return self
 
     def get_config_for_persistence(self) -> dict[str, Any]:
-        """Get config fields for persistence signature (excludes persistence config itself)."""
-        return self.model_dump(mode="json", exclude={"persistence"})
+        """Get config fields for persistence signature.
+
+        This is used to detect configuration drift across restarts.
+
+        Security: exclude any secret material (e.g., API keys) from being
+        serialized into persistence backends.
+        """
+        return self.model_dump(mode="json", exclude={"persistence", "authorized_users"})
 
 
 def load_yaml_config(config_path: Path) -> AppConfig:

@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from tinker import types
 
 from .backends import BaseTrainingBackend
-from .checkpoints import CheckpointRecord
+from .checkpoints import CheckpointRecord, compute_tree_size
 from .config import AppConfig, ModelConfig
 from .exceptions import (
     CheckpointAccessDeniedException,
@@ -532,7 +532,18 @@ class TrainingController:
                         checkpoint_record=checkpoint,
                         optimizer=(checkpoint_type == "training"),
                     )
-                checkpoint.size_bytes = checkpoint.path.stat().st_size
+
+                # Write metadata once so metadata.json exists
+                checkpoint.save_metadata(
+                    base_model=training_run.base_model,
+                    session_id=training_run.session_id,
+                    lora_rank=training_run.lora_rank,
+                )
+
+                # Compute total size including metadata.json
+                checkpoint.size_bytes = compute_tree_size(checkpoint.path)
+
+                # Persist the correct size into metadata.json
                 checkpoint.save_metadata(
                     base_model=training_run.base_model,
                     session_id=training_run.session_id,
