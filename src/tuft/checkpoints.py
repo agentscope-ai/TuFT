@@ -17,7 +17,7 @@ def compute_tree_size(path: Path) -> int:
         try:
             if child.is_file():
                 total += child.stat().st_size
-        except FileNotFoundError:
+        except OSError:
             continue
     return total
 
