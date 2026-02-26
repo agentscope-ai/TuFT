@@ -152,8 +152,7 @@ async def test_sampling_session_cocurrent(request, tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_sampling_seq_id_conflict_rejected(request, tmp_path) -> None:
-    """Sampling should reject duplicate seq_id and late 'time-travel' seq IDs."""
+async def test_sampling_seq_id_history_is_monotonic(request, tmp_path) -> None:
     use_gpu = request.config.getoption("--gpu")
     state = _build_state(tmp_path, use_gpu)
     session_id = _create_session(state)
@@ -165,31 +164,67 @@ async def test_sampling_seq_id_conflict_rejected(request, tmp_path) -> None:
         user_id="tester",
     )
 
+    req1 = types.SampleRequest(
+        prompt=types.ModelInput.from_ints([1, 2, 3]),
+        num_samples=1,
+        sampling_params=types.SamplingParams(max_tokens=1, temperature=0.1),
+        sampling_session_id=sampling_session_id,
+        seq_id=1,
+    )
     req0 = types.SampleRequest(
+        prompt=types.ModelInput.from_ints([4, 5, 6]),
+        num_samples=1,
+        sampling_params=types.SamplingParams(max_tokens=1, temperature=0.1),
+        sampling_session_id=sampling_session_id,
+        seq_id=0,
+    )
+
+    await state.run_sample(req1, user_id="tester")
+    await state.run_sample(req0, user_id="tester")
+
+    record = state.sampling.sampling_sessions[sampling_session_id]
+    assert record.last_seq_id == 1
+    assert [entry.seq_id for entry in record.history] == [0, 1]
+
+
+@pytest.mark.asyncio
+async def test_sampling_duplicate_seq_id_overwrites_history_entry(request, tmp_path) -> None:
+    use_gpu = request.config.getoption("--gpu")
+    state = _build_state(tmp_path, use_gpu)
+    session_id = _create_session(state)
+    sampling_session_id = await state.create_sampling_session(
+        session_id=session_id,
+        base_model="Qwen/Qwen3-0.6B",
+        model_path=None,
+        session_seq_id=1,
+        user_id="tester",
+    )
+
+    req = types.SampleRequest(
         prompt=types.ModelInput.from_ints([1, 2, 3]),
         num_samples=1,
         sampling_params=types.SamplingParams(max_tokens=1, temperature=0.1),
         sampling_session_id=sampling_session_id,
         seq_id=0,
     )
-    await state.run_sample(req0, user_id="tester")
 
-    # Duplicate seq_id should be rejected
-    with pytest.raises(SequenceConflictException):
-        await state.run_sample(req0, user_id="tester")
+    await state.run_sample(req, user_id="tester")
 
-    # After seq_id=0 executed, a late smaller seq_id must be rejected
-    req1 = types.SampleRequest(
-        prompt=types.ModelInput.from_ints([4, 5, 6]),
+    req_updated = types.SampleRequest(
+        prompt=types.ModelInput.from_ints([9, 9, 9, 9]),
         num_samples=1,
         sampling_params=types.SamplingParams(max_tokens=1, temperature=0.1),
         sampling_session_id=sampling_session_id,
-        seq_id=1,
+        seq_id=0,
     )
-    await state.run_sample(req1, user_id="tester")
 
-    with pytest.raises(SequenceConflictException):
-        await state.run_sample(req0, user_id="tester")
+    await state.run_sample(req_updated, user_id="tester")
+
+    record = state.sampling.sampling_sessions[sampling_session_id]
+    assert record.last_seq_id == 0
+    assert len(record.history) == 1
+    assert record.history[0].seq_id == 0
+    assert record.history[0].prompt_token_count == 4
 
 
 @pytest.mark.asyncio
