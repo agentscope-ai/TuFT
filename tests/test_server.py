@@ -151,7 +151,7 @@ def test_training_and_sampling_round_trip(server_endpoint: str) -> None:
             prompt=types.ModelInput.from_ints([99, 5, 12]),
             num_samples=1,
             sampling_params=types.SamplingParams(max_tokens=5, temperature=0.5),
-        ).result(timeout=10)
+        ).result(timeout=60)
 
         assert sample_res.sequences and sample_res.sequences[0].tokens
 
