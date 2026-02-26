@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, cast
 
 import numpy as np
-import torch
 from datasets import load_dataset
 from tinker import types
 
@@ -40,8 +39,13 @@ def load_chat_dataset(dataset_name: str, seed: int = 42) -> Tuple[ChatDataset, C
 
     if dataset_name == "no_robots":
         ds = load_dataset("HuggingFaceH4/no_robots")
-        train_data = [row["messages"] for row in ds["train"]]
-        test_data = [row["messages"] for row in ds["test"]]
+
+        train_split = ds["train"]
+        test_split = ds["test"]
+
+        # Pyright sometimes infers HF rows as list-like, so we cast to dict
+        train_data = [cast(Messages, cast(dict[str, Any], row)["messages"]) for row in train_split]
+        test_data = [cast(Messages, cast(dict[str, Any], row)["messages"]) for row in test_split]
     else:
         raise ValueError(f"Unknown dataset: {dataset_name}")
 
@@ -100,7 +104,15 @@ def conversation_to_datum(
     return types.Datum(
         model_input=types.ModelInput.from_ints(input_tokens),
         loss_fn_inputs={
-            "target_tokens": torch.tensor(target_tokens, dtype=torch.long),
-            "weights": torch.tensor(target_weights, dtype=torch.float32),
+            "target_tokens": types.TensorData(
+                data=target_tokens,
+                dtype="int64",
+                shape=[len(target_tokens)],
+            ),
+            "weights": types.TensorData(
+                data=target_weights.tolist(),
+                dtype="float32",
+                shape=[len(target_weights)],
+            ),
         },
     )
