@@ -11,6 +11,17 @@ from tinker import types
 from .exceptions import CheckpointMetadataReadException
 
 
+def compute_tree_size(path: Path) -> int:
+    total = 0
+    for child in path.rglob("*"):
+        try:
+            if child.is_file():
+                total += child.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
 class CheckpointMetadata(BaseModel):
     """A representation of checkpoint metadata."""
 
