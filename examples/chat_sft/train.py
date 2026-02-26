@@ -87,20 +87,23 @@ def init_wandb(cfg: Config):
     return wandb
 
 
+def _to_list(value):
+    if isinstance(value, types.TensorData):
+        return value.data
+    if hasattr(value, "tolist"):
+        return value.tolist()
+    return value
+
+
 def compute_weighted_nll_from_outputs(loss_fn_outputs, datums) -> float:
     total_loss = 0.0
     total_weight = 0.0
 
     for i, out in enumerate(loss_fn_outputs):
-        logprobs = out["logprobs"]
-        if hasattr(logprobs, "tolist"):
-            logprobs = logprobs.tolist()
+        logprobs = _to_list(out["logprobs"])
+        weights = _to_list(datums[i].loss_fn_inputs["weights"])
 
-        w = datums[i].loss_fn_inputs["weights"]
-        if hasattr(w, "tolist"):
-            w = w.tolist()
-
-        for lp, wt in zip(logprobs, w, strict=False):
+        for lp, wt in zip(logprobs, weights, strict=False):
             total_loss += -lp * wt
             total_weight += wt
 
