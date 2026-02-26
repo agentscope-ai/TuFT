@@ -20,6 +20,7 @@ from .exceptions import (
     CheckpointAccessDeniedException,
     CheckpointNotFoundException,
     MissingSequenceIDException,
+    SequenceConflictException,
     SessionNotFoundException,
     UnknownModelException,
     UserMismatchException,
@@ -71,6 +72,8 @@ class SamplingSessionRecord(BaseModel):
     last_seq_id: int = -1
     history: list[SamplingHistoryEntry] = Field(default_factory=list)
     executor: SequenceExecutor = Field(default_factory=SequenceExecutor, exclude=True)
+    execution_lock: asyncio.Lock = Field(default_factory=asyncio.Lock, exclude=True)
+    pending_seq_ids: set[int] = Field(default_factory=set, exclude=True)
 
     class Config:
         arbitrary_types_allowed = True
@@ -112,6 +115,8 @@ class SamplingController:
             # Initialize executor with next_sequence_id based on max_submitted_seq_id
             # to avoid hanging on new requests after restore
             record.executor = SequenceExecutor()
+            record.execution_lock = asyncio.Lock()
+            record.pending_seq_ids = set()
             self.sampling_sessions[record.sampling_session_id] = record
         for session_id in invalid_sessions:
             store.delete(self._build_key(session_id))
@@ -261,6 +266,9 @@ class SamplingController:
             prompt_hash=self._hash_prompt(prompt),
         )
         record.history.append(entry)
+        # Mark as no longer pending
+        async with record.execution_lock:
+            record.pending_seq_ids.discard(seq_id)
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self._save_session, record.sampling_session_id)
 
@@ -283,6 +291,22 @@ class SamplingController:
                 raise UserMismatchException()
             if request.seq_id is None:
                 raise MissingSequenceIDException()
+
+            # Sequence safety: allow concurrent/out-of-order arrivals, but prevent
+            # duplicates and "time-travel" (submitting seq IDs that are already
+            # executed). Without this, a late smaller seq_id can corrupt history
+            # by moving last_seq_id backwards.
+            async with record.execution_lock:
+                if request.seq_id <= record.last_seq_id:
+                    raise SequenceConflictException(
+                        expected=record.last_seq_id + 1, got=request.seq_id
+                    )
+                if request.seq_id in record.pending_seq_ids:
+                    raise SequenceConflictException(
+                        expected=record.last_seq_id + 1, got=request.seq_id
+                    )
+                record.pending_seq_ids.add(request.seq_id)
+
             await record.executor.submit(
                 sequence_id=request.seq_id,
                 func=self._record_sequence,
