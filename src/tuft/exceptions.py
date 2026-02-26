@@ -52,6 +52,20 @@ class LossFunctionException(TuFTException):
     """Base exception for Loss Function related errors."""
 
 
+class InvalidRequestException(TuFTException):
+    """A request was invalid or missing required fields. (HTTP 400)"""
+
+    def __init__(self, detail: str):
+        super().__init__(status_code=400, detail=detail)
+
+
+class ServiceUnavailableException(TuFTException):
+    """A required service is temporarily unavailable. (HTTP 503)"""
+
+    def __init__(self, detail: str):
+        super().__init__(status_code=503, detail=detail)
+
+
 class UnknownModelException(ModelException):
     """A model was requested that is not known."""
 

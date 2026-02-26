@@ -46,8 +46,8 @@ def _collect_sse_chunks(resp: httpx.Response) -> tuple[list[dict], bool]:
                 break
             try:
                 chunks.append(json.loads(payload))
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as exc:
+                raise AssertionError(f"Malformed SSE chunk is not valid JSON: {payload!r}") from exc
     return chunks, done
 
 
@@ -810,6 +810,9 @@ class TestTrainAndOAIIntegration:
             user2_tinker = [
                 m["id"] for m in resp2.json()["data"] if m["id"].startswith("tinker://")
             ]
+            assert len(user2_tinker) == 0, (
+                f"user2 should not see user1's adapters, but got: {user2_tinker}"
+            )
             _log(f"[Integration] user2 tinker models: {user2_tinker}")
 
             # --- Phase 4: Base model still works ---

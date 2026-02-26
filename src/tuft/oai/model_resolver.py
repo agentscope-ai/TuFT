@@ -81,7 +81,7 @@ def resolve_model(
         if adapter_path.exists():
             # vLLM expects the lora_name (lora_id) as the model field,
             # not the filesystem path. The LoRA is registered under lora_id
-            # via add_adapter() / ensure_lora_for_oai().
+            # via the OAI router's _ensure_lora_loaded().
             return ResolvedModel(
                 base_model=base_model_ref,
                 backend_model_name=lora_id,

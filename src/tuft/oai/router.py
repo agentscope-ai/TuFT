@@ -17,6 +17,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from ..auth import User
+from ..exceptions import (
+    InvalidRequestException,
+    ServerException,
+    ServiceUnavailableException,
+    TuFTException,
+    UnknownModelException,
+)
 from ..state import ServerState
 from ..telemetry.tracing import get_tracer
 from .model_resolver import resolve_model
@@ -114,7 +121,8 @@ def create_oai_router() -> APIRouter:
                     "id": model_cfg.model_name,
                     "object": "model",
                     "created": now_ts,
-                    "owned_by": "tuft",
+                    "owned_by": "system",
+                    "is_public": True,
                 }
             )
 
@@ -133,6 +141,7 @@ def create_oai_router() -> APIRouter:
                     "created": now_ts,
                     "owned_by": user.user_id,
                     "parent": record.base_model,
+                    "is_public": False,
                 }
             )
 
@@ -189,81 +198,72 @@ def create_oai_router() -> APIRouter:
 
         body = await request.json()
         model_field = body.get("model")
-        if not model_field:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Missing 'model' field in request body.",
-            )
 
-        with tracer.start_as_current_span("oai.proxy_inference") as span:
-            span.set_attribute("oai.endpoint", vllm_path)
-            span.set_attribute("oai.model", model_field)
-            span.set_attribute("oai.user_id", user.user_id)
+        try:
+            if not model_field:
+                raise InvalidRequestException("Missing 'model' field in request body.")
 
-            # Resolve model
-            try:
-                resolved = resolve_model(model_field, state.config)
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=str(exc),
-                ) from exc
+            with tracer.start_as_current_span("oai.proxy_inference") as span:
+                span.set_attribute("oai.endpoint", vllm_path)
+                span.set_attribute("oai.model", model_field)
+                span.set_attribute("oai.user_id", user.user_id)
 
-            span.set_attribute("oai.base_model", resolved.base_model)
-            if resolved.lora_id:
-                span.set_attribute("oai.lora_id", resolved.lora_id)
-
-            # Get backend OpenAI URL
-            backend = state.sampling._base_backends.get(resolved.base_model)
-            if backend is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"No sampling backend for model: {resolved.base_model}",
-                )
-
-            backend_url = backend.get_openai_api_url()
-            if backend_url is None:
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail=f"OpenAI API not available for model: {resolved.base_model}",
-                )
-
-            # Ensure LoRA is loaded via the vLLM OpenAI server's API
-            if resolved.lora_adapter_path and resolved.lora_id:
+                # Resolve model
                 try:
-                    await _ensure_lora_loaded(
-                        client=client,
-                        backend_url=backend_url,
-                        lora_name=resolved.lora_id,
-                        lora_path=str(resolved.lora_adapter_path),
+                    resolved = resolve_model(model_field, state.config)
+                except ValueError as exc:
+                    raise UnknownModelException(model_name=model_field) from exc
+
+                span.set_attribute("oai.base_model", resolved.base_model)
+                if resolved.lora_id:
+                    span.set_attribute("oai.lora_id", resolved.lora_id)
+
+                # Get backend OpenAI URL
+                backend = state.sampling._base_backends.get(resolved.base_model)
+                if backend is None:
+                    raise UnknownModelException(model_name=resolved.base_model)
+
+                backend_url = backend.get_openai_api_url()
+                if backend_url is None:
+                    raise ServiceUnavailableException(
+                        f"OpenAI API not available for model: {resolved.base_model}"
                     )
-                except Exception as exc:
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail=f"Failed to load LoRA adapter: {exc}",
-                    ) from exc
 
-            # Replace model name with backend model name for vLLM
-            user_model_name = body["model"]
-            body["model"] = resolved.backend_model_name
-            stream = body.get("stream", False)
+                # Ensure LoRA is loaded via the vLLM OpenAI server's API
+                if resolved.lora_adapter_path and resolved.lora_id:
+                    try:
+                        await _ensure_lora_loaded(
+                            client=client,
+                            backend_url=backend_url,
+                            lora_name=resolved.lora_id,
+                            lora_path=str(resolved.lora_adapter_path),
+                        )
+                    except Exception as exc:
+                        raise ServerException(f"Failed to load LoRA adapter: {exc}") from exc
 
-            # Build the response-id prefix.
-            # Final id = "{session_part}:sample:{vllm_original_id}"
-            # session_part is the sampling session id (from the
-            # SamplingController) when a LoRA adapter is used, otherwise
-            # the base model backend identifier.
-            session_part = resolved.lora_id or "base"
-            response_id_prefix = f"{session_part}:sample"
+                # Replace model name with backend model name for vLLM
+                user_model_name = body["model"]
+                body["model"] = resolved.backend_model_name
+                stream = body.get("stream", False)
 
-            return await proxy_request(
-                client=client,
-                backend_url=backend_url,
-                path=vllm_path,
-                body=body,
-                stream=stream,
-                user_model_name=user_model_name,
-                response_id_prefix=response_id_prefix,
-            )
+                # Build the response-id prefix.
+                # Final id = "{session_part}:sample:{vllm_original_id}"
+                # session_part is the sampling session id (from the
+                # SamplingController) when a LoRA adapter is used, otherwise
+                # the base model backend identifier.
+                session_part = resolved.lora_id or "base"
+                response_id_prefix = f"{session_part}:sample"
+
+                return await proxy_request(
+                    client=client,
+                    backend_url=backend_url,
+                    path=vllm_path,
+                    body=body,
+                    stream=stream,
+                    user_model_name=user_model_name,
+                    response_id_prefix=response_id_prefix,
+                )
+        except TuFTException as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     return router

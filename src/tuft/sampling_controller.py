@@ -361,38 +361,6 @@ class SamplingController:
 
             return response
 
-    async def ensure_lora_for_oai(
-        self,
-        base_model: str,
-        lora_id: str,
-        adapter_path: Path,
-    ) -> None:
-        """Ensure a LoRA adapter is loaded for OpenAI API requests.
-
-        If the adapter is already loaded in the backend, this is a no-op.
-        """
-        backend = self._base_backends.get(base_model)
-        if backend is None:
-            raise UnknownModelException(model_name=base_model)
-
-        # Check if already loaded (using backend's internal tracking)
-        lora_adapters = getattr(backend, "lora_adapters", None)
-        if lora_adapters is not None and lora_id in lora_adapters:
-            return
-
-        if not adapter_path.exists():
-            raise ValueError(f"LoRA adapter path does not exist: {adapter_path}")
-
-        await backend.add_adapter(lora_id=lora_id, adapter_path=adapter_path)
-        logger.info("Loaded LoRA adapter %s for OpenAI API (base: %s)", lora_id, base_model)
-
-    def get_backend_openai_url(self, base_model: str) -> str | None:
-        """Get the OpenAI API URL for a specific base model backend."""
-        backend = self._base_backends.get(base_model)
-        if backend is None:
-            return None
-        return backend.get_openai_api_url()
-
     async def evict_model(self, model_id: str, user_id: str) -> None:
         for sampling_id, record in list(self.sampling_sessions.items()):
             if record.model_id == model_id and record.user_id == user_id:

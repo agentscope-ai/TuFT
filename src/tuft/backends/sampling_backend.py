@@ -148,19 +148,19 @@ class VLLMSamplingBackend(BaseSamplingBackend):
         deadline = asyncio.get_event_loop().time() + timeout
         check_url = f"{url}/v1/models"
         attempt = 0
-        while asyncio.get_event_loop().time() < deadline:
-            attempt += 1
-            try:
-                async with _httpx.AsyncClient() as client:
+        async with _httpx.AsyncClient() as client:
+            while asyncio.get_event_loop().time() < deadline:
+                attempt += 1
+                try:
                     resp = await client.get(check_url, timeout=3.0)
                     if resp.status_code == 200:
                         logger.info(f"vLLM OpenAI server at {url} is ready (attempt {attempt})")
                         return
-            except (_httpx.ConnectError, _httpx.TimeoutException, OSError):
-                pass
-            if attempt % 10 == 0:
-                logger.info(f"Waiting for vLLM OpenAI server at {url}... attempt {attempt}")
-            await asyncio.sleep(2.0)
+                except (_httpx.ConnectError, _httpx.TimeoutException, OSError):
+                    pass
+                if attempt % 10 == 0:
+                    logger.info(f"Waiting for vLLM OpenAI server at {url}... attempt {attempt}")
+                await asyncio.sleep(2.0)
         logger.warning(f"vLLM OpenAI server at {url} not ready after {timeout}s")
 
     def get_openai_api_url(self) -> Optional[str]:

@@ -44,8 +44,18 @@ async def proxy_request(
     headers = {"Authorization": "Bearer EMPTY"}
 
     if stream:
+        req = client.build_request("POST", url, json=body, headers=headers, timeout=300.0)
+        resp = await client.send(req, stream=True)
+        if resp.status_code != 200:
+            error_body = await resp.aread()
+            await resp.aclose()
+            try:
+                error_json = json.loads(error_body)
+            except json.JSONDecodeError:
+                error_json = {"error": {"message": error_body.decode()}}
+            return JSONResponse(content=error_json, status_code=resp.status_code)
         return StreamingResponse(
-            _stream_proxy(client, url, headers, body, user_model_name, response_id_prefix),
+            _stream_proxy(resp, user_model_name, response_id_prefix),
             media_type="text/event-stream",
         )
     else:
@@ -73,20 +83,12 @@ async def _non_stream_proxy(
 
 
 async def _stream_proxy(
-    client: httpx.AsyncClient,
-    url: str,
-    headers: dict[str, str],
-    body: dict[str, Any],
+    resp: httpx.Response,
     user_model_name: str,
     response_id_prefix: str,
 ) -> AsyncIterator[str]:
-    """Forward a streaming request, rewriting each SSE chunk."""
-    async with client.stream("POST", url, json=body, headers=headers, timeout=300.0) as resp:
-        if resp.status_code != 200:
-            error_body = await resp.aread()
-            yield f"data: {error_body.decode()}\n\n"
-            return
-
+    """Forward a streaming response, rewriting each SSE chunk."""
+    try:
         async for line in resp.aiter_lines():
             if not line.strip():
                 yield "\n"
@@ -104,6 +106,8 @@ async def _stream_proxy(
                     yield f"{line}\n"
             else:
                 yield f"{line}\n"
+    finally:
+        await resp.aclose()
 
 
 def _rewrite_response(
