@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 from opentelemetry.trace import StatusCode
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from tinker import types
 
 from .backends import BaseSamplingBackend
@@ -61,6 +61,8 @@ class SamplingSessionRecord(BaseModel):
     sampling sessions that users may access at any time.
     """
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     sampling_session_id: str
     session_id: str
     model_id: str
@@ -72,8 +74,7 @@ class SamplingSessionRecord(BaseModel):
     history: list[SamplingHistoryEntry] = Field(default_factory=list)
     executor: SequenceExecutor = Field(default_factory=SequenceExecutor, exclude=True)
 
-    class Config:
-        arbitrary_types_allowed = True
+    _history_by_seq_id: dict[int, SamplingHistoryEntry] = PrivateAttr(default_factory=dict)
 
 
 class SamplingController:
@@ -92,6 +93,14 @@ class SamplingController:
     def _build_key(self, session_id: str) -> str:
         return get_redis_store().build_key(self.REDIS_KEY_PREFIX, session_id)
 
+    def _rebuild_history_index(self, record: SamplingSessionRecord) -> None:
+        history_by_seq_id: dict[int, SamplingHistoryEntry] = {}
+        for entry in record.history:
+            history_by_seq_id[entry.seq_id] = entry
+        record._history_by_seq_id = history_by_seq_id
+        if history_by_seq_id:
+            record.last_seq_id = max(record.last_seq_id, max(history_by_seq_id))
+
     def _restore_from_redis(self) -> None:
         """Restore sampling sessions from Redis on startup."""
         if not is_persistence_enabled():
@@ -109,9 +118,8 @@ class SamplingController:
             if record.base_model and record.base_model not in self._base_backends:
                 invalid_sessions.append(record.sampling_session_id)
                 continue
-            # Initialize executor with next_sequence_id based on max_submitted_seq_id
-            # to avoid hanging on new requests after restore
             record.executor = SequenceExecutor()
+            self._rebuild_history_index(record)
             self.sampling_sessions[record.sampling_session_id] = record
         for session_id in invalid_sessions:
             store.delete(self._build_key(session_id))
@@ -254,13 +262,15 @@ class SamplingController:
     async def _record_sequence(
         self, record: SamplingSessionRecord, seq_id: int, prompt: types.ModelInput
     ) -> None:
-        record.last_seq_id = seq_id
         entry = SamplingHistoryEntry(
             seq_id=seq_id,
             prompt_token_count=len(prompt.to_ints()),
             prompt_hash=self._hash_prompt(prompt),
         )
-        record.history.append(entry)
+        record._history_by_seq_id[seq_id] = entry
+        record.history = [record._history_by_seq_id[k] for k in sorted(record._history_by_seq_id)]
+        record.last_seq_id = max(record.last_seq_id, seq_id)
+
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self._save_session, record.sampling_session_id)
 
@@ -283,6 +293,7 @@ class SamplingController:
                 raise UserMismatchException()
             if request.seq_id is None:
                 raise MissingSequenceIDException()
+
             await record.executor.submit(
                 sequence_id=request.seq_id,
                 func=self._record_sequence,
