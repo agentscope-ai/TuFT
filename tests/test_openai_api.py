@@ -72,6 +72,7 @@ def oai_env(
 
     Yields an ``OAITestEnv`` containing ``url`` and ``model_name``.
     """
+    clear_ray_state()
     is_gpu = request.config.getoption("--gpu")
 
     saved_api_key = os.environ.pop("TINKER_API_KEY", None)
