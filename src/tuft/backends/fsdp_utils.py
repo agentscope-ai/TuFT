@@ -93,9 +93,9 @@ def _resolve_no_split_modules(model: nn.Module) -> list[str]:
     if no_split:
         return list(no_split)
 
-    inner: nn.Module = model
+    inner: object = model
     while hasattr(inner, "model"):
-        inner = inner.model
+        inner = inner.model  # type: ignore[union-attr]
         no_split = getattr(inner, "_no_split_modules", None)
         if no_split:
             return list(no_split)

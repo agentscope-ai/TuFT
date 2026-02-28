@@ -7,10 +7,8 @@ import socket
 from typing import Any
 
 import ray
-from ray.util.placement_group import (
-    PlacementGroupSchedulingStrategy,
-    placement_group,
-)
+from ray.util.placement_group import placement_group
+from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 from tinker import types
 
 from tuft.config import ModelConfig
@@ -40,7 +38,7 @@ class FSDPWorkerGroup:
         # --- placement groups ---
         pgs = []
         for _ in range(num_nodes):
-            bundles = [{"GPU": 1, "CPU": 1}] * num_gpus_per_node
+            bundles: list[dict[str, float]] = [{"GPU": 1, "CPU": 1}] * num_gpus_per_node
             pg = placement_group(bundles, strategy="STRICT_PACK")
             ray.get(pg.ready())
             pgs.append(pg)
@@ -245,9 +243,15 @@ class FSDPWorkerGroup:
 
         node_info = {n["NodeID"]: n["NodeManagerAddress"] for n in ray.nodes()}
 
-        def _get_pg_ip(pg):
+        def _get_pg_ip(pg: Any) -> str:
             try:
-                table = ray._private.state.state.placement_group_table(pg.id)
+                _state_mod = getattr(ray, "_private", None)
+                if _state_mod is None:
+                    return ""
+                _state_obj = getattr(getattr(_state_mod, "state", None), "state", None)
+                if _state_obj is None:
+                    return ""
+                table = _state_obj.placement_group_table(pg.id)
                 bundles_to_node = table.get("bundles_to_node_id", {})
                 if bundles_to_node:
                     node_id = next(iter(bundles_to_node.values()))
