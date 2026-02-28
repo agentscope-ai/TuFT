@@ -54,6 +54,11 @@ class ModelConfig(BaseModel):
     # default training setting
     micro_batch_size: int = 1  # micro-batch size for training
 
+    # FSDP multi-GPU training settings
+    training_backend: str = "hf"  # "hf" for single-GPU, "fsdp" for FSDP2 multi-GPU
+    num_gpus_per_node: int = 1
+    num_nodes: int = 1
+
     # whether to colocate sampling and training on the same device
     # only for local testing purposes
     colocate: bool = False
@@ -63,6 +68,16 @@ class ModelConfig(BaseModel):
     def validate_colocate(self) -> "ModelConfig":
         if self.colocate and self.tensor_parallel_size != 1:
             raise ValueError("Colocate option is only supported for tensor_parallel_size=1.")
+        return self
+
+    @model_validator(mode="after")
+    def validate_fsdp(self) -> "ModelConfig":
+        if self.training_backend == "fsdp":
+            if self.colocate:
+                raise ValueError("Colocate is not supported with FSDP training backend.")
+            total_gpus = self.num_gpus_per_node * self.num_nodes
+            if total_gpus < 1:
+                raise ValueError("FSDP requires at least 1 GPU.")
         return self
 
 
