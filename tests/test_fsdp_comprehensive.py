@@ -18,6 +18,10 @@ Requires:
 
 from __future__ import annotations
 
+import pytest
+
+pytest.importorskip("torch", reason="FSDP tests require PyTorch")
+
 import os
 import tempfile
 import time
@@ -25,7 +29,6 @@ from pathlib import Path
 from typing import Any, List
 
 import numpy as np
-import pytest
 import ray
 import transformers
 from tinker import types

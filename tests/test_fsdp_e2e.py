@@ -25,6 +25,10 @@ Usage:
 
 from __future__ import annotations
 
+import pytest
+
+pytest.importorskip("torch", reason="FSDP tests require PyTorch")
+
 import os
 import tempfile
 import threading
@@ -34,7 +38,6 @@ from typing import Any, List
 
 import httpx
 import numpy as np
-import pytest
 import ray
 import tinker.types as types
 import uvicorn

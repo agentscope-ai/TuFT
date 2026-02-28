@@ -9,13 +9,16 @@ Requires:
     - At least 2 GPUs available (FSDP_TEST_GPUS, default 2)
 """
 
+import pytest
+
+pytest.importorskip("torch", reason="FSDP tests require PyTorch")
+
 import os
 import tempfile
 from pathlib import Path
 from typing import Any, List
 
 import numpy as np
-import pytest
 import ray
 import transformers
 from tinker import types
