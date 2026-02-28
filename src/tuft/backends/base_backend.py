@@ -110,6 +110,10 @@ class BaseTrainingBackend(BaseBackend):
             from ..backends.training_backend import DummyTrainingBackend
 
             return DummyTrainingBackend(config)
+        elif config.training_backend == "fsdp":
+            from ..backends.fsdp_training_backend import FSDPTrainingBackend
+
+            return FSDPTrainingBackend(config)
         else:
             from ..backends.training_backend import HFTrainingBackend
 

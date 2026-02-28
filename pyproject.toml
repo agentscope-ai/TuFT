@@ -73,7 +73,7 @@ exclude = [
 
 [tool.ruff.lint]
 select = ["E", "F", "B", "I"]
-per-file-ignores = {"src/tuft/server.py" = ["B008"]}
+per-file-ignores = {"src/tuft/server.py" = ["B008"], "tests/test_fsdp_*.py" = ["E402", "I001"]}
 
 [tool.ruff.lint.isort]
 known-first-party = ["tuft"]
