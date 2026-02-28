@@ -31,9 +31,6 @@ from tuft.config import ModelConfig
 from tuft.loss_fn import get_loss_fn
 
 
-logger = logging.getLogger(__name__)
-
-
 def _chunk_tensordict_allow_2d_nested(td: TensorDict, chunks: int) -> list:
     """Chunk TensorDict like engine's chunk_tensordict; 2D nested use unbind."""
     assert isinstance(td, TensorDict) and len(td) % chunks == 0, (
@@ -292,6 +289,7 @@ class MultiAdapterVerlWorker:
         self._allocated: Dict[str, bool] = {}
         self._initialized = False
         self._train_mode_ctx: Any = None
+        self.logger = logging.getLogger(f"{__name__}.MultiAdapterVerlWorker")
 
     def _generate_adapter_name(self, rank: int) -> str:
         if rank not in self._name_counter:
@@ -341,7 +339,7 @@ class MultiAdapterVerlWorker:
             self.engine.module = fsdp_model
             self._create_optimizer_for_adapter(first)
         self._initialized = True
-        logger.info(
+        self.logger.info(
             "MultiAdapterVerlWorker initialized with adapters: %s",
             list(self._adapters.keys()),
         )
@@ -443,7 +441,7 @@ class MultiAdapterVerlWorker:
                 shutil.move(str(item), str(dest))
             lora_subdir.rmdir()
 
-    def load_checkpoint(self, adapter_name: str, path: str | Path) -> None:
+    def load_checkpoint(self, adapter_name: str, path: str | Path, optimizer: bool = True) -> None:
         path = Path(path)
         state = torch.load(path / "adapter.pt", map_location="cpu")
         self._activate_adapter(adapter_name)
@@ -451,10 +449,13 @@ class MultiAdapterVerlWorker:
             for name, param in self.engine.module.named_parameters():
                 if adapter_name in name and name in state:
                     param.data.copy_(state[name].to(param.device))
-        opt_path = path / "optimizer.pt"
-        if opt_path.exists() and self._adapters[adapter_name].optimizer is not None:
-            opt_state = torch.load(opt_path, map_location="cpu")
-            self._adapters[adapter_name].optimizer.load_state_dict(opt_state)
+        if optimizer:
+            opt_path = path / "optimizer.pt"
+            if opt_path.exists():
+                if self._adapters[adapter_name].optimizer is None:
+                    self._create_optimizer_for_adapter(adapter_name)
+                opt_state = torch.load(opt_path, map_location="cpu")
+                self._adapters[adapter_name].optimizer.load_state_dict(opt_state)
 
     def allocate_slot(self, rank: int) -> Optional[str]:
         """Allocate an unused slot for rank; return adapter_name or None."""
@@ -485,6 +486,7 @@ class VerlWorkerActor:
         self.config_dict = config_dict
         self._worker: Optional[MultiAdapterVerlWorker] = None
         self._dist_initialized = False
+        self.logger = logging.getLogger(f"{__name__}.VerlWorkerActor")
 
     def get_node_ip(self) -> str:
         import ray
@@ -587,10 +589,10 @@ class VerlWorkerActor:
             return
         self._worker.save_checkpoint(adapter_name, Path(path), optimizer)
 
-    def load_checkpoint(self, adapter_name: str, path: str) -> None:
+    def load_checkpoint(self, adapter_name: str, path: str, optimizer: bool = True) -> None:
         if self._worker is None:
             return
-        self._worker.load_checkpoint(adapter_name, Path(path))
+        self._worker.load_checkpoint(adapter_name, Path(path), optimizer)
 
 
 # =============================================================================
@@ -619,6 +621,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             rank_slots={max_rank: 4},
         )
         self._config_dict = _config_to_worker_dict(config)
+        self.logger = logging.getLogger(f"{__name__}.FSDPTrainingBackend")
 
     async def async_init(self) -> None:
         if self._world_size > 0 or self._worker is not None:
@@ -667,7 +670,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             self._worker.engine = engine
             await asyncio.to_thread(self._worker.initialize)
             self._world_size = 1
-            logger.info("FSDPTrainingBackend async_init done: local single process (no Ray)")
+            self.logger.info("FSDPTrainingBackend async_init done: local single process (no Ray)")
             return
         import ray
 
@@ -686,7 +689,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             )
             actors.append(actor)
         self._actors = actors
-        master_addr = ray.get(actors[0].get_node_ip.remote())
+        master_addr = await asyncio.to_thread(ray.get, actors[0].get_node_ip.remote())
         master_port = getattr(self.config, "fsdp_master_port", DEFAULT_MASTER_PORT)
         await asyncio.gather(
             *[
@@ -695,7 +698,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             ]
         )
         await asyncio.gather(*[asyncio.to_thread(ray.get, a.build_worker.remote()) for a in actors])
-        logger.info("FSDPTrainingBackend async_init done: %d Ray actors (FSDP)", n_gpus)
+        self.logger.info("FSDPTrainingBackend async_init done: %d Ray actors (FSDP)", n_gpus)
 
     def _get_adapter_name(self, lora_id: str) -> str:
         if lora_id not in self._lora_id_to_adapter_name:
@@ -712,7 +715,9 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             elif self._actors:
                 import ray
 
-                adapter_name = ray.get(self._actors[0].allocate_slot.remote(rank))
+                adapter_name = await asyncio.to_thread(
+                    ray.get, self._actors[0].allocate_slot.remote(rank)
+                )
             else:
                 raise RuntimeError("FSDPTrainingBackend not initialized.")
             if adapter_name is None:
@@ -730,7 +735,9 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                 elif self._actors:
                     import ray
 
-                    ray.get(self._actors[0].release_slot.remote(adapter_name))
+                    await asyncio.to_thread(
+                        ray.get, self._actors[0].release_slot.remote(adapter_name)
+                    )
 
     async def forward(
         self,
@@ -778,7 +785,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                 a.forward_backward.remote(data, adapter_name, loss_fn_name, loss_fn_config)
                 for a in self._actors
             ]
-            results = ray.get(refs)
+            results = await asyncio.to_thread(ray.get, refs)
             metrics = results[0] if results else {}
         if "loss" not in metrics and "loss:sum" in metrics:
             metrics["loss"] = metrics["loss:sum"]
@@ -817,7 +824,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                 )
                 for a in self._actors
             ]
-            results = ray.get(refs)
+            results = await asyncio.to_thread(ray.get, refs)
             result = results[0] if results else {}
         metrics = {k: float(v) for k, v in (result or {}).items() if isinstance(v, (int, float))}
         return types.OptimStepResponse(metrics=metrics or None)
@@ -838,7 +845,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             refs = [
                 a.save_checkpoint.remote(adapter_name, str(path), optimizer) for a in self._actors
             ]
-            ray.get(refs)
+            await asyncio.to_thread(ray.get, refs)
 
     async def load_state(
         self,
@@ -849,9 +856,11 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         adapter_name = self._get_adapter_name(lora_id)
         path = checkpoint_record.adapter_path
         if self._worker is not None:
-            await asyncio.to_thread(self._worker.load_checkpoint, adapter_name, path)
+            await asyncio.to_thread(self._worker.load_checkpoint, adapter_name, path, optimizer)
         else:
             import ray
 
-            refs = [a.load_checkpoint.remote(adapter_name, str(path)) for a in self._actors]
-            ray.get(refs)
+            refs = [
+                a.load_checkpoint.remote(adapter_name, str(path), optimizer) for a in self._actors
+            ]
+            await asyncio.to_thread(ray.get, refs)
