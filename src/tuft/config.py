@@ -53,6 +53,14 @@ class ModelConfig(BaseModel):
 
     # default training setting
     micro_batch_size: int = 1  # micro-batch size for training
+    # training backend: "hf" (HFTrainingBackend) or "fsdp" (FSDPTrainingBackend)
+    training_backend: str = "hf"
+    # number of GPUs (Ray actors) for FSDP backend; default 1
+    fsdp_num_gpus: int = 1
+    # TCP port for torch.distributed init (FSDP multi-GPU); default 29500
+    fsdp_master_port: int = 29500
+    # optional override for FSDP backend HFModelConfig (e.g. attn_implementation)
+    fsdp_override_config: dict[str, Any] | None = None
 
     # whether to colocate sampling and training on the same device
     # only for local testing purposes

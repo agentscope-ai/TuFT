@@ -16,7 +16,7 @@ dependencies = [
     "typer>=0.20.1",
     "uvicorn[standard]>=0.38.0",
     "omegaconf>=2.3.0",
-    "ray>=2.50.0",
+    "ray==2.50.0", 
     "transformers>=4.57.3,<5.0.0",
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
@@ -25,6 +25,11 @@ dependencies = [
     "opentelemetry-instrumentation-logging>=0.41b0",
     "psutil>=5.9.0",
     "nvidia-ml-py>=13.0.0",
+    # Ray worker installs only main deps when packing; verl needs torch/peft/verl (match [verl] optional group)
+    "torch>=2.0.0",
+    "peft>=0.18.0",
+    "tensordict>=0.5.0",
+    "verl",
 ]
 
 [project.scripts]
@@ -47,6 +52,12 @@ backend = [
     "peft>=0.18.0",
     "datasets>=4.0.0",
     "huggingface-hub>=0.20.0,<1.0"
+]
+verl = [
+    "peft>=0.18.0",
+    "tensordict>=0.5.0",
+    "torch>=2.0.0",
+    "verl",
 ]
 persistence = [
     "redis>=5.0.0",
