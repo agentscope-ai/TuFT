@@ -50,15 +50,19 @@ class BaseSamplingBackend(BaseBackend):
 
     @classmethod
     def create_backend(cls, config: ModelConfig) -> "BaseSamplingBackend":
-        """Factory method to create a sampling backend instance."""
+        """Factory method to create a sampling backend instance.
+
+        Only TUFT_CPU_TEST=1 uses DummySamplingBackend; otherwise VLLMSamplingBackend.
+        If vllm/trinity is not installed, ImportError is raised — install the backend
+        (e.g. uv sync --extra backend or pip install trinity-rft[vllm]) and fix the env.
+        """
         if os.getenv("TUFT_CPU_TEST", "0") == "1":
             from ..backends.sampling_backend import DummySamplingBackend
 
             return DummySamplingBackend(config)
-        else:
-            from ..backends.sampling_backend import VLLMSamplingBackend
+        from ..backends.sampling_backend import VLLMSamplingBackend
 
-            return VLLMSamplingBackend(config)
+        return VLLMSamplingBackend(config)
 
 
 class BaseTrainingBackend(BaseBackend):

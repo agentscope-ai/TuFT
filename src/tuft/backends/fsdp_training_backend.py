@@ -787,8 +787,8 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             ]
             results = await asyncio.to_thread(ray.get, refs)
             metrics = results[0] if results else {}
-        if "loss" not in metrics and "loss:sum" in metrics:
-            metrics["loss"] = metrics["loss:sum"]
+        # Tinker expects every metric key to be "name:reduction" (e.g. loss:sum)
+        metrics = {k: v for k, v in metrics.items() if ":" in k}
         loss_fn_outputs = [
             {"logprobs": types.TensorData(data=[0.0], dtype="float32", shape=[1])} for _ in data
         ]
