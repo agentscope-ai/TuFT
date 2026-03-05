@@ -31,7 +31,7 @@ from tuft.config import ModelConfig
 from tuft.loss_fn import get_loss_fn
 
 
-def _chunk_tensordict_allow_2d_nested(td: TensorDict, chunks: int) -> list:
+def _chunk_tensordict_allow_2d_nested(td: TensorDict, chunks: int) -> list | tuple:
     """Chunk TensorDict like engine's chunk_tensordict; 2D nested use unbind."""
     assert isinstance(td, TensorDict) and len(td) % chunks == 0, (
         f"expecting td with length divisible by chunks, but got {len(td)} and {chunks}"
@@ -515,10 +515,10 @@ class VerlWorkerActor:
             return
         training_config, slot_config = _worker_dict_to_training_config(self.config_dict)
         engine = FSDPEngineWithLMHead(
-            model_config=training_config.model_config,
-            engine_config=training_config.engine_config,
-            optimizer_config=training_config.optimizer_config,
-            checkpoint_config=training_config.checkpoint_config,
+            model_config=training_config.model_config,  # pyright: ignore[reportCallIssue]
+            engine_config=training_config.engine_config,  # pyright: ignore[reportCallIssue]
+            optimizer_config=training_config.optimizer_config,  # pyright: ignore[reportCallIssue]
+            checkpoint_config=training_config.checkpoint_config,  # pyright: ignore[reportCallIssue]
         )
         self._worker = MultiAdapterVerlWorker(
             model_config=training_config.model_config,
@@ -655,10 +655,10 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                 )
             training_config, _slot = _worker_dict_to_training_config(self._config_dict)
             engine = FSDPEngineWithLMHead(
-                model_config=training_config.model_config,
-                engine_config=training_config.engine_config,
-                optimizer_config=training_config.optimizer_config,
-                checkpoint_config=training_config.checkpoint_config,
+                model_config=training_config.model_config,  # pyright: ignore[reportCallIssue]
+                engine_config=training_config.engine_config,  # pyright: ignore[reportCallIssue]  # pyright: ignore[reportCallIssue]
+                optimizer_config=training_config.optimizer_config,  # pyright: ignore[reportCallIssue]  # pyright: ignore[reportCallIssue]
+                checkpoint_config=training_config.checkpoint_config,  # pyright: ignore[reportCallIssue]  # pyright: ignore[reportCallIssue]
             )
             self._worker = MultiAdapterVerlWorker(
                 model_config=training_config.model_config,
@@ -715,7 +715,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             elif self._actors:
                 import ray
 
-                adapter_name = await asyncio.to_thread(
+                adapter_name: str | None = await asyncio.to_thread(
                     ray.get, self._actors[0].allocate_slot.remote(rank)
                 )
             else:

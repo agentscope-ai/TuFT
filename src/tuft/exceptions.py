@@ -1,7 +1,7 @@
 """Some custom exceptions."""
 
 from dataclasses import dataclass
-from typing import Any, List, Sized
+from typing import Any, Sequence, Sized
 
 
 @dataclass
@@ -195,9 +195,9 @@ class LossFunctionMissingInputException(LossFunctionException):
 
 
 class LossFunctionInputShapeMismatchException(LossFunctionException):
-    shapes: List[Sized]
+    shapes: Sequence[Sized]
 
-    def __init__(self, shapes: List[Sized]):
+    def __init__(self, shapes: Sequence[Sized]):
         detail = f"Input tensors must have the same shape. Got shapes: {shapes}"
         super().__init__(status_code=409, detail=detail)
         self.shapes = shapes
