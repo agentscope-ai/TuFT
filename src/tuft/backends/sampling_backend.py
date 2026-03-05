@@ -122,6 +122,7 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                         "max_lora_rank": config.max_lora_rank,
                         "max_loras": config.max_loras,
                     },
+                    gpu_memory_utilization=config.sampling_memory_fraction,
                 )
             )
         )

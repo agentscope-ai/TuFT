@@ -49,6 +49,7 @@ def server_endpoint(tmp_path_factory: pytest.TempPathFactory, request):
             model_path=model_path,
             max_model_len=4096,
             tensor_parallel_size=1,
+            sampling_memory_fraction=0.5,
         )
     ]
     config.authorized_users = {

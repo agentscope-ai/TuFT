@@ -98,6 +98,7 @@ def oai_env(
             model_path=model_path,
             max_model_len=4096,
             tensor_parallel_size=1,
+            sampling_memory_fraction=0.5,
         )
     ]
     config.authorized_users = {
