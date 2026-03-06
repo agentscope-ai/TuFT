@@ -593,7 +593,7 @@ def test_fsdp_multi_gpu_training_flow(fsdp_multi_gpu_server_endpoint: str) -> No
         train_data = _create_training_data(tokenizer)
         _log(f"[Multi-GPU] Training samples: {len(train_data)}")
 
-        num_epochs = 5
+        num_epochs = 40
         for epoch in range(1, num_epochs + 1):
             fwd_out = training_client.forward_backward(train_data, "cross_entropy").result(
                 timeout=120

@@ -16,11 +16,29 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 import torch
+from packaging import version
 from peft import LoraConfig, TaskType, get_peft_model
 from tensordict import TensorDict
 from tinker import types
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.tensor import DTensor
 from verl.utils import tensordict_utils as tu
+
+
+# FSDP v2 imports (requires PyTorch >= 2.4)
+# PyTorch 2.6+ exports from public module; 2.4/2.5 use private _composable.fsdp
+if version.parse(torch.__version__) >= version.parse("2.6"):
+    from torch.distributed.fsdp import MixedPrecisionPolicy, fully_shard
+elif version.parse(torch.__version__) >= version.parse("2.4"):
+    # pyright: ignore[reportPrivateImportUsage]
+    from torch.distributed._composable.fsdp import (
+        MixedPrecisionPolicy,  # type: ignore[attr-defined]
+        fully_shard,  # type: ignore[attr-defined]
+    )
+else:
+    raise ImportError(
+        f"FSDP v2 requires PyTorch >= 2.4, but got {torch.__version__}. "
+        "Please upgrade PyTorch or use training_backend='hf' instead."
+    )
 from verl.utils.dataset.dataset_utils import DatasetPadMode
 from verl.workers.config.engine import TrainingWorkerConfig
 from verl.workers.engine.fsdp.transformer_impl import FSDPEngineWithLMHead
@@ -299,7 +317,7 @@ class MultiAdapterVerlWorker:
         return f"adapter_r{rank}_{idx}"
 
     def initialize(self) -> None:
-        """Build engine (base + PEFT adapters + FSDP) and create per-adapter optimizers."""
+        """Build engine (base + PEFT adapters + FSDP v2) and create per-adapter optimizers."""
         if self._initialized:
             return
         base_model = self.engine._build_module()
@@ -335,12 +353,51 @@ class MultiAdapterVerlWorker:
             peft_model.set_adapter(first)
             model_bf16 = peft_model.to(torch.bfloat16)
             model_cuda = model_bf16.cuda()
-            fsdp_model = FSDP(model_cuda, use_orig_params=True)
-            self.engine.module = fsdp_model
+
+            # FSDP v2: use fully_shard instead of FSDP wrapper
+            # Apply fully_shard bottom-up: first to transformer layers, then to root
+            mp_policy = MixedPrecisionPolicy(
+                param_dtype=torch.bfloat16,
+                reduce_dtype=torch.float32,
+                cast_forward_inputs=True,
+            )
+
+            # Get device mesh for FSDP v2
+            import torch.distributed as dist
+            from torch.distributed.device_mesh import init_device_mesh
+
+            world_size = dist.get_world_size() if dist.is_initialized() else 1
+            if world_size > 1:
+                device_mesh = init_device_mesh("cuda", (world_size,))
+            else:
+                device_mesh = None
+
+            # Find transformer layers to wrap (bottom-up approach)
+            # Look for common transformer layer class names
+            transformer_layer_cls_names = getattr(model_cuda, "_no_split_modules", None) or [
+                "DecoderLayer",
+                "TransformerBlock",
+                "LlamaDecoderLayer",
+                "Qwen2DecoderLayer",
+            ]
+
+            wrapped_modules = []
+            for _name, module in model_cuda.named_modules():
+                if module.__class__.__name__ in transformer_layer_cls_names:
+                    wrapped_modules.append(module)
+
+            # Apply fully_shard to each transformer layer first
+            for module in wrapped_modules:
+                fully_shard(module, mesh=device_mesh, mp_policy=mp_policy)
+
+            # Apply fully_shard to root model
+            fully_shard(model_cuda, mesh=device_mesh, mp_policy=mp_policy)
+
+            self.engine.module = model_cuda
             self._create_optimizer_for_adapter(first)
         self._initialized = True
         self.logger.info(
-            "MultiAdapterVerlWorker initialized with adapters: %s",
+            "MultiAdapterVerlWorker initialized with FSDP v2, adapters: %s",
             list(self._adapters.keys()),
         )
 
@@ -354,7 +411,17 @@ class MultiAdapterVerlWorker:
 
     def _activate_adapter(self, adapter_name: str) -> None:
         """Set PEFT active adapter before computation; same as HFTrainingModel._activate_adapter."""
-        self.engine.module.module.set_adapter(adapter_name)
+        # FSDP v2 does not wrap the module, so we access the PEFT model directly
+        # For FSDP v1: self.engine.module.module.set_adapter(adapter_name)
+        # For FSDP v2: self.engine.module is the PEFT model itself
+        module = self.engine.module
+        # Handle both FSDP v1 (wrapped) and FSDP v2 (not wrapped) cases
+        if hasattr(module, "set_adapter"):
+            module.set_adapter(adapter_name)
+        elif hasattr(module, "module") and hasattr(module.module, "set_adapter"):
+            module.module.set_adapter(adapter_name)
+        else:
+            raise RuntimeError(f"Cannot find set_adapter method on module: {type(module)}")
 
     def train_mode(self) -> Any:
         """Return engine.train_mode() context; one 'with', multiple forward_backward inside."""
@@ -403,32 +470,93 @@ class MultiAdapterVerlWorker:
             for n, p in self.engine.module.named_parameters()
             if adapter_name in n and p.requires_grad and p.grad is not None
         ]
+        grad_norm_value = None
         if grad_clip_norm is not None and grad_clip_norm > 0 and params:
-            torch.nn.utils.clip_grad_norm_(params, grad_clip_norm)
+            grad_norm = torch.nn.utils.clip_grad_norm_(params, grad_clip_norm)
+            # FSDP v2: grad_norm may be DTensor, convert to scalar
+            if isinstance(grad_norm, DTensor):
+                grad_norm_value = grad_norm.full_tensor().item()
+            else:
+                grad_norm_value = (
+                    grad_norm.item() if hasattr(grad_norm, "item") else float(grad_norm)
+                )
         opt.step()
         self._zero_grad_for_adapter(adapter_name)
         info.step_count += 1
-        return {"step_count": info.step_count, "adapter": adapter_name}
+        result = {"step_count": info.step_count, "adapter": adapter_name}
+        if grad_norm_value is not None:
+            result["grad_norm"] = grad_norm_value
+        return result
 
     def save_checkpoint(self, adapter_name: str, path: str | Path, optimizer: bool = True) -> None:
         """Save adapter.pt (training load_state) + PEFT format (sampling); optional optimizer."""
         self._activate_adapter(adapter_name)
         path = Path(path)
         path.mkdir(parents=True, exist_ok=True)
-        # 1) Internal format for FSDP load_state
-        state = {
-            name: param.data.cpu().clone()
-            for name, param in self.engine.module.named_parameters()
-            if adapter_name in name
-        }
-        torch.save(state, path / "adapter.pt")
-        if optimizer:
-            info = self._adapters[adapter_name]
-            if info.optimizer is not None:
-                torch.save(info.optimizer.state_dict(), path / "optimizer.pt")
-        # 2) PEFT format (adapter_config.json, adapter_model.safetensors) so sampling/VLLM can load
-        peft_model = self.engine.module.module
-        peft_model.save_pretrained(str(path), selected_adapters=[adapter_name])
+
+        # FSDP v2: parameters may be DTensor, need to call full_tensor() to get full param
+        # Collect full state dict for the adapter
+        state = {}
+        for name, param in self.engine.module.named_parameters():
+            if adapter_name in name:
+                if isinstance(param, DTensor):
+                    # FSDP v2: gather full tensor from all ranks
+                    state[name] = param.full_tensor().cpu().clone()
+                else:
+                    state[name] = param.data.cpu().clone()
+
+        # Only rank 0 saves to avoid duplicate writes
+        import torch.distributed as dist
+
+        is_rank_0 = not dist.is_initialized() or dist.get_rank() == 0
+
+        if is_rank_0:
+            # 1) Internal format for FSDP load_state
+            torch.save(state, path / "adapter.pt")
+
+            if optimizer:
+                info = self._adapters[adapter_name]
+                if info.optimizer is not None:
+                    torch.save(info.optimizer.state_dict(), path / "optimizer.pt")
+
+            # 2) PEFT format (adapter_config.json, adapter_model.safetensors)
+            # so sampling/VLLM can load
+            # FSDP v2: PEFT's save_pretrained cannot handle DTensor directly.
+            # We manually save the adapter config and weights in PEFT format.
+            module = self.engine.module
+            has_nested_peft = hasattr(module, "module") and hasattr(module.module, "peft_config")
+            peft_model = module.module if has_nested_peft else module
+
+            # Save adapter_config.json
+            if hasattr(peft_model, "peft_config") and adapter_name in peft_model.peft_config:
+                adapter_config = peft_model.peft_config[adapter_name]
+                config_dict = adapter_config.to_dict()
+                # Convert sets to lists for JSON serialization
+                for key, value in config_dict.items():
+                    if isinstance(value, set):
+                        config_dict[key] = list(value)
+                import json
+
+                with open(path / "adapter_config.json", "w") as f:
+                    json.dump(config_dict, f, indent=2)
+
+            # Save adapter weights in safetensors format
+            # Convert state dict keys to PEFT format (remove model prefix)
+            peft_state = {}
+            for name, tensor in state.items():
+                # PEFT expects keys like:
+                # "base_model.model.model.layers.0.self_attn.q_proj.lora_A.adapter_r8_0.weight"
+                # We already have full names, just use them
+                peft_state[name] = tensor
+
+            try:
+                from safetensors.torch import save_file
+
+                save_file(peft_state, path / "adapter_model.safetensors")
+            except Exception:
+                # Fallback to torch.save if safetensors fails
+                torch.save(peft_state, path / "adapter_model.bin")
+
         lora_subdir = path / adapter_name
         if lora_subdir.exists() and lora_subdir.is_dir():
             for item in lora_subdir.iterdir():
@@ -443,18 +571,39 @@ class MultiAdapterVerlWorker:
 
     def load_checkpoint(self, adapter_name: str, path: str | Path, optimizer: bool = True) -> None:
         path = Path(path)
-        state = torch.load(path / "adapter.pt", map_location="cpu")
+        state = torch.load(path / "adapter.pt", map_location="cpu", weights_only=True)
         self._activate_adapter(adapter_name)
         with torch.no_grad():
             for name, param in self.engine.module.named_parameters():
                 if adapter_name in name and name in state:
-                    param.data.copy_(state[name].to(param.device))
+                    loaded_tensor = state[name]
+                    if isinstance(param, DTensor):
+                        # FSDP v2: param is DTensor, need to copy to local shard
+                        # Get the local shard and copy data to it
+                        local_param = param.to_local()
+                        # The loaded state is full tensor, we need to shard it
+                        # For dim-0 sharding, slice the tensor
+                        import torch.distributed as dist
+
+                        if dist.is_initialized():
+                            world_size = dist.get_world_size()
+                            rank = dist.get_rank()
+                            chunk_size = loaded_tensor.size(0) // world_size
+                            start_idx = rank * chunk_size
+                            end_idx = start_idx + chunk_size
+                            local_param.copy_(
+                                loaded_tensor[start_idx:end_idx].to(local_param.device)
+                            )
+                        else:
+                            local_param.copy_(loaded_tensor.to(local_param.device))
+                    else:
+                        param.data.copy_(loaded_tensor.to(param.device))
         if optimizer:
             opt_path = path / "optimizer.pt"
             if opt_path.exists():
                 if self._adapters[adapter_name].optimizer is None:
                     self._create_optimizer_for_adapter(adapter_name)
-                opt_state = torch.load(opt_path, map_location="cpu")
+                opt_state = torch.load(opt_path, map_location="cpu", weights_only=True)
                 self._adapters[adapter_name].optimizer.load_state_dict(opt_state)
 
     def allocate_slot(self, rank: int) -> Optional[str]:
@@ -581,11 +730,9 @@ class VerlWorkerActor:
         return self._worker.optim_step(adapter_name, learning_rate, weight_decay, grad_clip_norm)
 
     def save_checkpoint(self, adapter_name: str, path: str, optimizer: bool = True) -> None:
-        import torch.distributed as dist
-
+        # FSDP v2: all ranks must participate in full_tensor() collective operation
+        # The actual file writing is handled inside save_checkpoint (only rank 0 writes)
         if self._worker is None:
-            return
-        if dist.get_rank() != 0:
             return
         self._worker.save_checkpoint(adapter_name, Path(path), optimizer)
 
