@@ -48,6 +48,49 @@ from tuft.backends.base_backend import BaseTrainingBackend
 from tuft.checkpoints import CheckpointRecord
 from tuft.config import ModelConfig
 from tuft.loss_fn import get_loss_fn
+from tuft.telemetry.tracing import extract_context, get_tracer, inject_context
+
+
+def _shard_list(xs: list[Any], n_shards: int) -> list[list[Any]]:
+    """Split xs into n_shards contiguous shards."""
+    if n_shards <= 0:
+        raise ValueError(f"n_shards must be > 0, got {n_shards}")
+
+    total = len(xs)
+    base = total // n_shards
+    rem = total % n_shards
+
+    shards = []
+    start = 0
+    for i in range(n_shards):
+        size = base + (1 if i < rem else 0)
+        end = start + size
+        shards.append(xs[start:end])
+        start = end
+    return shards
+
+
+def _merge_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+
+    for out in results:
+        metrics = out.get("metrics", {}) or {}
+        for k, v in metrics.items():
+            if not isinstance(v, (int, float)):
+                continue
+
+            if k.endswith(":sum"):
+                merged[k] = merged.get(k, 0.0) + float(v)
+            elif k.endswith(":mean"):
+                merged.setdefault(k, []).append(float(v))
+            else:
+                merged[k] = merged.get(k, 0.0) + float(v)
+
+    for k, v in list(merged.items()):
+        if isinstance(v, list):
+            merged[k] = sum(v) / len(v) if v else 0.0
+
+    return merged
 
 
 def _shard_list(xs: list[Any], n_shards: int) -> list[list[Any]]:
@@ -858,18 +901,30 @@ class VerlWorkerActor:
             slot_config=slot_config,
         )
         self._worker.engine = engine
-        logging.info("[SERVER][Actor] build_worker 调用 initialize 前 rank=%s", self.rank)
+        logging.info("[SERVER][Actor] build_worker call initialize rank=%s", self.rank)
         self._worker.initialize()
-        logging.info("[SERVER][Actor] build_worker initialize 返回 rank=%s", self.rank)
+        logging.info("[SERVER][Actor] build_worker initialize return rank=%s", self.rank)
 
-    def allocate_slot(self, rank: int) -> Optional[str]:
-        if self._worker is None:
-            return None
-        return self._worker.allocate_slot(rank)
+    def allocate_slot(
+        self, rank: int, trace_context: dict[str, str] | None = None
+    ) -> Optional[str]:
+        ctx = extract_context(trace_context or {})
+        with get_tracer("tuft.verl_actor").start_as_current_span(
+            "verl_actor.allocate_slot", context=ctx
+        ) as span:
+            span.set_attribute("tuft.rank", rank)
+            if self._worker is None:
+                return None
+            return self._worker.allocate_slot(rank)
 
-    def release_slot(self, adapter_name: str) -> None:
-        if self._worker is not None:
-            self._worker.release_slot(adapter_name)
+    def release_slot(self, adapter_name: str, trace_context: dict[str, str] | None = None) -> None:
+        ctx = extract_context(trace_context or {})
+        with get_tracer("tuft.verl_actor").start_as_current_span(
+            "verl_actor.release_slot", context=ctx
+        ) as span:
+            span.set_attribute("tuft.adapter_name", adapter_name)
+            if self._worker is not None:
+                self._worker.release_slot(adapter_name)
 
     def forward_backward(
         self,
@@ -877,49 +932,56 @@ class VerlWorkerActor:
         adapter_name: str,
         loss_fn_name: str,
         loss_fn_config: Optional[dict] = None,
+        trace_context: dict[str, str] | None = None,
         forward_only: bool = False,
     ) -> Dict[str, Any]:
         """data: list[types.Datum] (or dicts after Ray serialization). Returns shard result."""
-        if data and isinstance(data[0], dict):
-            data = [types.Datum(**d) for d in data]
+        ctx = extract_context(trace_context or {})
+        with get_tracer("tuft.verl_actor").start_as_current_span(
+            "verl_actor.forward_backward", context=ctx
+        ) as span:
+            span.set_attribute("tuft.adapter_name", adapter_name)
+            span.set_attribute("tuft.data_count", len(data))
+            if data and isinstance(data[0], dict):
+                data = [types.Datum(**d) for d in data]
 
-        if not data:
+            if not data:
+                return {
+                    "metrics": {},
+                    "loss_fn_outputs": [],
+                }
+
+            td = _datum_list_to_tensordict(data, adapter_name, "cuda")
+            loss_fn = _make_verl_loss_fn(loss_fn_name, loss_fn_config)
+
+            if self._worker is None:
+                return {
+                    "metrics": {},
+                    "loss_fn_outputs": [],
+                }
+
+            out = self._worker.forward_backward(
+                adapter_name,
+                td,
+                loss_fn,
+                forward_only=forward_only,
+            )
+
+            metrics = out.get("metrics", {}) or {}
+
+            def _to_scalar(v: Any) -> Any:
+                if isinstance(v, list) and v and all(isinstance(x, (int, float)) for x in v):
+                    return sum(v) if len(v) > 1 else float(v[0])
+                return v
+
+            metrics = {k: _to_scalar(v) for k, v in metrics.items()}
+
+            loss_fn_outputs = _fsdp_logprobs_to_loss_fn_outputs(out, data)
+
             return {
-                "metrics": {},
-                "loss_fn_outputs": [],
+                "metrics": metrics,
+                "loss_fn_outputs": loss_fn_outputs,
             }
-
-        td = _datum_list_to_tensordict(data, adapter_name, "cuda")
-        loss_fn = _make_verl_loss_fn(loss_fn_name, loss_fn_config)
-
-        if self._worker is None:
-            return {
-                "metrics": {},
-                "loss_fn_outputs": [],
-            }
-
-        out = self._worker.forward_backward(
-            adapter_name,
-            td,
-            loss_fn,
-            forward_only=forward_only,
-        )
-
-        metrics = out.get("metrics", {}) or {}
-
-        def _to_scalar(v: Any) -> Any:
-            if isinstance(v, list) and v and all(isinstance(x, (int, float)) for x in v):
-                return sum(v) if len(v) > 1 else float(v[0])
-            return v
-
-        metrics = {k: _to_scalar(v) for k, v in metrics.items()}
-
-        loss_fn_outputs = _fsdp_logprobs_to_loss_fn_outputs(out, data)
-
-        return {
-            "metrics": metrics,
-            "loss_fn_outputs": loss_fn_outputs,
-        }
 
     def optim_step(
         self,
@@ -927,21 +989,56 @@ class VerlWorkerActor:
         learning_rate: Optional[float] = None,
         weight_decay: Optional[float] = None,
         grad_clip_norm: Optional[float] = None,
+        trace_context: dict[str, str] | None = None,
     ) -> Dict[str, Any]:
-        if self._worker is None:
-            return {}
-        return self._worker.optim_step(adapter_name, learning_rate, weight_decay, grad_clip_norm)
+        ctx = extract_context(trace_context or {})
+        with get_tracer("tuft.verl_actor").start_as_current_span(
+            "verl_actor.optim_step", context=ctx
+        ) as span:
+            span.set_attribute("tuft.adapter_name", adapter_name)
+            if self._worker is None:
+                return {}
+            return self._worker.optim_step(
+                adapter_name, learning_rate, weight_decay, grad_clip_norm
+            )
 
-    def save_checkpoint(self, adapter_name: str, path: str, optimizer: bool = True) -> None:
+    def save_checkpoint(
+        self,
+        adapter_name: str,
+        path: str,
+        optimizer: bool = True,
+        trace_context: dict[str, str] | None = None,
+    ) -> None:
         # FSDP v2: all ranks must participate in full_tensor() collective operation
-        if self._worker is None:
-            return
-        self._worker.save_checkpoint(adapter_name, Path(path), optimizer)
+        # The actual file writing is handled inside save_checkpoint (only rank 0 writes)
+        ctx = extract_context(trace_context or {})
+        with get_tracer("tuft.verl_actor").start_as_current_span(
+            "verl_actor.save_checkpoint", context=ctx
+        ) as span:
+            span.set_attribute("tuft.adapter_name", adapter_name)
+            span.set_attribute("tuft.optimizer", optimizer)
 
-    def load_checkpoint(self, adapter_name: str, path: str, optimizer: bool = True) -> None:
-        if self._worker is None:
-            return
-        self._worker.load_checkpoint(adapter_name, Path(path), optimizer)
+            if self._worker is None:
+                return
+            self._worker.save_checkpoint(adapter_name, Path(path), optimizer)
+
+    def load_checkpoint(
+        self,
+        adapter_name: str,
+        path: str,
+        optimizer: bool = True,
+        trace_context: dict[str, str] | None = None,
+    ) -> None:
+        ctx = extract_context(trace_context or {})
+        with get_tracer("tuft.verl_actor").start_as_current_span(
+            "verl_actor.load_checkpoint", context=ctx
+        ) as span:
+            span.set_attribute("tuft.adapter_name", adapter_name)
+            span.set_attribute("tuft.optimizer", optimizer)
+
+            if self._worker is None:
+                return
+            self._worker.load_checkpoint(adapter_name, Path(path), optimizer)
 
     def leave_train_mode(self) -> None:
         """Exit train_mode context on this actor; call on model release."""
@@ -1090,42 +1187,56 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         return self._lora_id_to_adapter_name[lora_id]
 
     async def create_adapter(self, lora_id: str, lora_config: types.LoraConfig) -> None:
-        async with self._lock:
-            if self._world_size == 0 and self._worker is None and not self._actors:
-                await self.async_init()
-            rank = getattr(lora_config, "rank", 8)
-            if self._worker is not None:
-                adapter_name = await asyncio.to_thread(self._worker.allocate_slot, rank)
-            elif self._actors:
-                import ray
+        with get_tracer("tuft.training_backend").start_as_current_span(
+            "training_backend.create_adapter"
+        ) as span:
+            span.set_attribute("tuft.lora_id", lora_id)
+            span.set_attribute("tuft.lora_rank", lora_config.rank)
+            trace_context: dict[str, str] = {}
+            inject_context(trace_context)
 
-                adapter_name: str | None = await asyncio.to_thread(
-                    ray.get, self._actors[0].allocate_slot.remote(rank)
-                )
-            else:
-                raise RuntimeError("FSDPTrainingBackend not initialized.")
-            if adapter_name is None:
-                raise ValueError(f"No free slot for rank={rank}; all slots allocated.")
-            self._lora_id_to_adapter_name[lora_id] = adapter_name
-            self._adapter_name_to_lora_id[adapter_name] = lora_id
-
-    async def remove_adapter(self, lora_id: str) -> None:
-        async with self._lock:
-            adapter_name = self._lora_id_to_adapter_name.pop(lora_id, None)
-            if adapter_name:
-                self._adapter_name_to_lora_id.pop(adapter_name, None)
+            async with self._lock:
+                if self._world_size == 0 and self._worker is None and not self._actors:
+                    await self.async_init()
+                rank = getattr(lora_config, "rank", 8)
                 if self._worker is not None:
-                    self._worker.release_slot(adapter_name)
-                    self._worker.leave_train_mode()
+                    adapter_name = await asyncio.to_thread(self._worker.allocate_slot, rank)
                 elif self._actors:
                     import ray
 
-                    await asyncio.to_thread(
-                        ray.get, self._actors[0].release_slot.remote(adapter_name)
+                    adapter_name: str | None = await asyncio.to_thread(
+                        ray.get, self._actors[0].allocate_slot.remote(rank, trace_context)
                     )
-                    await asyncio.to_thread(
-                        ray.get, [a.leave_train_mode.remote() for a in self._actors]
-                    )
+                else:
+                    raise RuntimeError("FSDPTrainingBackend not initialized.")
+                if adapter_name is None:
+                    raise ValueError(f"No free slot for rank={rank}; all slots allocated.")
+                self._lora_id_to_adapter_name[lora_id] = adapter_name
+                self._adapter_name_to_lora_id[adapter_name] = lora_id
+
+    async def remove_adapter(self, lora_id: str) -> None:
+        with get_tracer("tuft.training_backend").start_as_current_span(
+            "training_backend.remove_adapter"
+        ) as span:
+            span.set_attribute("tuft.lora_id", lora_id)
+            trace_context: dict[str, str] = {}
+            inject_context(trace_context)
+            async with self._lock:
+                adapter_name = self._lora_id_to_adapter_name.pop(lora_id, None)
+                if adapter_name:
+                    self._adapter_name_to_lora_id.pop(adapter_name, None)
+                    if self._worker is not None:
+                        self._worker.release_slot(adapter_name)
+                        self._worker.leave_train_mode()
+                    elif self._actors:
+                        import ray
+
+                        await asyncio.to_thread(
+                            ray.get, self._actors[0].release_slot.remote(adapter_name)
+                        )
+                        await asyncio.to_thread(
+                            ray.get, [a.leave_train_mode.remote() for a in self._actors]
+                        )
 
     async def forward(
         self,
@@ -1135,95 +1246,114 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         loss_fn_config: dict[str, float] | None,
         backward: bool = False,
     ) -> types.ForwardBackwardOutput:
-        adapter_name = self._get_adapter_name(lora_id)
-        loss_fn_name = (
-            loss_fn if isinstance(loss_fn, str) else getattr(loss_fn, "__name__", "cross_entropy")
-        )
-
-        def _to_scalar(v: Any) -> Any:
-            if isinstance(v, list) and v and all(isinstance(x, (int, float)) for x in v):
-                return sum(v) if len(v) > 1 else float(v[0])
-            return v
-
-        if self._worker is not None:
-            td = await asyncio.to_thread(_datum_list_to_tensordict, data, adapter_name, "cuda")
-            verl_loss_fn = _make_verl_loss_fn(loss_fn_name, loss_fn_config)
-            out = await asyncio.to_thread(
-                self._worker.forward_backward,
-                adapter_name,
-                td,
-                verl_loss_fn,
-                not backward,
+        span_name = "training_backend.forward_backward" if backward else "training_backend.forward"
+        with get_tracer("tuft.training_backend").start_as_current_span(span_name) as span:
+            span.set_attribute("tuft.lora_id", lora_id)
+            span.set_attribute("tuft.backward", backward)
+            span.set_attribute("tuft.data_count", len(data))
+            # Inject trace context for Ray actor
+            trace_context: dict[str, str] = {}
+            inject_context(trace_context)
+            adapter_name = self._get_adapter_name(lora_id)
+            loss_fn_name = (
+                loss_fn if isinstance(loss_fn, str) else getattr(loss_fn, "__name__", "cross_entropy")
             )
-            metrics = out.get("metrics", {}) or {}
-            metrics = {k: _to_scalar(v) for k, v in metrics.items()}
-            loss_fn_outputs = _fsdp_logprobs_to_loss_fn_outputs(out, data)
-        else:
-            import ray
 
-            shards = _shard_list(data, len(self._actors))
+            def _to_scalar(v: Any) -> Any:
+                if isinstance(v, list) and v and all(isinstance(x, (int, float)) for x in v):
+                    return sum(v) if len(v) > 1 else float(v[0])
+                return v
 
-            refs = []
-            for actor, shard in zip(self._actors, shards, strict=False):
-                if not shard:
-                    continue
-                refs.append(
-                    actor.forward_backward.remote(
-                        shard,
-                        adapter_name,
-                        loss_fn_name,
-                        loss_fn_config,
-                        not backward,
-                    )
+            if self._worker is not None:
+                td = await asyncio.to_thread(_datum_list_to_tensordict, data, adapter_name, "cuda")
+                verl_loss_fn = _make_verl_loss_fn(loss_fn_name, loss_fn_config)
+                out = await asyncio.to_thread(
+                    self._worker.forward_backward,
+                    adapter_name,
+                    td,
+                    verl_loss_fn,
+                    not backward,
                 )
+                metrics = out.get("metrics", {}) or {}
+                metrics = {k: _to_scalar(v) for k, v in metrics.items()}
+                loss_fn_outputs = _fsdp_logprobs_to_loss_fn_outputs(out, data)
+            else:
+                import ray
 
-            results = await asyncio.to_thread(ray.get, refs) if refs else []
+                shards = _shard_list(data, len(self._actors))
 
-            metrics = _merge_metrics(results)
+                refs = []
+                for actor, shard in zip(self._actors, shards, strict=False):
+                    if not shard:
+                        continue
+                    refs.append(
+                        actor.forward_backward.remote(
+                            shard,
+                            adapter_name,
+                            loss_fn_name,
+                            loss_fn_config,
+                            not backward,
+                        )
+                    )
 
-            loss_fn_outputs = []
-            for out in results:
-                loss_fn_outputs.extend(out.get("loss_fn_outputs", []))
+                results = await asyncio.to_thread(ray.get, refs) if refs else []
 
-        # Tinker expects every metric key to be "name:reduction" (e.g. loss:sum)
-        metrics = {k: v for k, v in metrics.items() if ":" in k}
+                metrics = _merge_metrics(results)
 
-        return types.ForwardBackwardOutput(
-            loss_fn_output_type=loss_fn_name,
-            loss_fn_outputs=loss_fn_outputs,
-            metrics=metrics,
-        )
+                loss_fn_outputs = []
+                for out in results:
+                    loss_fn_outputs.extend(out.get("loss_fn_outputs", []))
+
+            # Tinker expects every metric key to be "name:reduction" (e.g. loss:sum)
+            metrics = {k: v for k, v in metrics.items() if ":" in k}
+
+            return types.ForwardBackwardOutput(
+                loss_fn_output_type=loss_fn_name,
+                loss_fn_outputs=loss_fn_outputs,
+                metrics=metrics,
+            )
 
     async def optim_step(
         self,
         adam_params: types.AdamParams,
         lora_id: str,
     ) -> types.OptimStepResponse:
-        adapter_name = self._get_adapter_name(lora_id)
-        if self._worker is not None:
-            result = await asyncio.to_thread(
-                self._worker.optim_step,
-                adapter_name,
-                adam_params.learning_rate,
-                adam_params.weight_decay,
-                adam_params.grad_clip_norm,
-            )
-        else:
-            import ray
+        with get_tracer("tuft.training_backend").start_as_current_span(
+            "training_backend.optim_step"
+        ) as span:
+            span.set_attribute("tuft.lora_id", lora_id)
+            # Inject trace context for Ray actor
+            trace_context: dict[str, str] = {}
+            inject_context(trace_context)
 
-            refs = [
-                a.optim_step.remote(
+            adapter_name = self._get_adapter_name(lora_id)
+            if self._worker is not None:
+                result = await asyncio.to_thread(
+                    self._worker.optim_step,
                     adapter_name,
                     adam_params.learning_rate,
                     adam_params.weight_decay,
                     adam_params.grad_clip_norm,
                 )
-                for a in self._actors
-            ]
-            results = await asyncio.to_thread(ray.get, refs)
-            result = results[0] if results else {}
-        metrics = {k: float(v) for k, v in (result or {}).items() if isinstance(v, (int, float))}
-        return types.OptimStepResponse(metrics=metrics or None)
+            else:
+                import ray
+
+                refs = [
+                    a.optim_step.remote(
+                        adapter_name,
+                        adam_params.learning_rate,
+                        adam_params.weight_decay,
+                        adam_params.grad_clip_norm,
+                        trace_context,
+                    )
+                    for a in self._actors
+                ]
+                results = await asyncio.to_thread(ray.get, refs)
+                result = results[0] if results else {}
+            metrics = {
+                k: float(v) for k, v in (result or {}).items() if isinstance(v, (int, float))
+            }
+            return types.OptimStepResponse(metrics=metrics or None)
 
     async def save_state(
         self,
@@ -1231,17 +1361,27 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         checkpoint_record: CheckpointRecord,
         optimizer: bool,
     ) -> None:
-        adapter_name = self._get_adapter_name(lora_id)
-        path = checkpoint_record.adapter_path
-        if self._worker is not None:
-            await asyncio.to_thread(self._worker.save_checkpoint, adapter_name, path, optimizer)
-        else:
-            import ray
+        with get_tracer("tuft.training_backend").start_as_current_span(
+            "training_backend.save_state"
+        ) as span:
+            span.set_attribute("tuft.lora_id", lora_id)
+            span.set_attribute("tuft.optimizer", optimizer)
+            # Inject trace context for Ray actor
+            trace_context: dict[str, str] = {}
+            inject_context(trace_context)
 
-            refs = [
-                a.save_checkpoint.remote(adapter_name, str(path), optimizer) for a in self._actors
-            ]
-            await asyncio.to_thread(ray.get, refs)
+            adapter_name = self._get_adapter_name(lora_id)
+            path = checkpoint_record.adapter_path
+            if self._worker is not None:
+                await asyncio.to_thread(self._worker.save_checkpoint, adapter_name, path, optimizer)
+            else:
+                import ray
+
+                refs = [
+                    a.save_checkpoint.remote(adapter_name, str(path), optimizer, trace_context)
+                    for a in self._actors
+                ]
+                await asyncio.to_thread(ray.get, refs)
 
     async def load_state(
         self,
@@ -1249,14 +1389,24 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         checkpoint_record: CheckpointRecord,
         optimizer: bool,
     ) -> None:
-        adapter_name = self._get_adapter_name(lora_id)
-        path = checkpoint_record.adapter_path
-        if self._worker is not None:
-            await asyncio.to_thread(self._worker.load_checkpoint, adapter_name, path, optimizer)
-        else:
-            import ray
+        with get_tracer("tuft.training_backend").start_as_current_span(
+            "training_backend.load_state"
+        ) as span:
+            span.set_attribute("tuft.lora_id", lora_id)
+            span.set_attribute("tuft.optimizer", optimizer)
+            # Inject trace context for Ray actor
+            trace_context: dict[str, str] = {}
+            inject_context(trace_context)
 
-            refs = [
-                a.load_checkpoint.remote(adapter_name, str(path), optimizer) for a in self._actors
-            ]
-            await asyncio.to_thread(ray.get, refs)
+            adapter_name = self._get_adapter_name(lora_id)
+            path = checkpoint_record.adapter_path
+            if self._worker is not None:
+                await asyncio.to_thread(self._worker.load_checkpoint, adapter_name, path, optimizer)
+            else:
+                import ray
+
+                refs = [
+                    a.load_checkpoint.remote(adapter_name, str(path), optimizer, trace_context)
+                    for a in self._actors
+                ]
+                await asyncio.to_thread(ray.get, refs)
