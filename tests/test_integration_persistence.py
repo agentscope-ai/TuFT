@@ -80,6 +80,7 @@ def test_checkpoint_resume_persistence(tmp_path: Path) -> None:
             model_path=Path(model_env),
             max_model_len=4096,
             tensor_parallel_size=1,
+            sampling_memory_fraction=0.5,
         )
     ]
     config.authorized_users = {

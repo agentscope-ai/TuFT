@@ -73,6 +73,8 @@ def setup_tracer_provider(session_tracer_provider, span_exporter):
 @pytest.fixture(scope="function")
 def ray_cluster(request):
     if request.config.getoption("--gpu"):
+        # Clear any leftover state from previous tests before starting
+        clear_ray_state()
         ray.init(ignore_reinit_error=True)
         yield
         clear_ray_state()
@@ -93,6 +95,7 @@ def _build_state(tmp_path, use_gpu: bool = False) -> ServerState:
             model_path=model_path,
             max_model_len=2048,
             tensor_parallel_size=1,
+            sampling_memory_fraction=0.5,
         )
     ]
     config.telemetry = TelemetryConfig(enabled=True, service_name="tuft-test")
@@ -424,6 +427,7 @@ def telemetry_server(tmp_path_factory, request, span_exporter, setup_tracer_prov
             model_path=model_path,
             max_model_len=4096,
             tensor_parallel_size=1,
+            sampling_memory_fraction=0.5,
         )
     ]
     config.authorized_users = {"tml-test-key-1": "user1", "tml-test-key-2": "user2"}

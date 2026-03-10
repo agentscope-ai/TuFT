@@ -1,7 +1,7 @@
 """Some custom exceptions."""
 
 from dataclasses import dataclass
-from typing import Any, List, Sized
+from typing import Any, Sequence, Sized
 
 
 @dataclass
@@ -50,6 +50,20 @@ class AuthenticationException(TuFTException):
 
 class LossFunctionException(TuFTException):
     """Base exception for Loss Function related errors."""
+
+
+class InvalidRequestException(TuFTException):
+    """A request was invalid or missing required fields. (HTTP 400)"""
+
+    def __init__(self, detail: str):
+        super().__init__(status_code=400, detail=detail)
+
+
+class ServiceUnavailableException(TuFTException):
+    """A required service is temporarily unavailable. (HTTP 503)"""
+
+    def __init__(self, detail: str):
+        super().__init__(status_code=503, detail=detail)
 
 
 class UnknownModelException(ModelException):
@@ -181,9 +195,9 @@ class LossFunctionMissingInputException(LossFunctionException):
 
 
 class LossFunctionInputShapeMismatchException(LossFunctionException):
-    shapes: List[Sized]
+    shapes: Sequence[Sized]
 
-    def __init__(self, shapes: List[Sized]):
+    def __init__(self, shapes: Sequence[Sized]):
         detail = f"Input tensors must have the same shape. Got shapes: {shapes}"
         super().__init__(status_code=409, detail=detail)
         self.shapes = shapes

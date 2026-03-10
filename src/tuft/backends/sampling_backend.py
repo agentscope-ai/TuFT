@@ -1,6 +1,10 @@
 """Sampling backend implementated using vLLM"""
 
 import asyncio
+import json
+import socket
+import threading
+import time
 from logging import getLogger
 from pathlib import Path
 from typing import Optional
@@ -34,6 +38,7 @@ class VLLMSamplingBackend(BaseSamplingBackend):
         self.lora_adapters: dict[str, LoRARequest] = {}
         self._counter = 1
         self._lock = asyncio.Lock()
+        self._openai_api_url: Optional[str] = None
 
     def _create_engine(self, config: ModelConfig):
         if config.colocate:
@@ -65,6 +70,7 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                     repetition_penalty=1.0,
                     enable_lora=True,
                     enable_runtime_lora_updating=True,
+                    enable_openai_api=True,
                     lora_kwargs={
                         "max_lora_rank": config.max_lora_rank,
                         "max_loras": config.max_loras,
@@ -87,7 +93,7 @@ class VLLMSamplingBackend(BaseSamplingBackend):
             [{"CPU": 1, "GPU": 1} for _ in range(config.tensor_parallel_size)],
             strategy="PACK",
         )
-        ray.get(pg.ready(), timeout=10)
+        ray.get(pg.ready(), timeout=120)
         return (
             ray.remote(vLLMRolloutModel)
             .options(
@@ -111,10 +117,12 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                     repetition_penalty=1.0,
                     enable_lora=True,
                     enable_runtime_lora_updating=True,
+                    enable_openai_api=True,
                     lora_kwargs={
                         "max_lora_rank": config.max_lora_rank,
                         "max_loras": config.max_loras,
                     },
+                    gpu_memory_utilization=config.sampling_memory_fraction,
                 )
             )
         )
@@ -123,7 +131,42 @@ class VLLMSamplingBackend(BaseSamplingBackend):
         """Initialize the backend for sampling."""
         # Ray @ray.remote decorator adds .remote() method dynamically
         await self.engine.prepare.remote()  # type: ignore[attr-defined]
-        logger.info(f"SamplingBackend for model {self.base_model} initialized.")
+        self._openai_api_url = await self.engine.get_api_server_url.remote()  # type: ignore[attr-defined]
+        logger.info(
+            f"SamplingBackend for model {self.base_model} initialized. "
+            f"OpenAI API URL: {self._openai_api_url}"
+        )
+        # Wait for the OpenAI API server to be ready to accept connections
+        if self._openai_api_url:
+            await self._wait_for_openai_server(self._openai_api_url)
+
+    async def _wait_for_openai_server(self, url: str, timeout: float = 120.0) -> None:
+        """Poll the vLLM OpenAI server until it accepts connections."""
+        import asyncio
+
+        import httpx as _httpx
+
+        deadline = asyncio.get_event_loop().time() + timeout
+        check_url = f"{url}/v1/models"
+        attempt = 0
+        async with _httpx.AsyncClient() as client:
+            while asyncio.get_event_loop().time() < deadline:
+                attempt += 1
+                try:
+                    resp = await client.get(check_url, timeout=3.0)
+                    if resp.status_code == 200:
+                        logger.info(f"vLLM OpenAI server at {url} is ready (attempt {attempt})")
+                        return
+                except (_httpx.ConnectError, _httpx.TimeoutException, OSError):
+                    pass
+                if attempt % 10 == 0:
+                    logger.info(f"Waiting for vLLM OpenAI server at {url}... attempt {attempt}")
+                await asyncio.sleep(2.0)
+        logger.warning(f"vLLM OpenAI server at {url} not ready after {timeout}s")
+
+    def get_openai_api_url(self) -> Optional[str]:
+        """Return the vLLM OpenAI API base URL."""
+        return self._openai_api_url
 
     async def sample(
         self,
@@ -172,7 +215,7 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                     )
                     if not adapter_path.exists():
                         raise ValueError(f"LoRA adapter path {adapter_path} does not exist.")
-                    await self.engine.add_lora_adapter.remote(self.lora_adapters[lora_id])
+                    await self.engine.add_lora_adapter.remote(self.lora_adapters[lora_id])  # type: ignore[attr-defined]
             except Exception as e:
                 span.record_exception(e)
                 span.set_status(StatusCode.ERROR)
@@ -183,8 +226,208 @@ class VLLMSamplingBackend(BaseSamplingBackend):
             span.set_attribute("tuft.lora_id", lora_id)
             async with self._lock:
                 if lora_id in self.lora_adapters:
-                    await self.engine.remove_lora_adapter.remote(lora_id)
+                    await self.engine.remove_lora_adapter.remote(lora_id)  # type: ignore[attr-defined]
                     del self.lora_adapters[lora_id]
+
+
+def _build_mock_openai_app(model_name: str):
+    """Build a minimal FastAPI app that mimics vLLM's OpenAI-compatible endpoints."""
+    import itertools
+
+    from fastapi import FastAPI, Request
+    from fastapi.responses import JSONResponse, StreamingResponse
+
+    mock_app = FastAPI()
+    _id_counter = itertools.count(1)
+
+    def _make_completion_response(body: dict) -> dict:
+        model = body.get("model", model_name)
+        raw_prompt = body.get("prompt", "")
+        max_tokens = body.get("max_tokens", 16)
+        n = body.get("n", 1)
+        logprobs_n = body.get("logprobs")
+        stop = body.get("stop")
+
+        # Handle batch prompts (list of strings)
+        prompts = raw_prompt if isinstance(raw_prompt, list) else [raw_prompt]
+        choices = []
+        idx = 0
+        for prompt in prompts:
+            prompt_str = str(prompt)[:20]
+            for _j in range(n):
+                text = f" dummy completion output for '{prompt_str}'"
+                finish = "length"
+                # Respect stop sequences
+                if stop:
+                    for s in stop if isinstance(stop, list) else [stop]:
+                        pos = text.find(s)
+                        if pos != -1:
+                            text = text[:pos]
+                            finish = "stop"
+                            break
+                logprobs_data = None
+                if logprobs_n is not None:
+                    logprobs_data = {
+                        "tokens": [" dummy"],
+                        "token_logprobs": [-0.5],
+                        "top_logprobs": [{"dummy": -0.5}] if logprobs_n > 0 else None,
+                        "text_offset": [0],
+                    }
+                choices.append(
+                    {
+                        "index": idx,
+                        "text": text,
+                        "logprobs": logprobs_data,
+                        "finish_reason": finish,
+                    }
+                )
+                idx += 1
+        prompt_tokens = sum(max(1, len(str(p).split())) for p in prompts)
+        return {
+            "id": f"cmpl-dummy-{next(_id_counter)}",
+            "object": "text_completion",
+            "created": int(time.time()),
+            "model": model,
+            "choices": choices,
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": max_tokens * len(choices),
+                "total_tokens": prompt_tokens + max_tokens * len(choices),
+            },
+        }
+
+    def _make_chat_response(body: dict) -> dict:
+        model = body.get("model", model_name)
+        n = body.get("n", 1)
+        max_tokens = body.get("max_tokens") or body.get("max_completion_tokens") or 16
+        choices = []
+        for i in range(n):
+            choices.append(
+                {
+                    "index": i,
+                    "message": {
+                        "role": "assistant",
+                        "content": "This is a dummy response from the mock OpenAI server.",
+                    },
+                    "logprobs": None,
+                    "finish_reason": "stop",
+                }
+            )
+        return {
+            "id": f"chatcmpl-dummy-{next(_id_counter)}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": model,
+            "choices": choices,
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": max_tokens,
+                "total_tokens": 10 + max_tokens,
+            },
+        }
+
+    async def _stream_chat_chunks(body: dict):
+        model = body.get("model", model_name)
+        chunk_id = f"chatcmpl-dummy-{next(_id_counter)}"
+        # First chunk with role
+        first = {
+            "id": chunk_id,
+            "object": "chat.completion.chunk",
+            "created": int(time.time()),
+            "model": model,
+            "choices": [
+                {"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}
+            ],
+        }
+        yield f"data: {json.dumps(first)}\n\n"
+        # Content chunks
+        words = ["This", " is", " a", " dummy", " streamed", " response."]
+        for word in words:
+            chunk = {
+                "id": chunk_id,
+                "object": "chat.completion.chunk",
+                "created": int(time.time()),
+                "model": model,
+                "choices": [{"index": 0, "delta": {"content": word}, "finish_reason": None}],
+            }
+            yield f"data: {json.dumps(chunk)}\n\n"
+        # Final chunk
+        final = {
+            "id": chunk_id,
+            "object": "chat.completion.chunk",
+            "created": int(time.time()),
+            "model": model,
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": len(words),
+                "total_tokens": 10 + len(words),
+            },
+        }
+        yield f"data: {json.dumps(final)}\n\n"
+        yield "data: [DONE]\n\n"
+
+    async def _stream_completion_chunks(body: dict):
+        model = body.get("model", model_name)
+        chunk_id = f"cmpl-dummy-{next(_id_counter)}"
+        words = [" dummy", " completion", " output"]
+        for word in words:
+            chunk = {
+                "id": chunk_id,
+                "object": "text_completion",
+                "created": int(time.time()),
+                "model": model,
+                "choices": [{"index": 0, "text": word, "logprobs": None, "finish_reason": None}],
+            }
+            yield f"data: {json.dumps(chunk)}\n\n"
+        final = {
+            "id": chunk_id,
+            "object": "text_completion",
+            "created": int(time.time()),
+            "model": model,
+            "choices": [{"index": 0, "text": "", "logprobs": None, "finish_reason": "length"}],
+            "usage": {
+                "prompt_tokens": 5,
+                "completion_tokens": len(words),
+                "total_tokens": 5 + len(words),
+            },
+        }
+        yield f"data: {json.dumps(final)}\n\n"
+        yield "data: [DONE]\n\n"
+
+    @mock_app.post("/v1/completions")
+    async def completions(request: Request):
+        body = await request.json()
+        if body.get("stream"):
+            return StreamingResponse(
+                _stream_completion_chunks(body), media_type="text/event-stream"
+            )
+        return JSONResponse(_make_completion_response(body))
+
+    @mock_app.post("/v1/chat/completions")
+    async def chat_completions(request: Request):
+        body = await request.json()
+        if body.get("stream"):
+            return StreamingResponse(_stream_chat_chunks(body), media_type="text/event-stream")
+        return JSONResponse(_make_chat_response(body))
+
+    @mock_app.get("/v1/models")
+    async def list_models():
+        return JSONResponse(
+            {
+                "object": "list",
+                "data": [
+                    {
+                        "id": model_name,
+                        "object": "model",
+                        "created": int(time.time()),
+                        "owned_by": "dummy",
+                    }
+                ],
+            }
+        )
+
+    return mock_app
 
 
 class DummySamplingBackend(BaseSamplingBackend):
@@ -195,10 +438,50 @@ class DummySamplingBackend(BaseSamplingBackend):
         self.lora_adapters: dict[str, Path] = {}
         self._counter = 1
         self._lock = asyncio.Lock()
+        self._openai_api_url: Optional[str] = None
+        self._mock_server: object | None = None
+        self._mock_thread: threading.Thread | None = None
 
     async def async_init(self) -> None:
-        """No initialization needed for dummy backend."""
-        pass
+        """Start an embedded mock OpenAI server for testing."""
+        self._start_mock_openai_server()
+
+    def _start_mock_openai_server(self) -> None:
+        """Start a lightweight mock OpenAI-compatible HTTP server in a background thread."""
+        import uvicorn
+
+        mock_app = _build_mock_openai_app(str(self.config.model_path))
+
+        # Find a free port
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+
+        server = uvicorn.Server(
+            uvicorn.Config(mock_app, host="127.0.0.1", port=port, log_level="error")
+        )
+        thread = threading.Thread(target=server.run, daemon=True)
+        thread.start()
+
+        # Wait for the server to become ready
+        import httpx
+
+        for _ in range(50):
+            try:
+                resp = httpx.get(f"http://127.0.0.1:{port}/v1/models", timeout=0.5)
+                if resp.status_code == 200:
+                    break
+            except httpx.HTTPError:
+                time.sleep(0.1)
+
+        self._openai_api_url = f"http://127.0.0.1:{port}"
+        self._mock_server = server
+        self._mock_thread = thread
+        logger.info(f"DummySamplingBackend mock OpenAI server started at {self._openai_api_url}")
+
+    def get_openai_api_url(self) -> Optional[str]:
+        """Return the mock OpenAI API base URL."""
+        return self._openai_api_url
 
     async def sample(
         self,

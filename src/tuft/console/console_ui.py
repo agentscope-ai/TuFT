@@ -115,7 +115,7 @@ with gr.Blocks(title="TuFT Platform") as demo:
                 api_key_display = gr.Textbox(label="Current API Key", interactive=False)
                 api_keys_df = gr.Dataframe(
                     headers=["API Keys"],
-                    value=pd.DataFrame(columns=["API Keys"]),
+                    value=pd.DataFrame(columns=["API Keys"]),  # type: ignore[arg-type]
                     interactive=False,
                 )
 
@@ -365,7 +365,7 @@ with gr.Blocks(title="TuFT Platform") as demo:
                     pd.DataFrame(runs)
                     if runs
                     else pd.DataFrame(
-                        columns=["ID", "BASE MODEL", "LORA RANK", "LAST REQUEST TIME"]
+                        columns=["ID", "BASE MODEL", "LORA RANK", "LAST REQUEST TIME"]  # type: ignore[arg-type]
                     )
                 )
                 return [
@@ -383,7 +383,7 @@ with gr.Blocks(title="TuFT Platform") as demo:
                     pd.DataFrame(ckpts)
                     if ckpts
                     else pd.DataFrame(
-                        columns=["ID", "TYPE", "PATH", "SIZE", "VISIBILITY", "CREATED"]
+                        columns=["ID", "TYPE", "PATH", "SIZE", "VISIBILITY", "CREATED"]  # type: ignore[arg-type]
                     )
                 )
                 return [
