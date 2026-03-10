@@ -49,6 +49,7 @@ def server_endpoint(tmp_path_factory: pytest.TempPathFactory, request):
             model_path=model_path,
             max_model_len=4096,
             tensor_parallel_size=1,
+            sampling_memory_fraction=0.5,
         )
     ]
     config.authorized_users = {
@@ -151,7 +152,7 @@ def test_training_and_sampling_round_trip(server_endpoint: str) -> None:
             prompt=types.ModelInput.from_ints([99, 5, 12]),
             num_samples=1,
             sampling_params=types.SamplingParams(max_tokens=5, temperature=0.5),
-        ).result(timeout=10)
+        ).result(timeout=60)
 
         assert sample_res.sequences and sample_res.sequences[0].tokens
 

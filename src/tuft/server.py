@@ -8,6 +8,7 @@ from datetime import timezone
 from functools import partial
 from typing import Any, Callable
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import Response
 from fastapi.security import APIKeyHeader
@@ -18,6 +19,7 @@ from tinker import types
 from .auth import User
 from .config import AppConfig
 from .exceptions import TuFTException
+from .oai import create_oai_router
 from .persistence import get_redis_store, save_config_signature
 from .state import ServerState
 from .telemetry import shutdown_telemetry
@@ -80,6 +82,8 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # Create shared httpx client for OpenAI API proxying
+        app.state.httpx_client = httpx.AsyncClient(timeout=httpx.Timeout(300.0))
         try:
             await app.state.server_state.async_init()
             logger.info("Server initialized successfully")
@@ -92,6 +96,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
             yield
         finally:
             logger.info("Server shutting down")
+            await app.state.httpx_client.aclose()
             await app.state.server_state.future_store.shutdown()
             store = get_redis_store()
             if store.is_enabled:
@@ -113,6 +118,10 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.server_state = ServerState(resolved_config)
+
+    # Mount OpenAI-compatible API router
+    oai_router = create_oai_router()
+    app.include_router(oai_router)
 
     # Instrument FastAPI with OpenTelemetry if enabled
     if resolved_config.telemetry.enabled:
@@ -728,6 +737,10 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         return state.get_sampler_info(sampler_id, user.user_id)
 
     for route in app.routes:
-        if getattr(route, "path", None) != "/api/v1/healthz" and hasattr(route, "dependencies"):
+        path = getattr(route, "path", None) or ""
+        # Skip healthz and OAI routes (OAI routes use their own auth via _get_user_oai)
+        if path == "/api/v1/healthz" or path.startswith("/oai/"):
+            continue
+        if hasattr(route, "dependencies"):
             require_user_dependency(route)
     return app

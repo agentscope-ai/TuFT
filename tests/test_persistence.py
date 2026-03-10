@@ -59,6 +59,7 @@ def _create_test_config(checkpoint_dir: Path) -> AppConfig:
                 model_name="Qwen/Qwen3-0.6B",
                 model_path=model_path,
                 max_model_len=2048,
+                sampling_memory_fraction=0.5,
             )
         ],
     )

@@ -1,3 +1,4 @@
+from .fsdp_training_backend import FSDPTrainingBackend
 from .sampling_backend import BaseSamplingBackend, VLLMSamplingBackend
 from .training_backend import BaseTrainingBackend, HFTrainingBackend
 
@@ -7,4 +8,5 @@ __all__ = [
     "VLLMSamplingBackend",
     "BaseTrainingBackend",
     "HFTrainingBackend",
+    "FSDPTrainingBackend",
 ]

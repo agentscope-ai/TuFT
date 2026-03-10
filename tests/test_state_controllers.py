@@ -49,6 +49,7 @@ def _build_state(tmp_path, use_gpu: bool = False) -> ServerState:
             model_path=model_path,
             max_model_len=2048,
             tensor_parallel_size=1,
+            sampling_memory_fraction=0.6,
         )
     ]
     return ServerState(config)

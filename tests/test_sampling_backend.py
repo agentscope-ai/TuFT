@@ -35,6 +35,7 @@ async def test_sampling_backend():
         model_path=model_path,
         max_model_len=2048,
         tensor_parallel_size=1,
+        sampling_memory_fraction=0.5,
     )
     backend = VLLMSamplingBackend(model_config)
     await backend.async_init()
