@@ -44,7 +44,7 @@ def test_config_to_worker_dict():
     assert d["model_path"] == "/tmp/model"
     assert d["max_model_len"] == 1024
     assert "slot_config" in d
-    assert d["slot_config"]["rank_slots"] == {8: 4}
+    assert d["slot_config"]["rank_slots"] == {8: 16}  # default for max_lora_rank=8
     assert d["slot_config"]["target_modules"] == ["q_proj", "v_proj"]
     assert "fsdp_override_config" in d
     assert isinstance(d["fsdp_override_config"], dict)
@@ -82,6 +82,52 @@ async def test_async_init_raises_when_no_ray_and_multi_gpu():
             os.environ.pop("TUFT_FSDP_NO_RAY", None)
         else:
             os.environ["TUFT_FSDP_NO_RAY"] = prev
+
+
+def test_fsdp_port_allocation_by_index():
+    """Ports 29500, 29501, ... by FSDP model order; backends get correct fsdp_index."""
+    from tuft.backends.base_backend import BaseTrainingBackend
+
+    # Need real backend path so _fsdp_index is set; restore env after
+    saved = os.environ.pop("TUFT_CPU_TEST", None)
+    try:
+        model_configs = [
+            ModelConfig(
+                model_name="model_a",
+                model_path=Path("/tmp/a"),
+                max_model_len=1024,
+                training_backend="fsdp",
+            ),
+            ModelConfig(
+                model_name="model_b",
+                model_path=Path("/tmp/b"),
+                max_model_len=1024,
+                training_backend="hf",
+            ),
+            ModelConfig(
+                model_name="model_c",
+                model_path=Path("/tmp/c"),
+                max_model_len=1024,
+                training_backend="fsdp",
+            ),
+        ]
+        fsdp_names = [
+            c.model_name for c in model_configs if getattr(c, "training_backend", "hf") == "fsdp"
+        ]
+        backends = {}
+        for config in model_configs:
+            fsdp_index = (
+                fsdp_names.index(config.model_name) if config.model_name in fsdp_names else None
+            )
+            backends[config.model_name] = BaseTrainingBackend.create_backend(
+                config, fsdp_index=fsdp_index
+            )
+        assert getattr(backends["model_a"], "_fsdp_index", None) == 0
+        assert getattr(backends["model_b"], "_fsdp_index", None) is None
+        assert getattr(backends["model_c"], "_fsdp_index", None) == 1
+    finally:
+        if saved is not None:
+            os.environ["TUFT_CPU_TEST"] = saved
 
 
 # -----------------------------------------------------------------------------

@@ -174,7 +174,9 @@ class SamplingController:
     def _create_backends(self, model_configs: List[ModelConfig]) -> Dict[str, BaseSamplingBackend]:
         backends: Dict[str, BaseSamplingBackend] = {}
         for config in model_configs:
-            backends[config.model_name] = BaseSamplingBackend.create_backend(config)
+            backends[config.model_name] = BaseSamplingBackend.create_backend(
+                config, worker_venv_path=self.config.worker_venv_path
+            )
         return backends
 
     async def create_sampling_session(

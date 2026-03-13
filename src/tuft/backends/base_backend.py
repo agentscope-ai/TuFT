@@ -49,12 +49,13 @@ class BaseSamplingBackend(BaseBackend):
         return None
 
     @classmethod
-    def create_backend(cls, config: ModelConfig) -> "BaseSamplingBackend":
+    def create_backend(
+        cls, config: ModelConfig, worker_venv_path: Optional[str] = None
+    ) -> "BaseSamplingBackend":
         """Factory method to create a sampling backend instance.
 
-        Only TUFT_CPU_TEST=1 uses DummySamplingBackend; otherwise VLLMSamplingBackend.
-        If vllm/trinity is not installed, ImportError is raised — install the backend
-        (e.g. uv sync --extra backend or pip install trinity-rft[vllm]) and fix the env.
+        TUFT_CPU_TEST=1: use DummySamplingBackend (no vLLM, for CPU-only unit tests).
+        Otherwise: VLLMSamplingBackend (creates Ray/vLLM actor in __init__, may block startup).
         """
         if os.getenv("TUFT_CPU_TEST", "0") == "1":
             from ..backends.sampling_backend import DummySamplingBackend
@@ -62,7 +63,7 @@ class BaseSamplingBackend(BaseBackend):
             return DummySamplingBackend(config)
         from ..backends.sampling_backend import VLLMSamplingBackend
 
-        return VLLMSamplingBackend(config)
+        return VLLMSamplingBackend(config, worker_venv_path=worker_venv_path)
 
 
 class BaseTrainingBackend(BaseBackend):
@@ -108,8 +109,19 @@ class BaseTrainingBackend(BaseBackend):
         """Abstract method for loading model state."""
 
     @classmethod
-    def create_backend(cls, config: ModelConfig) -> "BaseTrainingBackend":
-        """Factory method to create a training backend instance."""
+    def create_backend(
+        cls,
+        config: ModelConfig,
+        fsdp_index: Optional[int] = None,
+        worker_venv_path: Optional[str] = None,
+    ) -> "BaseTrainingBackend":
+        """Factory method to create a training backend instance.
+
+        fsdp_index: For FSDP backends, master port is config.fsdp_master_port + fsdp_index.
+        The base port is configurable via ModelConfig.fsdp_master_port (default 29500); multiple
+        FSDP models use base, base+1, ... Pass the index of this model among FSDP models in
+        supported_models order. Omit for non-FSDP or when only one FSDP model (uses config port).
+        """
         if os.getenv("TUFT_CPU_TEST", "0") == "1":
             from ..backends.training_backend import DummyTrainingBackend
 
@@ -118,7 +130,9 @@ class BaseTrainingBackend(BaseBackend):
         if training_backend == "fsdp":
             from ..backends.fsdp_training_backend import FSDPTrainingBackend
 
-            return FSDPTrainingBackend(config)
+            return FSDPTrainingBackend(
+                config, fsdp_index=fsdp_index, worker_venv_path=worker_venv_path
+            )
         from ..backends.training_backend import HFTrainingBackend
 
         return HFTrainingBackend(config)

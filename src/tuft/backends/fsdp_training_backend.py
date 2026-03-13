@@ -39,6 +39,7 @@ else:
         f"FSDP v2 requires PyTorch >= 2.4, but got {torch.__version__}. "
         "Please upgrade PyTorch or use training_backend='hf' instead."
     )
+from transformers import AutoModelForCausalLM
 from verl.utils.dataset.dataset_utils import DatasetPadMode
 from verl.workers.config.engine import TrainingWorkerConfig
 from verl.workers.engine.fsdp.transformer_impl import FSDPEngineWithLMHead
@@ -183,6 +184,31 @@ def _make_verl_loss_fn(
     return _loss_function
 
 
+def _fsdp_logprobs_to_loss_fn_outputs(
+    engine_output: Dict[str, Any],
+    data: list[types.Datum],
+) -> list[Dict[str, Any]]:
+    """Extract log_probs from engine.forward_backward_batch model_output and convert to
+    per-datum loss_fn_outputs."""
+    model_output = (engine_output or {}).get("model_output") or {}
+    log_probs_nt = model_output.get("log_probs")
+    if log_probs_nt is None or not hasattr(log_probs_nt, "unbind"):
+        return [
+            {"logprobs": types.TensorData(data=[0.0], dtype="float32", shape=[1])} for _ in data
+        ]
+    try:
+        # Verl returns log_probs as nested tensor (batch, variable_len); unbind(0) gives per-sample
+        per_sample = log_probs_nt.unbind(dim=0)
+        return [
+            {"logprobs": types.TensorData.from_torch(t.detach().cpu().float().clone())}
+            for t in per_sample
+        ]
+    except Exception:
+        return [
+            {"logprobs": types.TensorData(data=[0.0], dtype="float32", shape=[1])} for _ in data
+        ]
+
+
 # =============================================================================
 # Slot configuration and worker-internal data structures
 # =============================================================================
@@ -217,16 +243,34 @@ class AdapterInfo:
 # =============================================================================
 
 
+def _get_rank_slots_from_config(config: ModelConfig) -> Dict[int, int]:
+    """Get rank_slots from ModelConfig (config preferred; otherwise default).
+
+    rank_slots: LoRA rank -> number of adapter slots (concurrent adapters of that rank).
+    Defaults (override via ModelConfig.fsdp_rank_slots):
+    - rank 8: 16 slots (common case; more slots for lower memory per adapter).
+    - other max_lora_rank: 8 slots (fewer slots for higher rank due to memory).
+    """
+    max_rank = getattr(config, "max_lora_rank", 8)
+    raw = getattr(config, "fsdp_rank_slots", None)
+    if raw and len(raw) > 0:
+        return {int(k): v for k, v in raw.items()}
+    # default slots
+    if max_rank == 8:
+        return {8: 16}
+    return {8: 16, max_rank: 8}
+
+
 def _config_to_worker_dict(config: ModelConfig) -> dict:
     """ModelConfig -> serializable dict for TrainingWorkerConfig and SlotPoolConfig in actors."""
-    max_rank = getattr(config, "max_lora_rank", 8)
+    rank_slots = _get_rank_slots_from_config(config)
     return {
         "model_path": str(config.model_path),
         "max_model_len": config.max_model_len,
         "use_remove_padding": getattr(config, "use_remove_padding", False),
         "fsdp_override_config": dict(getattr(config, "fsdp_override_config", None) or {}),
         "slot_config": {
-            "rank_slots": {max_rank: 4},
+            "rank_slots": rank_slots,
             "lora_alpha_ratio": 2,
             "target_modules": ["q_proj", "v_proj"],
         },
@@ -249,10 +293,11 @@ def _worker_dict_to_training_config(config_dict: dict) -> tuple:
         override_config=override,
     )
     engine_config = FSDPEngineConfig(
+        strategy="fsdp2",
         use_dynamic_bsz=False,
         max_token_len_per_gpu=config_dict["max_model_len"],
         micro_batch_size_per_gpu=1,
-        forward_only=True,
+        forward_only=False,
     )
     training_config = TrainingWorkerConfig(
         model_type="language_model",
@@ -306,6 +351,7 @@ class MultiAdapterVerlWorker:
         self._name_counter: Dict[int, int] = {}
         self._allocated: Dict[str, bool] = {}
         self._initialized = False
+        # train_mode: enter on first forward_backward, exit in leave_train_mode() (e.g. release)
         self._train_mode_ctx: Any = None
         self.logger = logging.getLogger(f"{__name__}.MultiAdapterVerlWorker")
 
@@ -317,10 +363,30 @@ class MultiAdapterVerlWorker:
         return f"adapter_r{rank}_{idx}"
 
     def initialize(self) -> None:
-        """Build engine (base + PEFT adapters + FSDP v2) and create per-adapter optimizers."""
+        """Build engine (base + materialize + PEFT adapters + FSDP v2) and create
+        per-adapter optimizers."""
         if self._initialized:
             return
         base_model = self.engine._build_module()
+
+        # Materialize: meta model has no storage; load pretrained weights before .cuda()
+        model_path = getattr(self.engine.model_config, "local_path", None) or getattr(
+            self.engine.model_config, "path", None
+        )
+        if not model_path:
+            raise RuntimeError("engine.model_config has no local_path or path for materialization")
+        trust_remote = getattr(self.engine.model_config, "trust_remote_code", True)
+        full_cpu = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            torch_dtype=torch.bfloat16,
+            low_cpu_mem_usage=True,
+            trust_remote_code=trust_remote,
+        )
+        state_dict = full_cpu.state_dict()
+        del full_cpu
+        base_model.load_state_dict(state_dict, assign=True, strict=False)
+        del state_dict
+
         peft_model = None
         for rank, count in self.slot_config.rank_slots.items():
             lora_alpha = self.slot_config.get_lora_alpha(rank)
@@ -333,6 +399,7 @@ class MultiAdapterVerlWorker:
                     target_modules=list(self.slot_config.target_modules),
                 )
                 if peft_model is None:
+                    base_model.enable_input_require_grads()
                     peft_model = get_peft_model(
                         base_model,
                         lora_config,
@@ -348,58 +415,44 @@ class MultiAdapterVerlWorker:
                     target_modules=list(self.slot_config.target_modules),
                 )
                 self._adapters_by_rank.setdefault(rank, []).append(name)
-        if peft_model is not None:
-            first = next(iter(self._adapters))
-            peft_model.set_adapter(first)
-            model_bf16 = peft_model.to(torch.bfloat16)
-            model_cuda = model_bf16.cuda()
+                self._allocated[name] = False
+        if peft_model is None or not self._adapters:
+            raise RuntimeError("slot_config.rank_slots must define at least one slot")
 
-            # FSDP v2: use fully_shard instead of FSDP wrapper
-            # Apply fully_shard bottom-up: first to transformer layers, then to root
-            mp_policy = MixedPrecisionPolicy(
-                param_dtype=torch.bfloat16,
-                reduce_dtype=torch.float32,
-                cast_forward_inputs=True,
-            )
+        first = next(iter(self._adapters))
+        peft_model.set_adapter(first)
+        model_bf16 = peft_model.to(torch.bfloat16)
+        model_cuda = model_bf16.cuda()
 
-            # Get device mesh for FSDP v2
-            import torch.distributed as dist
-            from torch.distributed.device_mesh import init_device_mesh
-
-            world_size = dist.get_world_size() if dist.is_initialized() else 1
-            if world_size > 1:
-                device_mesh = init_device_mesh("cuda", (world_size,))
-            else:
-                device_mesh = None
-
-            # Find transformer layers to wrap (bottom-up approach)
-            # Look for common transformer layer class names
-            transformer_layer_cls_names = getattr(model_cuda, "_no_split_modules", None) or [
-                "DecoderLayer",
-                "TransformerBlock",
-                "LlamaDecoderLayer",
-                "Qwen2DecoderLayer",
-            ]
-
-            wrapped_modules = []
-            for _name, module in model_cuda.named_modules():
-                if module.__class__.__name__ in transformer_layer_cls_names:
-                    wrapped_modules.append(module)
-
-            # Apply fully_shard to each transformer layer first
-            for module in wrapped_modules:
-                fully_shard(module, mesh=device_mesh, mp_policy=mp_policy)
-
-            # Apply fully_shard to root model
-            fully_shard(model_cuda, mesh=device_mesh, mp_policy=mp_policy)
-
-            self.engine.module = model_cuda
-            self._create_optimizer_for_adapter(first)
-        self._initialized = True
-        self.logger.info(
-            "MultiAdapterVerlWorker initialized with FSDP v2, adapters: %s",
-            list(self._adapters.keys()),
+        # FSDP v2: fully_shard (same as fsdp_standalone_reference.py)
+        mp_policy = MixedPrecisionPolicy(
+            param_dtype=torch.bfloat16,
+            reduce_dtype=torch.float32,
+            cast_forward_inputs=True,
         )
+        import torch.distributed as dist
+        from torch.distributed.device_mesh import init_device_mesh
+
+        world_size = dist.get_world_size() if dist.is_initialized() else 1
+        device_mesh = init_device_mesh("cuda", (world_size,)) if world_size > 1 else None
+
+        transformer_layer_cls_names = getattr(model_cuda, "_no_split_modules", None) or [
+            "DecoderLayer",
+            "TransformerBlock",
+            "LlamaDecoderLayer",
+            "Qwen2DecoderLayer",
+            "Qwen3DecoderLayer",
+        ]
+        wrapped_modules = []
+        for _name, module in model_cuda.named_modules():
+            if module.__class__.__name__ in transformer_layer_cls_names:
+                wrapped_modules.append(module)
+        for module in wrapped_modules:
+            fully_shard(module, mesh=device_mesh, mp_policy=mp_policy)
+        fully_shard(model_cuda, mesh=device_mesh, mp_policy=mp_policy)
+        self.engine.module = model_cuda
+        self._create_optimizer_for_adapter(first)
+        self._initialized = True
 
     def _create_optimizer_for_adapter(self, adapter_name: str) -> None:
         info = self._adapters[adapter_name]
@@ -423,22 +476,47 @@ class MultiAdapterVerlWorker:
         else:
             raise RuntimeError(f"Cannot find set_adapter method on module: {type(module)}")
 
-    def train_mode(self) -> Any:
-        """Return engine.train_mode() context; one 'with', multiple forward_backward inside."""
-        return self.engine.train_mode()
+    def _ensure_train_mode_entered(self) -> None:
+        """Enter train_mode once and store context; exit in leave_train_mode() (e.g. release).
+
+        We store the context instead of using 'with engine.train_mode():' because the context's
+        __exit__ (or teardown) automatically clears engine state (e.g. optimizer_zero_grad). With a
+        fine-grained SDK where forward_backward and optim_step are separate calls, exiting the
+        context after each forward would clear gradients before optim_step runs. So we enter once,
+        keep the context, and only exit explicitly in leave_train_mode() when the model is released.
+        """
+        if self._train_mode_ctx is not None:
+            return
+        ctx = self.engine.train_mode()
+        ctx.__enter__()
+        self._train_mode_ctx = ctx
+
+    def leave_train_mode(self) -> None:
+        """Exit the stored train_mode context. Call on model release to clean up Verl engine."""
+        if self._train_mode_ctx is not None:
+            self._train_mode_ctx.__exit__(None, None, None)
+            self._train_mode_ctx = None
 
     def forward_backward(
         self,
         adapter_name: str,
         data: TensorDict,
         loss_function: Callable[..., Any],
+        forward_only: bool = False,
     ) -> Dict[str, Any]:
-        """Set PEFT active adapter by adapter_name, then call engine.forward_backward_batch."""
+        """Set PEFT active adapter, then call engine.forward_backward_batch (no step)."""
         self._activate_adapter(adapter_name)
+        info = self._adapters[adapter_name]
+        if info.optimizer is None:
+            self._create_optimizer_for_adapter(adapter_name)
+        self.engine.optimizer = info.optimizer
+        if not forward_only:
+            info.optimizer.zero_grad()
+        self._ensure_train_mode_entered()
         output = self.engine.forward_backward_batch(
             data=data,
             loss_function=loss_function,
-            forward_only=False,
+            forward_only=forward_only,
         )
         return output
 
@@ -465,28 +543,19 @@ class MultiAdapterVerlWorker:
         if weight_decay is not None:
             for pg in opt.param_groups:
                 pg["weight_decay"] = weight_decay
-        params = [
-            p
-            for n, p in self.engine.module.named_parameters()
-            if adapter_name in n and p.requires_grad and p.grad is not None
-        ]
-        grad_norm_value = None
-        if grad_clip_norm is not None and grad_clip_norm > 0 and params:
-            grad_norm = torch.nn.utils.clip_grad_norm_(params, grad_clip_norm)
-            # FSDP v2: grad_norm may be DTensor, convert to scalar
-            if isinstance(grad_norm, DTensor):
-                grad_norm_value = grad_norm.full_tensor().item()
-            else:
-                grad_norm_value = (
-                    grad_norm.item() if hasattr(grad_norm, "item") else float(grad_norm)
-                )
+        if grad_clip_norm is not None and grad_clip_norm > 0:
+            torch.nn.utils.clip_grad_norm_(self.engine.module.parameters(), grad_clip_norm)
         opt.step()
-        self._zero_grad_for_adapter(adapter_name)
+        opt.zero_grad()
         info.step_count += 1
-        result = {"step_count": info.step_count, "adapter": adapter_name}
-        if grad_norm_value is not None:
-            result["grad_norm"] = grad_norm_value
-        return result
+        self.engine.to(
+            "cpu",
+            model=self.engine.is_param_offload_enabled,
+            optimizer=self.engine.is_optimizer_offload_enabled,
+            grad=self.engine.is_param_offload_enabled,
+        )
+        self.engine.mode = None
+        return {"step_count": info.step_count, "adapter": adapter_name}
 
     def save_checkpoint(self, adapter_name: str, path: str | Path, optimizer: bool = True) -> None:
         """Save adapter.pt (training load_state) + PEFT format (sampling); optional optimizer."""
@@ -509,6 +578,20 @@ class MultiAdapterVerlWorker:
         import torch.distributed as dist
 
         is_rank_0 = not dist.is_initialized() or dist.get_rank() == 0
+
+        # Move any existing path/adapter_name/ contents to path/ first, so our writes below
+        # are not overwritten by unstripped PEFT files (vLLM requires keys like .lora_A.weight).
+        lora_subdir = path / adapter_name
+        if is_rank_0 and lora_subdir.exists() and lora_subdir.is_dir():
+            for item in lora_subdir.iterdir():
+                dest = path / item.name
+                if dest.exists():
+                    if dest.is_file():
+                        dest.unlink()
+                    elif dest.is_dir():
+                        shutil.rmtree(dest)
+                shutil.move(str(item), str(dest))
+            lora_subdir.rmdir()
 
         if is_rank_0:
             # 1) Internal format for FSDP load_state
@@ -540,14 +623,19 @@ class MultiAdapterVerlWorker:
                 with open(path / "adapter_config.json", "w") as f:
                     json.dump(config_dict, f, indent=2)
 
-            # Save adapter weights in safetensors format
-            # Convert state dict keys to PEFT format (remove model prefix)
+            # Save adapter weights in safetensors format for sampling/vLLM.
+            # vLLM lora/utils.py expects keys ending in ".lora_A.weight" or ".lora_B.weight"
+            # (parts[-2] in ["lora_A","lora_B"]). PEFT uses ".lora_A.<adapter_name>.weight";
+            # strip the adapter name so vLLM does not raise "unsupported LoRA weight".
             peft_state = {}
             for name, tensor in state.items():
-                # PEFT expects keys like:
-                # "base_model.model.model.layers.0.self_attn.q_proj.lora_A.adapter_r8_0.weight"
-                # We already have full names, just use them
-                peft_state[name] = tensor
+                key = name
+                if adapter_name != "default":
+                    key = key.replace(".lora_A." + adapter_name + ".", ".lora_A.")
+                    key = key.replace(".lora_B." + adapter_name + ".", ".lora_B.")
+                    key = key.replace(".lora_A." + adapter_name + ".weight", ".lora_A.weight")
+                    key = key.replace(".lora_B." + adapter_name + ".weight", ".lora_B.weight")
+                peft_state[key] = tensor
 
             try:
                 from safetensors.torch import save_file
@@ -556,18 +644,6 @@ class MultiAdapterVerlWorker:
             except Exception:
                 # Fallback to torch.save if safetensors fails
                 torch.save(peft_state, path / "adapter_model.bin")
-
-        lora_subdir = path / adapter_name
-        if lora_subdir.exists() and lora_subdir.is_dir():
-            for item in lora_subdir.iterdir():
-                dest = path / item.name
-                if dest.exists():
-                    if dest.is_file():
-                        dest.unlink()
-                    elif dest.is_dir():
-                        shutil.rmtree(dest)
-                shutil.move(str(item), str(dest))
-            lora_subdir.rmdir()
 
     def load_checkpoint(self, adapter_name: str, path: str | Path, optimizer: bool = True) -> None:
         path = Path(path)
@@ -677,7 +753,9 @@ class VerlWorkerActor:
             slot_config=slot_config,
         )
         self._worker.engine = engine
+        logging.info("[SERVER][Actor] build_worker 调用 initialize 前 rank=%s", self.rank)
         self._worker.initialize()
+        logging.info("[SERVER][Actor] build_worker initialize 返回 rank=%s", self.rank)
 
     def allocate_slot(self, rank: int) -> Optional[str]:
         if self._worker is None:
@@ -694,21 +772,17 @@ class VerlWorkerActor:
         adapter_name: str,
         loss_fn_name: str,
         loss_fn_config: Optional[dict] = None,
+        forward_only: bool = False,
     ) -> Dict[str, Any]:
         """data: list[types.Datum] (or dicts after Ray serialization). Returns metrics."""
-        if self._worker is None:
-            return {}
         # Ray may deserialize Datum as dict
         if data and isinstance(data[0], dict):
             data = [types.Datum(**d) for d in data]
         td = _datum_list_to_tensordict(data, adapter_name, "cuda")
         loss_fn = _make_verl_loss_fn(loss_fn_name, loss_fn_config)
-        if getattr(self._worker.engine, "optimizer", None) is not None:
-            with self._worker.train_mode():
-                out = self._worker.forward_backward(adapter_name, td, loss_fn)
-        else:
-            self._worker.engine.module.train()
-            out = self._worker.forward_backward(adapter_name, td, loss_fn)
+        if self._worker is None:
+            return {}
+        out = self._worker.forward_backward(adapter_name, td, loss_fn, forward_only=forward_only)
         metrics = out.get("metrics", {}) or {}
 
         def _to_scalar(v: Any) -> Any:
@@ -731,7 +805,6 @@ class VerlWorkerActor:
 
     def save_checkpoint(self, adapter_name: str, path: str, optimizer: bool = True) -> None:
         # FSDP v2: all ranks must participate in full_tensor() collective operation
-        # The actual file writing is handled inside save_checkpoint (only rank 0 writes)
         if self._worker is None:
             return
         self._worker.save_checkpoint(adapter_name, Path(path), optimizer)
@@ -740,6 +813,11 @@ class VerlWorkerActor:
         if self._worker is None:
             return
         self._worker.load_checkpoint(adapter_name, Path(path), optimizer)
+
+    def leave_train_mode(self) -> None:
+        """Exit train_mode context on this actor; call on model release."""
+        if self._worker is not None:
+            self._worker.leave_train_mode()
 
 
 # =============================================================================
@@ -755,17 +833,24 @@ class FSDPTrainingBackend(BaseTrainingBackend):
     Uses N VerlWorkerActor (Ray), one per GPU, forming a process group for FSDP.
     """
 
-    def __init__(self, config: ModelConfig) -> None:
+    def __init__(
+        self,
+        config: ModelConfig,
+        fsdp_index: Optional[int] = None,
+        worker_venv_path: Optional[str] = None,
+    ) -> None:
         super().__init__(config)
+        self._fsdp_index = fsdp_index  # Index among FSDP models; port = base + fsdp_index
+        self._worker_venv_path = worker_venv_path
         self._worker: Optional[MultiAdapterVerlWorker] = None
         self._actors: List[Any] = []
         self._world_size: int = 0
         self._lora_id_to_adapter_name: Dict[str, str] = {}
         self._adapter_name_to_lora_id: Dict[str, str] = {}
         self._lock = asyncio.Lock()
-        max_rank = getattr(config, "max_lora_rank", 8)
+        rank_slots = _get_rank_slots_from_config(config)
         self._slot_config = SlotPoolConfig(
-            rank_slots={max_rank: 4},
+            rank_slots=rank_slots,
         )
         self._config_dict = _config_to_worker_dict(config)
         self.logger = logging.getLogger(f"{__name__}.FSDPTrainingBackend")
@@ -817,27 +902,49 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             self._worker.engine = engine
             await asyncio.to_thread(self._worker.initialize)
             self._world_size = 1
-            self.logger.info("FSDPTrainingBackend async_init done: local single process (no Ray)")
             return
         import ray
 
-        self._world_size = n_gpus
         config_dict = self._config_dict
-        # No runtime_env pip: Ray venv may lack pip. Workers use torch/peft/verl from pyproject.
+        _venv = self._worker_venv_path
+        if not _venv or not _venv.strip():
+            self.logger.warning(
+                "worker_venv_path is not set. Recommend using a virtual environment for Ray FSDP; "
+                "set worker_venv_path in config if all nodes use the same venv. "
+                "Proceeding with empty runtime_env (relying on node-installed packages)."
+            )
+            _runtime_env = {}
+        else:
+            _path = os.environ.get("PATH", "")
+            # Ray uses py_executable so worker uses venv Python; else node Ray may not find tuft
+            _venv_python = str(Path(_venv) / "bin" / "python")
+            _runtime_env = {
+                "py_executable": _venv_python,
+                "env_vars": {
+                    "VIRTUAL_ENV": _venv,
+                    "PATH": f"{_venv}/bin:{_path}",
+                },
+            }
+
         actors = []
         for r in range(n_gpus):
             actor = (
                 ray.remote(VerlWorkerActor)
                 .options(
                     num_gpus=1,
-                    runtime_env={},
+                    runtime_env=_runtime_env,
                 )
                 .remote(r, n_gpus, config_dict)
             )
             actors.append(actor)
-        self._actors = actors
-        master_addr = await asyncio.to_thread(ray.get, actors[0].get_node_ip.remote())
-        master_port = getattr(self.config, "fsdp_master_port", DEFAULT_MASTER_PORT)
+        # Set _world_size / _actors only after all succeed; else next create_adapter retries init
+        # get_node_ip should return quickly; timeout avoids hang when actor not scheduled (e.g. GPU)
+        _GET_NODE_IP_TIMEOUT = 30
+        master_addr = await asyncio.to_thread(
+            ray.get, actors[0].get_node_ip.remote(), timeout=_GET_NODE_IP_TIMEOUT
+        )
+        base_port = getattr(self.config, "fsdp_master_port", DEFAULT_MASTER_PORT)
+        master_port = base_port + self._fsdp_index if self._fsdp_index is not None else base_port
         await asyncio.gather(
             *[
                 asyncio.to_thread(ray.get, a.init_dist.remote(master_addr, master_port))
@@ -845,7 +952,8 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             ]
         )
         await asyncio.gather(*[asyncio.to_thread(ray.get, a.build_worker.remote()) for a in actors])
-        self.logger.info("FSDPTrainingBackend async_init done: %d Ray actors (FSDP)", n_gpus)
+        self._actors = actors
+        self._world_size = n_gpus
 
     def _get_adapter_name(self, lora_id: str) -> str:
         if lora_id not in self._lora_id_to_adapter_name:
@@ -879,11 +987,15 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                 self._adapter_name_to_lora_id.pop(adapter_name, None)
                 if self._worker is not None:
                     self._worker.release_slot(adapter_name)
+                    self._worker.leave_train_mode()
                 elif self._actors:
                     import ray
 
                     await asyncio.to_thread(
                         ray.get, self._actors[0].release_slot.remote(adapter_name)
+                    )
+                    await asyncio.to_thread(
+                        ray.get, [a.leave_train_mode.remote() for a in self._actors]
                     )
 
     async def forward(
@@ -901,22 +1013,13 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         if self._worker is not None:
             td = await asyncio.to_thread(_datum_list_to_tensordict, data, adapter_name, "cuda")
             verl_loss_fn = _make_verl_loss_fn(loss_fn_name, loss_fn_config)
-            if getattr(self._worker.engine, "optimizer", None) is not None:
-                with self._worker.train_mode():
-                    out = await asyncio.to_thread(
-                        self._worker.forward_backward,
-                        adapter_name,
-                        td,
-                        verl_loss_fn,
-                    )
-            else:
-                self._worker.engine.module.train()
-                out = await asyncio.to_thread(
-                    self._worker.forward_backward,
-                    adapter_name,
-                    td,
-                    verl_loss_fn,
-                )
+            out = await asyncio.to_thread(
+                self._worker.forward_backward,
+                adapter_name,
+                td,
+                verl_loss_fn,
+                not backward,
+            )
             metrics = out.get("metrics", {}) or {}
 
             def _to_scalar(v: Any) -> Any:
@@ -925,20 +1028,25 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                 return v
 
             metrics = {k: _to_scalar(v) for k, v in metrics.items()}
+            # Extract log_probs from engine model_output and convert to per-datum loss_fn_outputs
+            loss_fn_outputs = _fsdp_logprobs_to_loss_fn_outputs(out, data)
         else:
             import ray
 
             refs = [
-                a.forward_backward.remote(data, adapter_name, loss_fn_name, loss_fn_config)
+                a.forward_backward.remote(
+                    data, adapter_name, loss_fn_name, loss_fn_config, not backward
+                )
                 for a in self._actors
             ]
             results = await asyncio.to_thread(ray.get, refs)
             metrics = results[0] if results else {}
+            # Ray path: actors return metrics only, no model_output; use placeholder loss_fn_outputs
+            loss_fn_outputs = [
+                {"logprobs": types.TensorData(data=[0.0], dtype="float32", shape=[1])} for _ in data
+            ]
         # Tinker expects every metric key to be "name:reduction" (e.g. loss:sum)
         metrics = {k: v for k, v in metrics.items() if ":" in k}
-        loss_fn_outputs = [
-            {"logprobs": types.TensorData(data=[0.0], dtype="float32", shape=[1])} for _ in data
-        ]
         return types.ForwardBackwardOutput(
             loss_fn_output_type=loss_fn_name,
             loss_fn_outputs=loss_fn_outputs,
