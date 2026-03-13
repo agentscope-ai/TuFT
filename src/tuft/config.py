@@ -59,6 +59,9 @@ class ModelConfig(BaseModel):
     fsdp_num_gpus: int = 1
     # TCP port for torch.distributed init (FSDP multi-GPU); default 29500
     fsdp_master_port: int = 29500
+    # LoRA slot count per rank: rank -> slots for that rank (optional; code default if unset).
+    # Example: fsdp_rank_slots: {8: 16, 16: 8}
+    fsdp_rank_slots: dict[int, int] | None = None
     # optional override for FSDP backend HFModelConfig (e.g. attn_implementation)
     fsdp_override_config: dict[str, Any] | None = None
 
@@ -66,11 +69,21 @@ class ModelConfig(BaseModel):
     # only for local testing purposes
     colocate: bool = False
     sampling_memory_fraction: float = 0.2  # fraction of GPU memory for sampling
+    # Max context length for sampling (vLLM) only; if unset, max_model_len is used.
+    # Can be set smaller (e.g. 2048) in testing to reduce GPU memory and startup time.
+    sampling_max_model_len: int | None = None
 
     @model_validator(mode="after")
     def validate_colocate(self) -> "ModelConfig":
         if self.colocate and self.tensor_parallel_size != 1:
             raise ValueError("Colocate option is only supported for tensor_parallel_size=1.")
+        return self
+
+    @model_validator(mode="after")
+    def validate_fsdp_rank_slots(self) -> "ModelConfig":
+        """Ensure fsdp_rank_slots keys are int (YAML/JSON may load them as str)."""
+        if self.fsdp_rank_slots is not None and len(self.fsdp_rank_slots) > 0:
+            self.fsdp_rank_slots = {int(k): v for k, v in self.fsdp_rank_slots.items()}
         return self
 
 
@@ -82,6 +95,7 @@ class AppConfig(BaseModel):
 
     model_config = {"arbitrary_types_allowed": True}
 
+    worker_venv_path: str | None = None  # Ray worker venv; empty = no venv; required when using Ray
     checkpoint_dir: Path | None = Field(default_factory=_default_checkpoint_dir)
     supported_models: list[ModelConfig] = Field(default_factory=list)
     model_owner: str = "local-user"
