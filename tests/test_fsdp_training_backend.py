@@ -41,7 +41,7 @@ def test_config_to_worker_dict():
         max_lora_rank=8,
     )
     d = _config_to_worker_dict(config)
-    assert d["model_path"] == "/tmp/model"
+    assert d["model_path"] == str(config.model_path)
     assert d["max_model_len"] == 1024
     assert "slot_config" in d
     assert d["slot_config"]["rank_slots"] == {8: 4}
