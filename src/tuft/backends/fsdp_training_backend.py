@@ -50,6 +50,48 @@ from tuft.config import ModelConfig
 from tuft.loss_fn import get_loss_fn
 
 
+def _shard_list(xs: list[Any], n_shards: int) -> list[list[Any]]:
+    """Split xs into n_shards contiguous shards."""
+    if n_shards <= 0:
+        raise ValueError(f"n_shards must be > 0, got {n_shards}")
+
+    total = len(xs)
+    base = total // n_shards
+    rem = total % n_shards
+
+    shards = []
+    start = 0
+    for i in range(n_shards):
+        size = base + (1 if i < rem else 0)
+        end = start + size
+        shards.append(xs[start:end])
+        start = end
+    return shards
+
+
+def _merge_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+
+    for out in results:
+        metrics = out.get("metrics", {}) or {}
+        for k, v in metrics.items():
+            if not isinstance(v, (int, float)):
+                continue
+
+            if k.endswith(":sum"):
+                merged[k] = merged.get(k, 0.0) + float(v)
+            elif k.endswith(":mean"):
+                merged.setdefault(k, []).append(float(v))
+            else:
+                merged[k] = merged.get(k, 0.0) + float(v)
+
+    for k, v in list(merged.items()):
+        if isinstance(v, list):
+            merged[k] = sum(v) / len(v) if v else 0.0
+
+    return merged
+
+
 def _chunk_tensordict_allow_2d_nested(td: TensorDict, chunks: int) -> list | tuple:
     """Chunk TensorDict like engine's chunk_tensordict; 2D nested use unbind."""
     assert isinstance(td, TensorDict) and len(td) % chunks == 0, (
@@ -774,15 +816,32 @@ class VerlWorkerActor:
         loss_fn_config: Optional[dict] = None,
         forward_only: bool = False,
     ) -> Dict[str, Any]:
-        """data: list[types.Datum] (or dicts after Ray serialization). Returns metrics."""
-        # Ray may deserialize Datum as dict
+        """data: list[types.Datum] (or dicts after Ray serialization). Returns shard result."""
         if data and isinstance(data[0], dict):
             data = [types.Datum(**d) for d in data]
+
+        if not data:
+            return {
+                "metrics": {},
+                "loss_fn_outputs": [],
+            }
+
         td = _datum_list_to_tensordict(data, adapter_name, "cuda")
         loss_fn = _make_verl_loss_fn(loss_fn_name, loss_fn_config)
+
         if self._worker is None:
-            return {}
-        out = self._worker.forward_backward(adapter_name, td, loss_fn, forward_only=forward_only)
+            return {
+                "metrics": {},
+                "loss_fn_outputs": [],
+            }
+
+        out = self._worker.forward_backward(
+            adapter_name,
+            td,
+            loss_fn,
+            forward_only=forward_only,
+        )
+
         metrics = out.get("metrics", {}) or {}
 
         def _to_scalar(v: Any) -> Any:
@@ -790,7 +849,14 @@ class VerlWorkerActor:
                 return sum(v) if len(v) > 1 else float(v[0])
             return v
 
-        return {k: _to_scalar(v) for k, v in metrics.items()}
+        metrics = {k: _to_scalar(v) for k, v in metrics.items()}
+
+        loss_fn_outputs = _fsdp_logprobs_to_loss_fn_outputs(out, data)
+
+        return {
+            "metrics": metrics,
+            "loss_fn_outputs": loss_fn_outputs,
+        }
 
     def optim_step(
         self,
@@ -1010,6 +1076,12 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         loss_fn_name = (
             loss_fn if isinstance(loss_fn, str) else getattr(loss_fn, "__name__", "cross_entropy")
         )
+
+        def _to_scalar(v: Any) -> Any:
+            if isinstance(v, list) and v and all(isinstance(x, (int, float)) for x in v):
+                return sum(v) if len(v) > 1 else float(v[0])
+            return v
+
         if self._worker is not None:
             td = await asyncio.to_thread(_datum_list_to_tensordict, data, adapter_name, "cuda")
             verl_loss_fn = _make_verl_loss_fn(loss_fn_name, loss_fn_config)
@@ -1021,32 +1093,38 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                 not backward,
             )
             metrics = out.get("metrics", {}) or {}
-
-            def _to_scalar(v: Any) -> Any:
-                if isinstance(v, list) and v and all(isinstance(x, (int, float)) for x in v):
-                    return sum(v) if len(v) > 1 else float(v[0])
-                return v
-
             metrics = {k: _to_scalar(v) for k, v in metrics.items()}
-            # Extract log_probs from engine model_output and convert to per-datum loss_fn_outputs
             loss_fn_outputs = _fsdp_logprobs_to_loss_fn_outputs(out, data)
         else:
             import ray
 
-            refs = [
-                a.forward_backward.remote(
-                    data, adapter_name, loss_fn_name, loss_fn_config, not backward
+            shards = _shard_list(data, len(self._actors))
+
+            refs = []
+            for actor, shard in zip(self._actors, shards, strict=False):
+                if not shard:
+                    continue
+                refs.append(
+                    actor.forward_backward.remote(
+                        shard,
+                        adapter_name,
+                        loss_fn_name,
+                        loss_fn_config,
+                        not backward,
+                    )
                 )
-                for a in self._actors
-            ]
-            results = await asyncio.to_thread(ray.get, refs)
-            metrics = results[0] if results else {}
-            # Ray path: actors return metrics only, no model_output; use placeholder loss_fn_outputs
-            loss_fn_outputs = [
-                {"logprobs": types.TensorData(data=[0.0], dtype="float32", shape=[1])} for _ in data
-            ]
+
+            results = await asyncio.to_thread(ray.get, refs) if refs else []
+
+            metrics = _merge_metrics(results)
+
+            loss_fn_outputs = []
+            for out in results:
+                loss_fn_outputs.extend(out.get("loss_fn_outputs", []))
+
         # Tinker expects every metric key to be "name:reduction" (e.g. loss:sum)
         metrics = {k: v for k, v in metrics.items() if ":" in k}
+
         return types.ForwardBackwardOutput(
             loss_fn_output_type=loss_fn_name,
             loss_fn_outputs=loss_fn_outputs,
