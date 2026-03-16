@@ -6,11 +6,13 @@ on:
     paths:
       - 'scripts/install.sh'
       - '.github/workflows/install-script.yml'
+      - 'pyproject.toml'
   pull_request:
     branches: [main]
     paths:
       - 'scripts/install.sh'
       - '.github/workflows/install-script.yml'
+      - 'pyproject.toml'
 
 jobs:
   test-install-script:
