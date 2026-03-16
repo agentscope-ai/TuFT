@@ -60,7 +60,7 @@ if os.path.exists(local_path):
     os.remove(local_path)
 
 subprocess.run(["wget", wheel_url, "-O", local_path], check=True)
-subprocess.run(["uv", "pip", "install", local_path], check=True)
+subprocess.run(["uv", "pip", "install", "--python", sys.executable, local_path], check=True)
 
 # Try to import flash_attn
 try:
