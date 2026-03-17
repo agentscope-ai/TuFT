@@ -563,8 +563,9 @@ class MultiAdapterVerlWorker:
         return output
 
     def _zero_grad_for_adapter(self, adapter_name: str) -> None:
+        _match = f".{adapter_name}."
         for name, param in self.engine.module.named_parameters():
-            if adapter_name in name and param.grad is not None:
+            if _match in name and param.grad is not None:
                 param.grad = None
 
     def optim_step(
@@ -608,8 +609,9 @@ class MultiAdapterVerlWorker:
         # FSDP v2: parameters may be DTensor, need to call full_tensor() to get full param
         # Collect full state dict for the adapter
         state = {}
+        _match = f".{adapter_name}."
         for name, param in self.engine.module.named_parameters():
-            if adapter_name in name:
+            if _match in name:
                 if isinstance(param, DTensor):
                     # FSDP v2: gather full tensor from all ranks
                     state[name] = param.full_tensor().cpu().clone()
@@ -692,8 +694,9 @@ class MultiAdapterVerlWorker:
         state = torch.load(path / "adapter.pt", map_location="cpu", weights_only=True)
         self._activate_adapter(adapter_name)
         with torch.no_grad():
+            _match = f".{adapter_name}."
             for name, param in self.engine.module.named_parameters():
-                if adapter_name in name and name in state:
+                if _match in name and name in state:
                     loaded_tensor = state[name]
                     if isinstance(param, DTensor):
                         # FSDP v2: param is DTensor, need to copy to local shard
