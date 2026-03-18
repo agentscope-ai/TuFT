@@ -93,48 +93,6 @@ def _merge_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
     return merged
 
 
-def _shard_list(xs: list[Any], n_shards: int) -> list[list[Any]]:
-    """Split xs into n_shards contiguous shards."""
-    if n_shards <= 0:
-        raise ValueError(f"n_shards must be > 0, got {n_shards}")
-
-    total = len(xs)
-    base = total // n_shards
-    rem = total % n_shards
-
-    shards = []
-    start = 0
-    for i in range(n_shards):
-        size = base + (1 if i < rem else 0)
-        end = start + size
-        shards.append(xs[start:end])
-        start = end
-    return shards
-
-
-def _merge_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
-    merged: dict[str, Any] = {}
-
-    for out in results:
-        metrics = out.get("metrics", {}) or {}
-        for k, v in metrics.items():
-            if not isinstance(v, (int, float)):
-                continue
-
-            if k.endswith(":sum"):
-                merged[k] = merged.get(k, 0.0) + float(v)
-            elif k.endswith(":mean"):
-                merged.setdefault(k, []).append(float(v))
-            else:
-                merged[k] = merged.get(k, 0.0) + float(v)
-
-    for k, v in list(merged.items()):
-        if isinstance(v, list):
-            merged[k] = sum(v) / len(v) if v else 0.0
-
-    return merged
-
-
 def _chunk_tensordict_allow_2d_nested(td: TensorDict, chunks: int) -> list | tuple:
     """Chunk TensorDict like engine's chunk_tensordict; 2D nested use unbind."""
     assert isinstance(td, TensorDict) and len(td) % chunks == 0, (
@@ -1256,7 +1214,9 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             inject_context(trace_context)
             adapter_name = self._get_adapter_name(lora_id)
             loss_fn_name = (
-                loss_fn if isinstance(loss_fn, str) else getattr(loss_fn, "__name__", "cross_entropy")
+                loss_fn
+                if isinstance(loss_fn, str)
+                else getattr(loss_fn, "__name__", "cross_entropy")
             )
 
             def _to_scalar(v: Any) -> Any:
