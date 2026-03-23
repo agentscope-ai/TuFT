@@ -7,7 +7,7 @@ import logging
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Awaitable, Callable, Dict, List, TypeVar
+from typing import Awaitable, Callable, Dict, List, Optional, TypeVar
 
 from opentelemetry.trace import StatusCode
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
@@ -117,8 +117,19 @@ class TrainingController:
 
     def _create_backends(self, model_configs: List[ModelConfig]) -> Dict[str, BaseTrainingBackend]:
         backends: Dict[str, BaseTrainingBackend] = {}
+        # FSDP port allocation: 29500, 29501, ... by order of FSDP models in supported_models
+        fsdp_model_names = [
+            c.model_name for c in model_configs if getattr(c, "training_backend", "hf") == "fsdp"
+        ]
         for config in model_configs:
-            backends[config.model_name] = BaseTrainingBackend.create_backend(config)
+            fsdp_index: Optional[int] = None
+            if config.model_name in fsdp_model_names:
+                fsdp_index = fsdp_model_names.index(config.model_name)
+            backends[config.model_name] = BaseTrainingBackend.create_backend(
+                config,
+                fsdp_index=fsdp_index,
+                worker_venv_path=self.config.worker_venv_path,
+            )
         return backends
 
     def _build_key(self, model_id: str) -> str:

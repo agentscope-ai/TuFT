@@ -1,4 +1,10 @@
 import os
+
+
+# Disable Ray's uv runtime env hook BEFORE importing ray to prevent
+# working_dir packaging and venv recreation on workers
+os.environ.setdefault("RAY_ENABLE_UV_RUN_RUNTIME_ENV", "0")
+
 import tempfile
 import warnings
 from pathlib import Path

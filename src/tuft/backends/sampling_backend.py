@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import socket
 import threading
 import time
@@ -30,10 +31,11 @@ class VLLMSamplingBackend(BaseSamplingBackend):
     `compute_logprobs_async` are all supported by the sample method.
     """
 
-    def __init__(self, config: ModelConfig) -> None:
+    def __init__(self, config: ModelConfig, worker_venv_path: Optional[str] = None) -> None:
         from vllm.lora.request import LoRARequest
 
         super().__init__(config)
+        self._worker_venv_path = worker_venv_path
         self.engine = self._create_engine(config)
         self.lora_adapters: dict[str, LoRARequest] = {}
         self._counter = 1
@@ -51,17 +53,34 @@ class VLLMSamplingBackend(BaseSamplingBackend):
         from trinity.common.config import InferenceModelConfig
         from trinity.common.models.vllm_model import vLLMRolloutModel
 
+        if not self._worker_venv_path or not self._worker_venv_path.strip():
+            _runtime_env = {}
+        else:
+            _path = os.environ.get("PATH", "")
+            _venv_python = str(Path(self._worker_venv_path) / "bin" / "python")
+            _runtime_env = {
+                "py_executable": _venv_python,
+                "env_vars": {
+                    "VIRTUAL_ENV": self._worker_venv_path,
+                    "PATH": f"{self._worker_venv_path}/bin:{_path}",
+                },
+            }
         return (
             ray.remote(vLLMRolloutModel)
             .options(
                 name="sampling_model_" + self.base_model,
                 num_gpus=config.sampling_memory_fraction,
+                runtime_env=_runtime_env,
             )
             .remote(
                 config=InferenceModelConfig(
                     model_path=str(config.model_path),
                     tensor_parallel_size=1,
-                    max_model_len=config.max_model_len,
+                    max_model_len=(
+                        config.sampling_max_model_len
+                        if config.sampling_max_model_len is not None
+                        else config.max_model_len
+                    ),
                     temperature=config.temperature,
                     top_p=config.top_p,
                     top_k=config.top_k,
@@ -94,6 +113,18 @@ class VLLMSamplingBackend(BaseSamplingBackend):
             strategy="PACK",
         )
         ray.get(pg.ready(), timeout=120)
+        if not self._worker_venv_path or not self._worker_venv_path.strip():
+            _runtime_env = {}
+        else:
+            _path = os.environ.get("PATH", "")
+            _venv_python = str(Path(self._worker_venv_path) / "bin" / "python")
+            _runtime_env = {
+                "py_executable": _venv_python,
+                "env_vars": {
+                    "VIRTUAL_ENV": self._worker_venv_path,
+                    "PATH": f"{self._worker_venv_path}/bin:{_path}",
+                },
+            }
         return (
             ray.remote(vLLMRolloutModel)
             .options(
@@ -103,12 +134,17 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                     placement_group=pg,
                     placement_group_capture_child_tasks=True,
                 ),
+                runtime_env=_runtime_env,
             )
             .remote(
                 config=InferenceModelConfig(
                     model_path=str(config.model_path),
                     tensor_parallel_size=config.tensor_parallel_size,
-                    max_model_len=config.max_model_len,
+                    max_model_len=(
+                        config.sampling_max_model_len
+                        if config.sampling_max_model_len is not None
+                        else config.max_model_len
+                    ),
                     temperature=config.temperature,
                     top_p=config.top_p,
                     top_k=config.top_k,
