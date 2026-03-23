@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import re
-import signal
 import socket
 import threading
 import time
@@ -13,7 +12,6 @@ from pathlib import Path
 from typing import Generator
 
 import httpx
-import psutil
 import pytest
 import ray
 import tinker.types as types
@@ -207,153 +205,25 @@ def _create_reverse_training_data(tokenizer) -> list[types.Datum]:
 
 
 def clear_ray_state() -> None:
-    """Clear Ray state to avoid resource leak between tests.
-
-    This function properly cleans up Ray actors and their child processes
-    that were created by the current test session, without affecting
-    other users' processes on the same machine.
-    """
+    """Clear Ray state to avoid resource leak between tests."""
     import gc
+    import signal
 
-    import torch
+    import psutil
 
-    # Get list of Ray actor PIDs that belong to this job before shutdown
-    # Uses Ray's job_id to isolate only actors created by this test session
-    session_pids = _get_session_ray_actor_pids()
-
-    # Shutdown Ray first to stop actors gracefully
     ray.shutdown(_exiting_interpreter=True)
-
-    # Force clear GPU cache
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
-
     gc.collect()
 
-    # Kill only the vLLM processes that were children of our Ray actors
-    # This avoids affecting other users' vLLM processes on the same machine
-    _kill_session_vllm_processes(session_pids)
-
-
-def _get_session_ray_actor_pids() -> set[int]:
-    """Get PIDs of Ray actors created by this test session using Ray's job_id.
-
-    This function uses Ray's internal APIs to get only the actors that belong
-    to the current job, avoiding interference with other users' Ray jobs.
-
-    Returns:
-        Set of process IDs that are Ray actors belonging to this session.
-    """
-    session_pids = set()
-
-    try:
-        # Get current job ID from Ray runtime context
-        # This isolates us from other users' Ray jobs on the same cluster
-        current_job_id = ray.get_runtime_context().job_id
-
-        # Query Ray state for actors belonging to this job only
-        actors_info = ray.state.actors(job_id=current_job_id)
-
-        for actor_info in actors_info.values():
-            # Get the PID from actor info if available
-            pid = actor_info.get("pid")
-            if pid:
-                session_pids.add(pid)
-                # Also add child processes of this actor
-                try:
-                    parent = psutil.Process(pid)
-                    for child in parent.children(recursive=True):
-                        session_pids.add(child.pid)
-                except psutil.NoSuchProcess:
-                    pass
-
-    except Exception:
-        # Fallback: if Ray APIs fail, we can't reliably identify our actors
-        # so we return empty set to avoid killing other users' processes
-        pass
-
-    return session_pids
-
-
-def _kill_session_vllm_processes(session_pids: set[int]) -> None:
-    """Kill vLLM processes that belong to this test session.
-
-    Args:
-        session_pids: Set of PIDs that were identified as belonging to this session.
-    """
-    # Safety check: if we couldn't identify any session PIDs, don't kill anything
-    # This prevents accidentally killing other users' processes
-    if not session_pids:
-        return
-
-    for proc in psutil.process_iter(["pid", "name", "cmdline"]):
-        try:
-            pid = proc.info["pid"]
-            cmdline = proc.info["cmdline"]
-            if not cmdline:
-                continue
-
-            cmdline_str = " ".join(cmdline)
-
-            # Check if this is a vLLM-related process
-            is_vllm_process = (
-                "VLLM" in cmdline_str
-                or "EngineCore" in cmdline_str
-                or ("vllm" in proc.info["name"].lower() if proc.info["name"] else False)
-            )
-
-            if not is_vllm_process:
-                continue
-
-            # Only kill if it's in our session PIDs or is a child of one
-            should_kill = False
-            if pid in session_pids:
-                should_kill = True
-            else:
-                # Check if this process is a child of any session PID
-                try:
-                    process = psutil.Process(pid)
-                    for parent_pid in session_pids:
-                        try:
-                            parent = psutil.Process(parent_pid)
-                            if _is_descendant_of(process, parent):
-                                should_kill = True
-                                break
-                        except psutil.NoSuchProcess:
-                            continue
-                except psutil.NoSuchProcess:
-                    continue
-
-            if should_kill:
-                os.kill(pid, signal.SIGKILL)
-
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
-
-
-def _is_descendant_of(process: psutil.Process, ancestor: psutil.Process) -> bool:
-    """Check if a process is a descendant of another process.
-
-    Args:
-        process: The potential descendant process.
-        ancestor: The potential ancestor process.
-
-    Returns:
-        True if process is a descendant of ancestor, False otherwise.
-    """
-    try:
-        current = process
-        while current.ppid() != 0:  # 0 is typically the init process
-            if current.ppid() == ancestor.pid:
-                return True
+    if os.environ.get("TUFT_DOCKER_UNITTEST") == "1":
+        # check gpu memory and kill stray vllm processes only in
+        # docker unittest environment
+        for proc in psutil.process_iter(["pid", "name", "cmdline"]):
             try:
-                current = psutil.Process(current.ppid())
-            except psutil.NoSuchProcess:
-                break
-        return False
-    except psutil.NoSuchProcess:
-        return False
+                cmdline = proc.info["cmdline"]
+                if cmdline and "VLLM" in " ".join(cmdline):
+                    os.kill(proc.info["pid"], signal.SIGKILL)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
 
 
 # -----------------------------------------------------------------------------
