@@ -6,7 +6,7 @@ from typing import Optional
 from tinker import types
 
 from ..checkpoints import CheckpointRecord
-from ..config import ModelConfig
+from ..config import ModelConfig, TelemetryConfig
 
 
 class BaseBackend(ABC):
@@ -114,6 +114,7 @@ class BaseTrainingBackend(BaseBackend):
         config: ModelConfig,
         fsdp_index: Optional[int] = None,
         worker_venv_path: Optional[str] = None,
+        telemetry_config: Optional[TelemetryConfig] = None,
     ) -> "BaseTrainingBackend":
         """Factory method to create a training backend instance.
 
@@ -121,6 +122,7 @@ class BaseTrainingBackend(BaseBackend):
         The base port is configurable via ModelConfig.fsdp_master_port (default 29500); multiple
         FSDP models use base, base+1, ... Pass the index of this model among FSDP models in
         supported_models order. Omit for non-FSDP or when only one FSDP model (uses config port).
+        telemetry_config: Telemetry configuration for Ray actors (FSDP backend only).
         """
         if os.getenv("TUFT_CPU_TEST", "0") == "1":
             from ..backends.training_backend import DummyTrainingBackend
@@ -131,7 +133,10 @@ class BaseTrainingBackend(BaseBackend):
             from ..backends.fsdp_training_backend import FSDPTrainingBackend
 
             return FSDPTrainingBackend(
-                config, fsdp_index=fsdp_index, worker_venv_path=worker_venv_path
+                config,
+                fsdp_index=fsdp_index,
+                worker_venv_path=worker_venv_path,
+                telemetry_config=telemetry_config,
             )
         from ..backends.training_backend import HFTrainingBackend
 

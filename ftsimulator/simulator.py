@@ -390,7 +390,7 @@ if __name__ == "__main__":
     config = SimulatorConfig(
         max_workers=4,
         api_key=os.environ["TINKER_API_KEY"],
-        base_url=os.environ["TINKER_BASE_URL"],
+        base_url="http://localhost:10610",
     )
 
     # Add SFT tasks
@@ -407,7 +407,7 @@ if __name__ == "__main__":
     config.add_task(
         task_type="rlhf_countdown",
         count=1,
-        base_model="Qwen/Qwen3-4B",
+        base_model="Qwen/Qwen3-8B",
         dataset="Jiayi-Pan/Countdown-Tasks-3to4",
         num_steps=30,  # Reduced for demo
         learning_rate=5e-5,

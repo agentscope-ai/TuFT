@@ -129,6 +129,7 @@ class TrainingController:
                 config,
                 fsdp_index=fsdp_index,
                 worker_venv_path=self.config.worker_venv_path,
+                telemetry_config=self.config.telemetry,
             )
         return backends
 

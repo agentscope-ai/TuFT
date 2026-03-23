@@ -46,7 +46,7 @@ from verl.workers.engine.fsdp.transformer_impl import FSDPEngineWithLMHead
 
 from tuft.backends.base_backend import BaseTrainingBackend
 from tuft.checkpoints import CheckpointRecord
-from tuft.config import ModelConfig
+from tuft.config import ModelConfig, TelemetryConfig
 from tuft.loss_fn import get_loss_fn
 from tuft.telemetry.tracing import extract_context, get_tracer, inject_context
 
@@ -164,6 +164,10 @@ def _datum_list_to_tensordict(
     advantages_list = []
     has_rlhf_fields = False
 
+    # Extra loss_fn_inputs (e.g. logprobs, advantages for importance_sampling/ppo/cispo/dro)
+    _HANDLED_KEYS = {"target_tokens", "weights"}
+    extra_keys: set[str] = set()
+    extra_lists: dict[str, list[torch.Tensor]] = {}
     for datum in data:
         inp = datum.loss_fn_inputs or {}
         toks = inp.get("target_tokens")
@@ -188,6 +192,11 @@ def _datum_list_to_tensordict(
         else:
             advantages_list.append(torch.zeros(1, dtype=torch.float32))
 
+        # Collect extra TensorData fields (logprobs, advantages, etc.)
+        for key, val in inp.items():
+            if key not in _HANDLED_KEYS and hasattr(val, "to_torch"):
+                extra_keys.add(key)
+                extra_lists.setdefault(key, []).append(val.to_torch())
     target_tokens = pad_sequence(
         [t.squeeze() if t.dim() > 1 else t for t in target_tokens_list],
         batch_first=True,
@@ -196,23 +205,28 @@ def _datum_list_to_tensordict(
     weights = pad_sequence(weights_list, batch_first=True, padding_value=0.0)
     batch_size = len(input_ids_list)
     weights_device = weights.to(device)
-
-    td_dict = {
+    td_dict: dict[str, Any] = {
         "target_tokens": target_tokens.to(device),
         "weights": weights_device,
         "loss_mask": weights_device,
         "temperature": torch.full((batch_size, 1, 1), 1.0, device=device, dtype=torch.float32),
         "adapter_id": adapter_id,
     }
-
     # Add RLHF fields if any datum has them
     if has_rlhf_fields:
         logprobs_padded = pad_sequence(logprobs_list, batch_first=True, padding_value=0.0)
         advantages_padded = pad_sequence(advantages_list, batch_first=True, padding_value=0.0)
         td_dict["logprobs"] = logprobs_padded.to(device)
         td_dict["advantages"] = advantages_padded.to(device)
-
-    td = TensorDict(td_dict, batch_size=batch_size)
+    # Pad and add extra loss_fn_inputs to the TensorDict
+    for key in extra_keys:
+        tensors = extra_lists[key]
+        if len(tensors) == batch_size:
+            td_dict[key] = pad_sequence(tensors, batch_first=True, padding_value=0.0).to(device)
+    td = TensorDict(
+        td_dict,
+        batch_size=batch_size,
+    )
     td["input_ids"] = input_ids_nested
     td["position_ids"] = position_ids_nested
     tu.assign_non_tensor(td, global_token_num=global_token_num)
@@ -237,6 +251,9 @@ def _make_verl_loss_fn(
     # Check if this is an RLHF loss function that requires additional fields
     rlhf_loss_fns = {"ppo", "grpo", "cispo", "importance_sampling", "dro"}
     is_rlhf = loss_fn_name.lower() in rlhf_loss_fns
+
+    # Keys that are constructed here (not passed through from TensorDict)
+    _BUILT_IN_KEYS = {"target_logprobs", "weights"}
 
     def _loss_function(
         model_output: Dict[str, Any],
@@ -279,7 +296,23 @@ def _make_verl_loss_fn(
             }
         else:
             # Standard losses (cross_entropy) only need target_logprobs and weights
-            loss_fn_inputs = {"target_logprobs": target_logprobs, "weights": weights}
+            loss_fn_inputs: Dict[str, Any] = {
+                "target_logprobs": target_logprobs,
+                "weights": weights,
+            }
+        # Pass through extra loss_fn_inputs (logprobs, advantages, etc.) from TensorDict
+        _TD_META_KEYS = {
+            "input_ids",
+            "position_ids",
+            "target_tokens",
+            "weights",
+            "loss_mask",
+            "temperature",
+            "adapter_id",
+        }
+        for key in data.keys():
+            if key not in _TD_META_KEYS and key not in _BUILT_IN_KEYS:
+                loss_fn_inputs[key] = data[key]
 
         loss, metrics = tuft_loss(loss_fn_inputs, loss_fn_config)
         return loss, metrics
@@ -364,10 +397,12 @@ def _get_rank_slots_from_config(config: ModelConfig) -> Dict[int, int]:
     return {8: 16, max_rank: 8}
 
 
-def _config_to_worker_dict(config: ModelConfig) -> dict:
+def _config_to_worker_dict(
+    config: ModelConfig, telemetry_config: TelemetryConfig | None = None
+) -> dict:
     """ModelConfig -> serializable dict for TrainingWorkerConfig and SlotPoolConfig in actors."""
     rank_slots = _get_rank_slots_from_config(config)
-    return {
+    result = {
         "model_path": str(config.model_path),
         "max_model_len": config.max_model_len,
         "use_remove_padding": getattr(config, "use_remove_padding", False),
@@ -378,6 +413,15 @@ def _config_to_worker_dict(config: ModelConfig) -> dict:
             "target_modules": ["q_proj", "v_proj"],
         },
     }
+    # Add telemetry config if provided
+    if telemetry_config is not None:
+        result["telemetry_config"] = {
+            "enabled": telemetry_config.enabled,
+            "service_name": telemetry_config.service_name,
+            "otlp_endpoint": telemetry_config.otlp_endpoint,
+            "resource_attributes": dict(telemetry_config.resource_attributes),
+        }
+    return result
 
 
 def _worker_dict_to_training_config(config_dict: dict) -> tuple:
@@ -561,23 +605,32 @@ class MultiAdapterVerlWorker:
         info = self._adapters[adapter_name]
         if info.optimizer is not None:
             return
-        self._activate_adapter(adapter_name)
-        params = [p for p in self.engine.module.parameters() if p.requires_grad]
-        info.optimizer = torch.optim.AdamW(params, lr=1e-4, weight_decay=0.01)
+        with get_tracer("tuft.verl_worker").start_as_current_span(
+            "verl_worker.create_optimizer"
+        ) as span:
+            span.set_attribute("tuft.adapter_name", adapter_name)
+            self._activate_adapter(adapter_name)
+            params = [p for p in self.engine.module.parameters() if p.requires_grad]
+            info.optimizer = torch.optim.AdamW(params, lr=1e-4, weight_decay=0.01)
+            span.set_attribute("tuft.param_count", len(params))
 
     def _activate_adapter(self, adapter_name: str) -> None:
         """Set PEFT active adapter before computation; same as HFTrainingModel._activate_adapter."""
-        # FSDP v2 does not wrap the module, so we access the PEFT model directly
-        # For FSDP v1: self.engine.module.module.set_adapter(adapter_name)
-        # For FSDP v2: self.engine.module is the PEFT model itself
-        module = self.engine.module
-        # Handle both FSDP v1 (wrapped) and FSDP v2 (not wrapped) cases
-        if hasattr(module, "set_adapter"):
-            module.set_adapter(adapter_name)
-        elif hasattr(module, "module") and hasattr(module.module, "set_adapter"):
-            module.module.set_adapter(adapter_name)
-        else:
-            raise RuntimeError(f"Cannot find set_adapter method on module: {type(module)}")
+        with get_tracer("tuft.verl_worker").start_as_current_span(
+            "verl_worker.activate_adapter"
+        ) as span:
+            span.set_attribute("tuft.adapter_name", adapter_name)
+            # FSDP v2 does not wrap the module, so we access the PEFT model directly
+            # For FSDP v1: self.engine.module.module.set_adapter(adapter_name)
+            # For FSDP v2: self.engine.module is the PEFT model itself
+            module = self.engine.module
+            # Handle both FSDP v1 (wrapped) and FSDP v2 (not wrapped) cases
+            if hasattr(module, "set_adapter"):
+                module.set_adapter(adapter_name)
+            elif hasattr(module, "module") and hasattr(module.module, "set_adapter"):
+                module.module.set_adapter(adapter_name)
+            else:
+                raise RuntimeError(f"Cannot find set_adapter method on module: {type(module)}")
 
     def _ensure_train_mode_entered(self) -> None:
         """Enter train_mode once and store context; exit in leave_train_mode() (e.g. release).
@@ -663,9 +716,15 @@ class MultiAdapterVerlWorker:
 
     def save_checkpoint(self, adapter_name: str, path: str | Path, optimizer: bool = True) -> None:
         """Save adapter.pt (training load_state) + PEFT format (sampling); optional optimizer."""
-        self._activate_adapter(adapter_name)
-        path = Path(path)
-        path.mkdir(parents=True, exist_ok=True)
+        with get_tracer("tuft.verl_worker").start_as_current_span(
+            "verl_worker.save_checkpoint"
+        ) as span:
+            span.set_attribute("tuft.adapter_name", adapter_name)
+            span.set_attribute("tuft.path", str(path))
+            span.set_attribute("tuft.optimizer", optimizer)
+            self._activate_adapter(adapter_name)
+            path = Path(path)
+            path.mkdir(parents=True, exist_ok=True)
 
         # FSDP v2: parameters may be DTensor, need to call full_tensor() to get full param
         # Collect full state dict for the adapter
@@ -749,11 +808,18 @@ class MultiAdapterVerlWorker:
             except Exception:
                 # Fallback to torch.save if safetensors fails
                 torch.save(peft_state, path / "adapter_model.bin")
+            span.set_attribute("tuft.state_keys", len(state))
 
     def load_checkpoint(self, adapter_name: str, path: str | Path, optimizer: bool = True) -> None:
-        path = Path(path)
-        state = torch.load(path / "adapter.pt", map_location="cpu", weights_only=True)
-        self._activate_adapter(adapter_name)
+        with get_tracer("tuft.verl_worker").start_as_current_span(
+            "verl_worker.load_checkpoint"
+        ) as span:
+            span.set_attribute("tuft.adapter_name", adapter_name)
+            span.set_attribute("tuft.path", str(path))
+            span.set_attribute("tuft.optimizer", optimizer)
+            path = Path(path)
+            state = torch.load(path / "adapter.pt", map_location="cpu", weights_only=True)
+            self._activate_adapter(adapter_name)
         with torch.no_grad():
             _match = f".{adapter_name}."
             for name, param in self.engine.module.named_parameters():
@@ -787,6 +853,7 @@ class MultiAdapterVerlWorker:
                     self._create_optimizer_for_adapter(adapter_name)
                 opt_state = torch.load(opt_path, map_location="cpu", weights_only=True)
                 self._adapters[adapter_name].optimizer.load_state_dict(opt_state)
+            span.set_attribute("tuft.state_keys", len(state))
 
     def allocate_slot(self, rank: int) -> Optional[str]:
         """Allocate an unused slot for rank; return adapter_name or None."""
@@ -844,6 +911,19 @@ class VerlWorkerActor:
     def build_worker(self) -> None:
         if self._worker is not None:
             return
+        # Initialize telemetry in Ray actor process if config is provided
+        telemetry_config_dict = self.config_dict.get("telemetry_config")
+        if telemetry_config_dict:
+            from tuft.config import TelemetryConfig
+            from tuft.telemetry import init_telemetry
+
+            telemetry_config = TelemetryConfig(**telemetry_config_dict)
+            init_telemetry(telemetry_config)
+            self.logger.info(
+                "Telemetry initialized in Ray actor rank=%s enabled=%s",
+                self.rank,
+                telemetry_config.enabled,
+            )
         training_config, slot_config = _worker_dict_to_training_config(self.config_dict)
         engine = FSDPEngineWithLMHead(
             model_config=training_config.model_config,  # pyright: ignore[reportCallIssue]
@@ -1022,10 +1102,12 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         config: ModelConfig,
         fsdp_index: Optional[int] = None,
         worker_venv_path: Optional[str] = None,
+        telemetry_config: Optional[TelemetryConfig] = None,
     ) -> None:
         super().__init__(config)
         self._fsdp_index = fsdp_index  # Index among FSDP models; port = base + fsdp_index
         self._worker_venv_path = worker_venv_path
+        self._telemetry_config = telemetry_config
         self._worker: Optional[MultiAdapterVerlWorker] = None
         self._actors: List[Any] = []
         self._world_size: int = 0
@@ -1036,7 +1118,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         self._slot_config = SlotPoolConfig(
             rank_slots=rank_slots,
         )
-        self._config_dict = _config_to_worker_dict(config)
+        self._config_dict = _config_to_worker_dict(config, telemetry_config)
         self.logger = logging.getLogger(f"{__name__}.FSDPTrainingBackend")
 
     async def async_init(self) -> None:
@@ -1252,6 +1334,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                             adapter_name,
                             loss_fn_name,
                             loss_fn_config,
+                            trace_context,
                             not backward,
                         )
                     )

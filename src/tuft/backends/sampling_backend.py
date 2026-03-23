@@ -241,6 +241,7 @@ class VLLMSamplingBackend(BaseSamplingBackend):
 
         with _get_tracer().start_as_current_span("sampling_backend.add_adapter") as span:
             span.set_attribute("tuft.lora_id", lora_id)
+            span.set_attribute("tuft.adapter_path", str(adapter_path))
             try:
                 async with self._lock:
                     self._counter += 1
