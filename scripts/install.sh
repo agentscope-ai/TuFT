@@ -121,32 +121,47 @@ command_exists() {
 
 # Install uv if not present
 install_uv() {
-    if command_exists uv; then
-        print_step "uv is already installed"
-        return
+  if command_exists uv; then
+    print_step "uv is already installed"
+    return
+  fi
+
+  print_step "Installing uv (Python package manager)..."
+
+  # Primary: official installer (fast path)
+  if ! curl -LsSf https://astral.sh/uv/install.sh | sh; then
+    print_warning "uv install via curl failed. Falling back to pip install uv."
+    print_warning "If you are in a restricted network, consider configuring a PyPI mirror."
+
+    local PYTHON_BIN=""
+    if command_exists python3; then
+      PYTHON_BIN="python3"
+    elif command_exists python; then
+      PYTHON_BIN="python"
+    else
+      print_error "Python not found; cannot install uv. Please install python3 and re-run."
+      exit 1
     fi
 
-    print_step "Installing uv (Python package manager)..."
-    curl -LsSf https://astral.sh/uv/install.sh | sh
+    "$PYTHON_BIN" -m pip install --user --upgrade uv
+  fi
 
-    # Source the env file to get uv in PATH
-    if [ -f "$HOME/.local/bin/env" ]; then
-        source "$HOME/.local/bin/env"
-    elif [ -f "$HOME/.cargo/env" ]; then
-        source "$HOME/.cargo/env"
-    fi
+  # Source env files if present (for curl installer case)
+  if [ -f "$HOME/.local/bin/env" ]; then
+    source "$HOME/.local/bin/env"
+  elif [ -f "$HOME/.cargo/env" ]; then
+    source "$HOME/.cargo/env"
+  fi
 
-    # Add to current PATH if still not found
-    if ! command_exists uv; then
-        export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
-    fi
+  # Ensure PATH contains common locations
+  export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 
-    if ! command_exists uv; then
-        print_error "Failed to install uv. Please install it manually: https://docs.astral.sh/uv/getting-started/installation/"
-        exit 1
-    fi
+  if ! command_exists uv; then
+    print_error "Failed to install uv. Please install it manually and re-run."
+    exit 1
+  fi
 
-    print_success "uv installed successfully"
+  print_success "uv installed successfully"
 }
 
 # Create tuft directory structure
