@@ -158,6 +158,11 @@ def _datum_list_to_tensordict(
     # target_tokens, weights for loss from loss_fn_inputs
     target_tokens_list = []
     weights_list = []
+    # RLHF-specific fields (logprobs, advantages)
+    logprobs_list = []
+    advantages_list = []
+    has_rlhf_fields = False
+
     for datum in data:
         inp = datum.loss_fn_inputs or {}
         toks = inp.get("target_tokens")
@@ -167,6 +172,21 @@ def _datum_list_to_tensordict(
         w = inp.get("weights")
         default_weights = torch.ones(len(datum.model_input.to_ints()), dtype=torch.float32)
         weights_list.append(w.to_torch() if w is not None else default_weights)
+
+        # Extract RLHF fields if present
+        logprobs = inp.get("logprobs")
+        if logprobs is not None:
+            has_rlhf_fields = True
+            logprobs_list.append(logprobs.to_torch())
+        else:
+            logprobs_list.append(torch.zeros(1, dtype=torch.float32))
+
+        advantages = inp.get("advantages")
+        if advantages is not None:
+            advantages_list.append(advantages.to_torch())
+        else:
+            advantages_list.append(torch.zeros(1, dtype=torch.float32))
+
     target_tokens = pad_sequence(
         [t.squeeze() if t.dim() > 1 else t for t in target_tokens_list],
         batch_first=True,
@@ -175,16 +195,23 @@ def _datum_list_to_tensordict(
     weights = pad_sequence(weights_list, batch_first=True, padding_value=0.0)
     batch_size = len(input_ids_list)
     weights_device = weights.to(device)
-    td = TensorDict(
-        {
-            "target_tokens": target_tokens.to(device),
-            "weights": weights_device,
-            "loss_mask": weights_device,
-            "temperature": torch.full((batch_size, 1, 1), 1.0, device=device, dtype=torch.float32),
-            "adapter_id": adapter_id,
-        },
-        batch_size=batch_size,
-    )
+
+    td_dict = {
+        "target_tokens": target_tokens.to(device),
+        "weights": weights_device,
+        "loss_mask": weights_device,
+        "temperature": torch.full((batch_size, 1, 1), 1.0, device=device, dtype=torch.float32),
+        "adapter_id": adapter_id,
+    }
+
+    # Add RLHF fields if any datum has them
+    if has_rlhf_fields:
+        logprobs_padded = pad_sequence(logprobs_list, batch_first=True, padding_value=0.0)
+        advantages_padded = pad_sequence(advantages_list, batch_first=True, padding_value=0.0)
+        td_dict["logprobs"] = logprobs_padded.to(device)
+        td_dict["advantages"] = advantages_padded.to(device)
+
+    td = TensorDict(td_dict, batch_size=batch_size)
     td["input_ids"] = input_ids_nested
     td["position_ids"] = position_ids_nested
     tu.assign_non_tensor(td, global_token_num=global_token_num)
@@ -206,6 +233,10 @@ def _make_verl_loss_fn(
     loss_fn_config = loss_fn_config or {}
     tuft_loss = get_loss_fn(loss_fn_name)
 
+    # Check if this is an RLHF loss function that requires additional fields
+    rlhf_loss_fns = {"ppo", "grpo", "cispo", "importance_sampling", "dro"}
+    is_rlhf = loss_fn_name.lower() in rlhf_loss_fns
+
     def _loss_function(
         model_output: Dict[str, Any],
         data: TensorDict,
@@ -219,7 +250,36 @@ def _make_verl_loss_fn(
         target_logprobs = torch.nested.to_padded_tensor(
             log_probs_nt, padding=0.0, output_size=(batch_size, max_len)
         )
-        loss_fn_inputs = {"target_logprobs": target_logprobs, "weights": weights}
+
+        # Build loss_fn_inputs based on loss function type
+        if is_rlhf:
+            # RLHF losses (PPO, GRPO, etc.) need logprobs and advantages
+            # Check if data has required fields
+            has_logprobs = "logprobs" in data.keys()
+            has_advantages = "advantages" in data.keys()
+
+            if not has_logprobs or not has_advantages:
+                import logging
+
+                logging.warning(
+                    f"RLHF loss '{loss_fn_name}' requires 'logprobs' and 'advantages' in data. "
+                    f"Available keys: {list(data.keys())}. "
+                    f"Using fallback values."
+                )
+
+            loss_fn_inputs = {
+                "target_logprobs": target_logprobs,
+                "logprobs": data.get("logprobs", target_logprobs)
+                if has_logprobs
+                else target_logprobs,
+                "advantages": data.get("advantages", torch.zeros_like(target_logprobs))
+                if has_advantages
+                else torch.zeros_like(target_logprobs),
+            }
+        else:
+            # Standard losses (cross_entropy) only need target_logprobs and weights
+            loss_fn_inputs = {"target_logprobs": target_logprobs, "weights": weights}
+
         loss, metrics = tuft_loss(loss_fn_inputs, loss_fn_config)
         return loss, metrics
 
