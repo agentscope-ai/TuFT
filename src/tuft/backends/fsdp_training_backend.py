@@ -13,7 +13,7 @@ import os
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, cast
 
 import torch
 from packaging import version
@@ -273,15 +273,15 @@ def _make_verl_loss_fn(
         if is_rlhf:
             # RLHF losses (PPO, GRPO, etc.) need logprobs and advantages
             # Check if data has required fields
-            has_logprobs = "logprobs" in data.keys()
-            has_advantages = "advantages" in data.keys()
+            has_logprobs = "logprobs" in data
+            has_advantages = "advantages" in data
 
             if not has_logprobs or not has_advantages:
                 import logging
 
                 logging.warning(
                     f"RLHF loss '{loss_fn_name}' requires 'logprobs' and 'advantages' in data. "
-                    f"Available keys: {list(data.keys())}. "
+                    f"Available keys: {list(cast(Iterable[str], data.keys()))}. "
                     f"Using fallback values."
                 )
 
@@ -310,7 +310,7 @@ def _make_verl_loss_fn(
             "temperature",
             "adapter_id",
         }
-        for key in data.keys():
+        for key in cast(Iterable[str], data.keys()):
             if key not in _TD_META_KEYS and key not in _BUILT_IN_KEYS:
                 loss_fn_inputs[key] = data[key]
 
