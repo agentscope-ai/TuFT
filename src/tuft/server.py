@@ -445,7 +445,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         state: ServerState = Depends(_get_state),
         user: User = Depends(_get_user),
     ) -> types.UntypedAPIFuture:
-        async def _operation() -> types.SaveWeightsForSamplerResponse:
+        async def _operation() -> types.SaveWeightsForSamplerResponseInternal:
             checkpoint = await state.save_checkpoint(
                 request.model_id,
                 user.user_id,
@@ -453,8 +453,27 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
                 "sampler",
                 seq_id=request.seq_id,
             )
-            return types.SaveWeightsForSamplerResponse(
-                path=checkpoint.tinker_checkpoint.tinker_path
+
+            # If sampling_session_seq_id is provided, create a sampling session directly
+            # and return sampling_session_id (used by save_weights_and_get_sampling_client)
+            if request.sampling_session_seq_id is not None:
+                training_run = state.get_training_run_record(request.model_id, user.user_id)
+                sampling_session_id = await state.create_sampling_session(
+                    session_id=training_run.session_id,
+                    user_id=user.user_id,
+                    base_model=None,  # model_path takes priority
+                    model_path=checkpoint.tinker_checkpoint.tinker_path,
+                    session_seq_id=request.sampling_session_seq_id,
+                )
+                return types.SaveWeightsForSamplerResponseInternal(
+                    path=None,
+                    sampling_session_id=sampling_session_id,
+                )
+
+            # Otherwise, just return the path (used by save_weights_for_sampler)
+            return types.SaveWeightsForSamplerResponseInternal(
+                path=checkpoint.tinker_checkpoint.tinker_path,
+                sampling_session_id=None,
             )
 
         return await _queue_future(
@@ -468,6 +487,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
                 "user_id": user.user_id,
                 "name": request.path,
                 "checkpoint_type": "sampler",
+                "sampling_session_seq_id": request.sampling_session_seq_id,
             },
         )
 

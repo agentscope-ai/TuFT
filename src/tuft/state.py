@@ -312,6 +312,10 @@ class ServerState:
     def get_training_run_view(self, model_id: str, user_id: str) -> types.TrainingRun:
         return self.training.get_training_run_view(model_id, user_id)
 
+    def get_training_run_record(self, model_id: str, user_id: str):
+        """Get the training run record directly (not the view)."""
+        return self.training.get_run_record(model_id, user_id)
+
     def get_model_info(self, model_id: str, user_id: str) -> types.GetInfoResponse:
         return self.training.get_model_info(model_id, user_id=user_id)
 
