@@ -12,9 +12,18 @@ from tinker import types
 from .auth import AuthenticationDB, User
 from .checkpoints import CheckpointRecord
 from .config import AppConfig
-from .exceptions import SessionNotFoundException, UserMismatchException
+from .exceptions import (
+    CheckpointAccessDeniedException,
+    SessionNotFoundException,
+    UserMismatchException,
+)
 from .futures import FutureStore
-from .persistence import get_redis_store, is_persistence_enabled, load_record, save_record
+from .persistence import (
+    get_redis_store,
+    is_persistence_enabled,
+    load_record,
+    save_record,
+)
 from .sampling_controller import SamplingController
 from .training_controller import TrainingController, TrainingRunRecord
 
@@ -293,8 +302,19 @@ class ServerState:
         )
 
     def get_weights_info(self, tinker_path: str, user_id: str) -> types.WeightsInfoResponse:
-        parsed = types.ParsedCheckpointTinkerPath.from_tinker_path(tinker_path)
-        return self.training.get_weights_info(parsed.training_run_id, user_id)
+        assert self.config.checkpoint_dir is not None
+        record = CheckpointRecord.from_tinker_path(tinker_path, self.config.checkpoint_dir)
+        metadata = record.metadata
+
+        # Enforce ownership / visibility
+        if not (metadata.public or metadata.owner_name == user_id):
+            raise CheckpointAccessDeniedException(checkpoint_id=record.checkpoint_id)
+
+        return types.WeightsInfoResponse(
+            base_model=metadata.base_model,
+            is_lora=True,
+            lora_rank=metadata.lora_rank,
+        )
 
     def build_archive_url(
         self,
