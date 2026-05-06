@@ -167,8 +167,8 @@ class ModelBackend:
             generated = self._generate_tokens(prompt_tokens, max_tokens)
             seq = types.SampledSequence(
                 stop_reason="length",
-                tokens=generated,
-                logprobs=[-0.3 for _ in generated],
+                _tokens_list=generated,
+                _logprobs_list=[-0.3 for _ in generated],
             )
             sequences.append(seq)
         prompt_logprobs = None
@@ -187,8 +187,8 @@ class ModelBackend:
             ]
         return types.SampleResponse(
             sequences=sequences,
-            prompt_logprobs=prompt_logprobs,
-            topk_prompt_logprobs=topk_prompt,
+            _prompt_logprobs_list=prompt_logprobs,
+            _topk_prompt_logprobs_list=topk_prompt,
         )
 
     # ------------------------------------------------------------------
