@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from tinker import types
 
 from .auth import User
+from .compat import maybe_serialize_payload, serialize_sample_response_proto
 from .config import AppConfig
 from .exceptions import TuFTException
 from .oai import create_oai_router
@@ -556,6 +557,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
     @app.post("/api/v1/retrieve_future")
     async def retrieve_future(
         request: types.FutureRetrieveRequest,
+        raw_request: Request,
         state: ServerState = Depends(_get_state),
         user: User = Depends(_get_user),
     ) -> Any:
@@ -573,7 +575,22 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to retrieve future: {str(exc)}",
             ) from exc
-        return payload  # FastAPI will serialize the stored Tinker type
+
+        # Content negotiation: prefer protobuf for SampleResponse if client accepts it
+        from tinker.types.sample_response import SampleResponse as SampleResponseDataclass
+
+        accept_header = raw_request.headers.get("accept", "")
+        if (
+            isinstance(payload, SampleResponseDataclass)
+            and "application/x-protobuf" in accept_header
+        ):
+            proto_bytes = serialize_sample_response_proto(payload)
+            return Response(
+                content=proto_bytes,
+                media_type="application/x-protobuf",
+            )
+
+        return maybe_serialize_payload(payload)
 
     @app.get(
         "/api/v1/training_runs",
@@ -762,6 +779,46 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         user: User = Depends(_get_user),
     ) -> types.GetSamplerResponse:
         return state.get_sampler_info(sampler_id, user.user_id)
+
+    @app.post(
+        "/api/v1/auth/token",
+        response_model=types.AuthTokenResponse,
+    )
+    async def auth_token(
+        user: User = Depends(_get_user),
+    ) -> types.AuthTokenResponse:
+        # TuFT uses API key auth directly; return a pass-through token
+        # that the SDK can use for subsequent requests.
+        import base64
+        import json
+        import time as _time
+
+        header = base64.urlsafe_b64encode(json.dumps({"alg": "none"}).encode()).decode().rstrip("=")
+        payload_data = {
+            "sub": user.user_id,
+            "exp": int(_time.time()) + 3600,
+        }
+        payload_b64 = (
+            base64.urlsafe_b64encode(json.dumps(payload_data).encode()).decode().rstrip("=")
+        )
+        token = f"{header}.{payload_b64}."
+        return types.AuthTokenResponse(jwt=token)
+
+    @app.post(
+        "/api/v1/client/config",
+        response_model=types.ClientConfigResponse,
+    )
+    async def client_config(
+        request: types.ClientConfigRequest,
+        user: User = Depends(_get_user),
+    ) -> types.ClientConfigResponse:
+        return types.ClientConfigResponse(
+            pjwt_auth_enabled=False,
+            credential_default_source="api_key",
+            sample_dispatch_bytes_semaphore_size=10 * 1024 * 1024,
+            inflight_response_bytes_semaphore_size=50 * 1024 * 1024,
+            parallel_fwdbwd_chunks=False,
+        )
 
     for route in app.routes:
         path = getattr(route, "path", None) or ""

@@ -12,7 +12,8 @@ dependencies = [
     "fastapi>=0.125.0",
     "httpx>=0.28.1",
     "numpy<2.0.0",
-    "tinker>=0.7.0",
+    "tinker>=0.18.2",
+    "protobuf>=4.21.0",
     "typer>=0.20.1",
     "uvicorn[standard]>=0.38.0",
     "omegaconf>=2.3.0",
@@ -73,6 +74,7 @@ line-length = 100
 target-version = "py311"
 exclude = [
     "tinker",
+    "thirdparty",
 ]
 
 [tool.ruff.lint]
@@ -95,12 +97,15 @@ pythonVersion = "3.11"
 typeCheckingMode = "standard"
 reportUnusedImport = false
 reportMissingImports = false
+reportPrivateImportUsage = false
+reportOptionalMemberAccess = false
 exclude = [
     "**/.venv",
     "**/__pycache__",
     ".pytest_cache",
     ".ruff_cache",
     "tinker",
+    "thirdparty",
 ]
 
 [tool.pytest.ini_options]
