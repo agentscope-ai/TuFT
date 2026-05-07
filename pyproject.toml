@@ -74,6 +74,7 @@ line-length = 100
 target-version = "py311"
 exclude = [
     "tinker",
+    "thirdparty",
 ]
 
 [tool.ruff.lint]
@@ -102,6 +103,7 @@ exclude = [
     ".pytest_cache",
     ".ruff_cache",
     "tinker",
+    "thirdparty",
 ]
 
 [tool.pytest.ini_options]

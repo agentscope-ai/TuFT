@@ -88,8 +88,7 @@ def _build_sample_response(
             stop_reason="length" if seq_output.finish_reason == "length" else "stop",
             _tokens_list=seq_output.token_ids,
             _logprobs_list=[
-                next(iter(logprob_dict.values())).logprob
-                for logprob_dict in seq_output.logprobs
+                next(iter(logprob_dict.values())).logprob for logprob_dict in seq_output.logprobs
             ],
         )
         sequences.append(seq)
@@ -401,9 +400,7 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                 prompt_token_ids = prompt.to_ints()
                 params = {
                     "max_tokens": (
-                        sampling_params.max_tokens
-                        if sampling_params.max_tokens is not None
-                        else 16
+                        sampling_params.max_tokens if sampling_params.max_tokens is not None else 16
                     ),
                     "seed": sampling_params.seed,
                     "top_k": sampling_params.top_k,
