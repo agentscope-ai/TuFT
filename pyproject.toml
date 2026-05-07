@@ -97,6 +97,8 @@ pythonVersion = "3.11"
 typeCheckingMode = "standard"
 reportUnusedImport = false
 reportMissingImports = false
+reportPrivateImportUsage = false
+reportOptionalMemberAccess = false
 exclude = [
     "**/.venv",
     "**/__pycache__",
