@@ -250,17 +250,16 @@ class VLLMSamplingBackend(BaseSamplingBackend):
 
     def _create_standalone_engine(self, config: ModelConfig):
         import ray
-        from ray.util.placement_group import placement_group
-        from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
         from trinity.common.config import InferenceModelConfig
         from trinity.common.models.vllm_model import vLLMRolloutModel
 
-        # create a placement group for this model
-        pg = placement_group(
-            [{"CPU": 1, "GPU": 1} for _ in range(config.tensor_parallel_size)],
-            strategy="PACK",
-        )
-        ray.get(pg.ready(), timeout=120)
+        # Assign tensor_parallel_size GPUs to the actor itself
+        # so that Ray populates CUDA_VISIBLE_DEVICES correctly.  vLLM then
+        # creates its own placement group inside the EngineCore process where
+        # the GPUs are visible.
+        num_gpus = config.tensor_parallel_size
+        bundle_indices = ",".join(str(i) for i in range(config.tensor_parallel_size))
+
         if not self._worker_venv_path or not self._worker_venv_path.strip():
             _runtime_env = {}
         else:
@@ -277,11 +276,7 @@ class VLLMSamplingBackend(BaseSamplingBackend):
             ray.remote(vLLMRolloutModel)
             .options(
                 name="sampling_model_" + self.base_model,
-                num_gpus=0 if config.tensor_parallel_size > 1 else 1,
-                scheduling_strategy=PlacementGroupSchedulingStrategy(
-                    placement_group=pg,
-                    placement_group_capture_child_tasks=True,
-                ),
+                num_gpus=num_gpus,
                 runtime_env=_runtime_env,
             )
             .remote(
@@ -307,6 +302,7 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                         "max_loras": config.max_loras,
                     },
                     gpu_memory_utilization=config.sampling_memory_fraction,
+                    bundle_indices=bundle_indices,
                 )
             )
         )
