@@ -61,6 +61,7 @@ pyrightconfig.json
 *.swp
 *~
 .DS_Store
+.qoder/
 
 # Ignore uv lockfile
 uv.lock
