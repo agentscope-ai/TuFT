@@ -97,6 +97,8 @@ def init_wandb(cfg: Config):
 
 def connect(cfg: Config) -> tinker.ServiceClient:
     print(f"[1/6] connect service: {cfg.base_url}")
+    # Alternative: use tuft.get_service_client() for auto-discovery/embedded mode
+    # import tuft; return tuft.get_service_client()
     return tinker.ServiceClient(base_url=cfg.base_url, api_key=cfg.api_key)
 
 

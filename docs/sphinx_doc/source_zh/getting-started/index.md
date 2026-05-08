@@ -20,6 +20,14 @@
 
 使用 TuFT 运行您的第一个训练与推理示例。
 :::
+
+:::{grid-item-card} 嵌入式模式
+:link: embedded-mode
+:link-type: doc
+:shadow: none
+
+使用 `tuft.init()` 实现自动服务发现和启动。
+:::
 ```
 
 ```{toctree}
@@ -28,4 +36,5 @@
 
 installation
 quickstart
+embedded-mode
 ```
