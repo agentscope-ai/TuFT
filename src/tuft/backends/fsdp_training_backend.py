@@ -950,6 +950,361 @@ class VerlWorkerActor:
 
 
 # =============================================================================
+# FullParamVerlWorker: full-parameter training without LoRA/PeFT
+# =============================================================================
+# Multi-tenancy limitation (current):
+#   The backend maintains a SINGLE FullParamVerlWorker instance shared by all
+#   full-param model_ids (_full_param_model_ids). All tenants operate on the
+#   SAME model weights and optimizer — there is NO parameter-level isolation
+#   between tenants. If tenant A trains, it modifies the weights that tenant B
+#   also sees on the next forward.
+#
+# Why no isolation:
+#   Unlike LoRA (where each adapter is an independent parameter subset),
+#   full-param training updates ALL weights. Isolating tenants would require
+#   maintaining separate copies of the entire model (one per tenant), which
+#   is prohibitively expensive in GPU memory.
+#
+# Path to true multi-tenant full-param isolation:
+#   1. Maintain multiple FullParamVerlWorker instances (one per tenant).
+#   2. Only one worker's parameters reside on GPU at any time.
+#   3. On tenant switch: current worker -> engine.to("cpu") to offload;
+#      new worker -> engine.to("cuda") to reload.
+#   4. This requires scheduler logic at the FSDPTrainingBackend level to
+#      manage the swap queue and avoid OOM.
+#   5. Expected performance cost: full model CPU↔GPU transfer on every switch
+#      (seconds for multi-GB models), making it unsuitable for rapid
+#      interleaved multi-tenant workloads.
+# =============================================================================
+
+
+class FullParamVerlWorker:
+    """Full-parameter training worker: no LoRA, all params trainable.
+
+    Simpler than MultiAdapterVerlWorker: loads model directly (no PeFT),
+    applies FSDP v2 sharding, single optimizer for all parameters.
+
+    IMPORTANT - Multi-tenancy model:
+        Currently a singleton per FSDPTrainingBackend. Multiple model_ids
+        registered via init_full_param() share this single worker instance,
+        meaning they share weights and optimizer state (no isolation).
+        See module-level comment above for the roadmap to true isolation.
+    """
+
+    def __init__(
+        self,
+        model_config: Any,
+        engine_config: Any,
+        optimizer_config: Any,
+        checkpoint_config: Any,
+    ):
+        self.model_config = model_config
+        self.engine_config = engine_config
+        self.optimizer_config = optimizer_config
+        self.checkpoint_config = checkpoint_config
+        self.engine: Any = None
+        self._optimizer: Any = None
+        self._step_count: int = 0
+        self._initialized = False
+        self._train_mode_ctx: Any = None
+        self.logger = logging.getLogger(f"{__name__}.FullParamVerlWorker")
+
+    def initialize(self) -> None:
+        """Build engine (base model + materialize + FSDP v2) and create optimizer."""
+        if self._initialized:
+            return
+        base_model = self.engine._build_module()
+
+        # Materialize meta model with pretrained weights
+        model_path = getattr(self.engine.model_config, "local_path", None) or getattr(
+            self.engine.model_config, "path", None
+        )
+        if not model_path:
+            raise RuntimeError("engine.model_config has no local_path or path for materialization")
+        trust_remote = getattr(self.engine.model_config, "trust_remote_code", True)
+        full_cpu = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            torch_dtype=torch.bfloat16,
+            low_cpu_mem_usage=True,
+            trust_remote_code=trust_remote,
+        )
+        state_dict = full_cpu.state_dict()
+        del full_cpu
+        base_model.load_state_dict(state_dict, assign=True, strict=False)
+        del state_dict
+
+        # Enable gradient computation for all parameters
+        base_model.enable_input_require_grads()
+        for param in base_model.parameters():
+            param.requires_grad = True
+
+        model_bf16 = base_model.to(torch.bfloat16)
+        model_cuda = model_bf16.cuda()
+
+        # FSDP v2: fully_shard
+        mp_policy = MixedPrecisionPolicy(
+            param_dtype=torch.bfloat16,
+            reduce_dtype=torch.float32,
+            cast_forward_inputs=True,
+        )
+        import torch.distributed as dist
+        from torch.distributed.device_mesh import init_device_mesh
+
+        world_size = dist.get_world_size() if dist.is_initialized() else 1
+        device_mesh = init_device_mesh("cuda", (world_size,)) if world_size > 1 else None
+
+        transformer_layer_cls_names = getattr(model_cuda, "_no_split_modules", None) or [
+            "DecoderLayer",
+            "TransformerBlock",
+            "LlamaDecoderLayer",
+            "Qwen2DecoderLayer",
+            "Qwen3DecoderLayer",
+        ]
+        wrapped_modules = []
+        for _name, module in model_cuda.named_modules():
+            if module.__class__.__name__ in transformer_layer_cls_names:
+                wrapped_modules.append(module)
+        for module in wrapped_modules:
+            fully_shard(module, mesh=device_mesh, mp_policy=mp_policy)
+        fully_shard(model_cuda, mesh=device_mesh, mp_policy=mp_policy)
+        self.engine.module = model_cuda
+
+        # Create optimizer for all parameters
+        params = [p for p in self.engine.module.parameters() if p.requires_grad]
+        self._optimizer = torch.optim.AdamW(params, lr=1e-4, weight_decay=0.01)
+        self.engine.optimizer = self._optimizer
+        self._initialized = True
+
+    def _ensure_train_mode_entered(self) -> None:
+        """Enter train_mode once; exit in leave_train_mode()."""
+        if self._train_mode_ctx is not None:
+            return
+        ctx = self.engine.train_mode()
+        ctx.__enter__()
+        self._train_mode_ctx = ctx
+
+    def leave_train_mode(self) -> None:
+        """Exit the stored train_mode context."""
+        if self._train_mode_ctx is not None:
+            self._train_mode_ctx.__exit__(None, None, None)
+            self._train_mode_ctx = None
+
+    def forward_backward(
+        self,
+        data: TensorDict,
+        loss_function: Callable[..., Any],
+        forward_only: bool = False,
+    ) -> Dict[str, Any]:
+        """Full-param forward (and backward if not forward_only)."""
+        self.engine.optimizer = self._optimizer
+        if not forward_only:
+            self._optimizer.zero_grad()
+        self._ensure_train_mode_entered()
+        output = self.engine.forward_backward_batch(
+            data=data,
+            loss_function=loss_function,
+            forward_only=forward_only,
+        )
+        return output
+
+    def optim_step(
+        self,
+        learning_rate: Optional[float] = None,
+        weight_decay: Optional[float] = None,
+        grad_clip_norm: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Optimizer step for all parameters."""
+        if learning_rate is not None:
+            for pg in self._optimizer.param_groups:
+                pg["lr"] = learning_rate
+        if weight_decay is not None:
+            for pg in self._optimizer.param_groups:
+                pg["weight_decay"] = weight_decay
+        if grad_clip_norm is not None and grad_clip_norm > 0:
+            torch.nn.utils.clip_grad_norm_(self.engine.module.parameters(), grad_clip_norm)
+        self._optimizer.step()
+        self._optimizer.zero_grad()
+        self._step_count += 1
+        self.engine.to(
+            "cpu",
+            model=self.engine.is_param_offload_enabled,
+            optimizer=self.engine.is_optimizer_offload_enabled,
+            grad=self.engine.is_param_offload_enabled,
+        )
+        self.engine.mode = None
+        return {"step_count": self._step_count}
+
+    def save_checkpoint(self, path: str | Path, optimizer: bool = True) -> None:
+        """Save full model state_dict and optionally optimizer state."""
+        path = Path(path)
+        path.mkdir(parents=True, exist_ok=True)
+
+        # Collect full state dict (gather DTensor shards)
+        state = {}
+        for name, param in self.engine.module.named_parameters():
+            if isinstance(param, DTensor):
+                state[name] = param.full_tensor().cpu().clone()
+            else:
+                state[name] = param.data.cpu().clone()
+
+        import torch.distributed as dist
+
+        is_rank_0 = not dist.is_initialized() or dist.get_rank() == 0
+        if is_rank_0:
+            torch.save(state, path / "model.pt")
+            if optimizer and self._optimizer is not None:
+                torch.save(self._optimizer.state_dict(), path / "optimizer.pt")
+
+    def load_checkpoint(self, path: str | Path, optimizer: bool = True) -> None:
+        """Load full model state_dict and optionally optimizer state."""
+        path = Path(path)
+        state = torch.load(path / "model.pt", map_location="cpu", weights_only=True)
+        with torch.no_grad():
+            for name, param in self.engine.module.named_parameters():
+                if name not in state:
+                    continue
+                loaded_tensor = state[name]
+                if isinstance(param, DTensor):
+                    local_param = param.to_local()
+                    import torch.distributed as dist
+
+                    if dist.is_initialized():
+                        world_size = dist.get_world_size()
+                        rank = dist.get_rank()
+                        chunk_size = loaded_tensor.size(0) // world_size
+                        start_idx = rank * chunk_size
+                        end_idx = start_idx + chunk_size
+                        local_param.copy_(loaded_tensor[start_idx:end_idx].to(local_param.device))
+                    else:
+                        local_param.copy_(loaded_tensor.to(local_param.device))
+                else:
+                    param.data.copy_(loaded_tensor.to(param.device))
+        if optimizer:
+            opt_path = path / "optimizer.pt"
+            if opt_path.exists():
+                opt_state = torch.load(opt_path, map_location="cpu", weights_only=True)
+                self._optimizer.load_state_dict(opt_state)
+
+
+# =============================================================================
+# FullParamWorkerActor: Ray actor for full-parameter training
+# =============================================================================
+
+
+class FullParamWorkerActor:
+    """Single-GPU Ray actor for full-parameter training; N form process group via FSDP."""
+
+    def __init__(self, rank: int, world_size: int, config_dict: dict) -> None:
+        self.rank = rank
+        self.world_size = world_size
+        self.config_dict = config_dict
+        self._worker: Optional[FullParamVerlWorker] = None
+        self._dist_initialized = False
+        self.logger = logging.getLogger(f"{__name__}.FullParamWorkerActor")
+
+    def get_node_ip(self) -> str:
+        import ray
+
+        return ray.util.get_node_ip_address()
+
+    def init_dist(self, master_addr: str, master_port: int = DEFAULT_MASTER_PORT) -> None:
+        import torch.distributed as dist
+
+        if self._dist_initialized:
+            return
+        import os
+
+        os.environ["MASTER_ADDR"] = master_addr
+        os.environ["MASTER_PORT"] = str(master_port)
+        dist.init_process_group(
+            backend="nccl" if torch.cuda.is_available() else "gloo",
+            rank=self.rank,
+            world_size=self.world_size,
+            init_method=f"tcp://{master_addr}:{master_port}",
+        )
+        self._dist_initialized = True
+
+    def build_worker(self) -> None:
+        if self._worker is not None:
+            return
+        training_config, _ = _worker_dict_to_training_config(self.config_dict)
+        engine = FSDPEngineWithLMHead(
+            model_config=training_config.model_config,  # pyright: ignore[reportCallIssue]
+            engine_config=training_config.engine_config,  # pyright: ignore[reportCallIssue]
+            optimizer_config=training_config.optimizer_config,  # pyright: ignore[reportCallIssue]
+            checkpoint_config=training_config.checkpoint_config,  # pyright: ignore[reportCallIssue]
+        )
+        self._worker = FullParamVerlWorker(
+            model_config=training_config.model_config,
+            engine_config=training_config.engine_config,
+            optimizer_config=training_config.optimizer_config,
+            checkpoint_config=training_config.checkpoint_config,
+        )
+        self._worker.engine = engine
+        logging.info("[SERVER][FullParamActor] build_worker initialize rank=%s", self.rank)
+        self._worker.initialize()
+        logging.info("[SERVER][FullParamActor] build_worker initialize done rank=%s", self.rank)
+
+    def forward_backward(
+        self,
+        data: list,
+        loss_fn_name: str,
+        loss_fn_config: Optional[dict] = None,
+        forward_only: bool = False,
+    ) -> Dict[str, Any]:
+        """data: list[types.Datum] (or dicts after Ray serialization)."""
+        if data and isinstance(data[0], dict):
+            data = [types.Datum(**d) for d in data]
+
+        if not data:
+            return {"metrics": {}, "loss_fn_outputs": []}
+
+        # Use a placeholder adapter_id for TensorDict construction (no actual adapter)
+        td = _datum_list_to_tensordict(data, "__full_param__", "cuda")
+        loss_fn = _make_verl_loss_fn(loss_fn_name, loss_fn_config)
+
+        if self._worker is None:
+            return {"metrics": {}, "loss_fn_outputs": []}
+
+        out = self._worker.forward_backward(td, loss_fn, forward_only=forward_only)
+
+        metrics = out.get("metrics", {}) or {}
+
+        def _to_scalar(v: Any) -> Any:
+            if isinstance(v, list) and v and all(isinstance(x, (int, float)) for x in v):
+                return sum(v) if len(v) > 1 else float(v[0])
+            return v
+
+        metrics = {k: _to_scalar(v) for k, v in metrics.items()}
+        loss_fn_outputs = _fsdp_logprobs_to_loss_fn_outputs(out, data)
+        return {"metrics": metrics, "loss_fn_outputs": loss_fn_outputs}
+
+    def optim_step(
+        self,
+        learning_rate: Optional[float] = None,
+        weight_decay: Optional[float] = None,
+        grad_clip_norm: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        if self._worker is None:
+            return {}
+        return self._worker.optim_step(learning_rate, weight_decay, grad_clip_norm)
+
+    def save_checkpoint(self, path: str, optimizer: bool = True) -> None:
+        if self._worker is None:
+            return
+        self._worker.save_checkpoint(Path(path), optimizer)
+
+    def load_checkpoint(self, path: str, optimizer: bool = True) -> None:
+        if self._worker is None:
+            return
+        self._worker.load_checkpoint(Path(path), optimizer)
+
+    def leave_train_mode(self) -> None:
+        if self._worker is not None:
+            self._worker.leave_train_mode()
+
+
+# =============================================================================
 # FSDPTrainingBackend (implements BaseTrainingBackend)
 # Multi-GPU: N GPUs = N VerlWorkerActor (Ray), forming torch.distributed.
 # =============================================================================
@@ -983,6 +1338,15 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         )
         self._config_dict = _config_to_worker_dict(config)
         self.logger = logging.getLogger(f"{__name__}.FSDPTrainingBackend")
+        # Full-parameter training state
+        # NOTE: Currently a SINGLE shared worker for all full-param tenants.
+        # Multiple model_ids in _full_param_model_ids share the same weights/optimizer
+        # — there is no per-tenant isolation. See FullParamVerlWorker class comment
+        # for the limitation explanation and future multi-tenant roadmap.
+        self._full_param_model_ids: set[str] = set()
+        self._full_param_worker: Optional[FullParamVerlWorker] = None
+        self._full_param_actors: List[Any] = []
+        self._full_param_initialized: bool = False
 
     async def async_init(self) -> None:
         if self._world_size > 0 or self._worker is not None:
@@ -1089,6 +1453,107 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             raise ValueError(f"Unknown lora_id: {lora_id}; call create_adapter first.")
         return self._lora_id_to_adapter_name[lora_id]
 
+    async def _async_init_full_param(self) -> None:
+        """Lazily initialize full-parameter training workers/actors."""
+        if self._full_param_initialized:
+            return
+        n_gpus = getattr(self.config, "fsdp_num_gpus", 1)
+        n_gpus = max(1, int(n_gpus))
+        use_ray = os.environ.get("TUFT_FSDP_NO_RAY") != "1"
+
+        if not use_ray:
+            # Local single-process mode
+            import torch.distributed as dist
+
+            if not dist.is_available() or not dist.is_initialized():
+                import socket
+
+                os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
+                if "MASTER_PORT" not in os.environ:
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                        s.bind(("", 0))
+                        os.environ["MASTER_PORT"] = str(s.getsockname()[1])
+                os.environ.setdefault("RANK", "0")
+                os.environ.setdefault("WORLD_SIZE", "1")
+                dist.init_process_group(
+                    backend="nccl" if torch.cuda.is_available() else "gloo",
+                    rank=0,
+                    world_size=1,
+                )
+            training_config, _ = _worker_dict_to_training_config(self._config_dict)
+            engine = FSDPEngineWithLMHead(
+                model_config=training_config.model_config,  # pyright: ignore[reportCallIssue]
+                engine_config=training_config.engine_config,  # pyright: ignore[reportCallIssue]
+                optimizer_config=training_config.optimizer_config,  # pyright: ignore[reportCallIssue]
+                checkpoint_config=training_config.checkpoint_config,  # pyright: ignore[reportCallIssue]
+            )
+            self._full_param_worker = FullParamVerlWorker(
+                model_config=training_config.model_config,
+                engine_config=training_config.engine_config,
+                optimizer_config=training_config.optimizer_config,
+                checkpoint_config=training_config.checkpoint_config,
+            )
+            self._full_param_worker.engine = engine
+            await asyncio.to_thread(self._full_param_worker.initialize)
+            self._full_param_initialized = True
+            return
+
+        import ray
+
+        config_dict = self._config_dict
+        _venv = self._worker_venv_path
+        if not _venv or not _venv.strip():
+            _runtime_env = {}
+        else:
+            _path = os.environ.get("PATH", "")
+            _venv_python = str(Path(_venv) / "bin" / "python")
+            _runtime_env = {
+                "py_executable": _venv_python,
+                "env_vars": {
+                    "VIRTUAL_ENV": _venv,
+                    "PATH": f"{_venv}/bin:{_path}",
+                },
+            }
+
+        actors = []
+        for r in range(n_gpus):
+            actor = (
+                ray.remote(FullParamWorkerActor)
+                .options(num_gpus=1, runtime_env=_runtime_env)
+                .remote(r, n_gpus, config_dict)
+            )
+            actors.append(actor)
+
+        _GET_NODE_IP_TIMEOUT = 30
+        master_addr = await asyncio.to_thread(
+            ray.get, actors[0].get_node_ip.remote(), timeout=_GET_NODE_IP_TIMEOUT
+        )
+        # Use a different port range for full-param to avoid conflicts with LoRA actors
+        base_port = getattr(self.config, "fsdp_master_port", DEFAULT_MASTER_PORT) + 100
+        master_port = base_port + self._fsdp_index if self._fsdp_index is not None else base_port
+        await asyncio.gather(
+            *[
+                asyncio.to_thread(ray.get, a.init_dist.remote(master_addr, master_port))
+                for a in actors
+            ]
+        )
+        await asyncio.gather(*[asyncio.to_thread(ray.get, a.build_worker.remote()) for a in actors])
+        self._full_param_actors = actors
+        self._full_param_initialized = True
+
+    async def init_full_param(self, model_id: str) -> None:
+        """Initialize full-parameter training for the given model_id.
+
+        NOTE: All model_ids registered here share a SINGLE FullParamVerlWorker
+        (same weights + optimizer). There is no per-tenant weight isolation.
+        Concurrent tenants will train on and mutate the same parameters.
+        """
+        async with self._lock:
+            if not self._full_param_initialized:
+                await self._async_init_full_param()
+            self._full_param_model_ids.add(model_id)
+            self.logger.info("Full-param training initialized for model_id=%s", model_id)
+
     async def create_adapter(self, lora_id: str, lora_config: types.LoraConfig) -> None:
         async with self._lock:
             if self._world_size == 0 and self._worker is None and not self._actors:
@@ -1135,7 +1600,6 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         loss_fn_config: dict[str, float] | None,
         backward: bool = False,
     ) -> types.ForwardBackwardOutput:
-        adapter_name = self._get_adapter_name(lora_id)
         loss_fn_name = (
             loss_fn if isinstance(loss_fn, str) else getattr(loss_fn, "__name__", "cross_entropy")
         )
@@ -1145,45 +1609,48 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                 return sum(v) if len(v) > 1 else float(v[0])
             return v
 
-        if self._worker is not None:
-            td = await asyncio.to_thread(_datum_list_to_tensordict, data, adapter_name, "cuda")
-            verl_loss_fn = _make_verl_loss_fn(loss_fn_name, loss_fn_config)
-            out = await asyncio.to_thread(
-                self._worker.forward_backward,
-                adapter_name,
-                td,
-                verl_loss_fn,
-                not backward,
+        # Route to full-param or LoRA path
+        if lora_id in self._full_param_model_ids:
+            metrics, loss_fn_outputs = await self._forward_full_param(
+                data, loss_fn_name, loss_fn_config, backward
             )
-            metrics = out.get("metrics", {}) or {}
-            metrics = {k: _to_scalar(v) for k, v in metrics.items()}
-            loss_fn_outputs = _fsdp_logprobs_to_loss_fn_outputs(out, data)
         else:
-            import ray
-
-            shards = _shard_list(data, len(self._actors))
-
-            refs = []
-            for actor, shard in zip(self._actors, shards, strict=False):
-                if not shard:
-                    continue
-                refs.append(
-                    actor.forward_backward.remote(
-                        shard,
-                        adapter_name,
-                        loss_fn_name,
-                        loss_fn_config,
-                        not backward,
-                    )
+            adapter_name = self._get_adapter_name(lora_id)
+            if self._worker is not None:
+                td = await asyncio.to_thread(_datum_list_to_tensordict, data, adapter_name, "cuda")
+                verl_loss_fn = _make_verl_loss_fn(loss_fn_name, loss_fn_config)
+                out = await asyncio.to_thread(
+                    self._worker.forward_backward,
+                    adapter_name,
+                    td,
+                    verl_loss_fn,
+                    not backward,
                 )
+                metrics = out.get("metrics", {}) or {}
+                metrics = {k: _to_scalar(v) for k, v in metrics.items()}
+                loss_fn_outputs = _fsdp_logprobs_to_loss_fn_outputs(out, data)
+            else:
+                import ray
 
-            results = await asyncio.to_thread(ray.get, refs) if refs else []
-
-            metrics = _merge_metrics(results)
-
-            loss_fn_outputs = []
-            for out in results:
-                loss_fn_outputs.extend(out.get("loss_fn_outputs", []))
+                shards = _shard_list(data, len(self._actors))
+                refs = []
+                for actor, shard in zip(self._actors, shards, strict=False):
+                    if not shard:
+                        continue
+                    refs.append(
+                        actor.forward_backward.remote(
+                            shard,
+                            adapter_name,
+                            loss_fn_name,
+                            loss_fn_config,
+                            not backward,
+                        )
+                    )
+                results = await asyncio.to_thread(ray.get, refs) if refs else []
+                metrics = _merge_metrics(results)
+                loss_fn_outputs = []
+                for out in results:
+                    loss_fn_outputs.extend(out.get("loss_fn_outputs", []))
 
         # Tinker expects every metric key to be "name:reduction" (e.g. loss:sum)
         metrics = {k: v for k, v in metrics.items() if ":" in k}
@@ -1194,11 +1661,59 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             metrics=metrics,
         )
 
+    async def _forward_full_param(
+        self,
+        data: list[types.Datum],
+        loss_fn_name: str,
+        loss_fn_config: dict[str, float] | None,
+        backward: bool,
+    ) -> tuple[dict[str, Any], list]:
+        """Full-param forward (and backward) dispatch."""
+
+        def _to_scalar(v: Any) -> Any:
+            if isinstance(v, list) and v and all(isinstance(x, (int, float)) for x in v):
+                return sum(v) if len(v) > 1 else float(v[0])
+            return v
+
+        if self._full_param_worker is not None:
+            td = await asyncio.to_thread(_datum_list_to_tensordict, data, "__full_param__", "cuda")
+            verl_loss_fn = _make_verl_loss_fn(loss_fn_name, loss_fn_config)
+            out = await asyncio.to_thread(
+                self._full_param_worker.forward_backward,
+                td,
+                verl_loss_fn,
+                not backward,
+            )
+            metrics = out.get("metrics", {}) or {}
+            metrics = {k: _to_scalar(v) for k, v in metrics.items()}
+            loss_fn_outputs = _fsdp_logprobs_to_loss_fn_outputs(out, data)
+        else:
+            import ray
+
+            shards = _shard_list(data, len(self._full_param_actors))
+            refs = []
+            for actor, shard in zip(self._full_param_actors, shards, strict=False):
+                if not shard:
+                    continue
+                refs.append(
+                    actor.forward_backward.remote(shard, loss_fn_name, loss_fn_config, not backward)
+                )
+            results = await asyncio.to_thread(ray.get, refs) if refs else []
+            metrics = _merge_metrics(results)
+            loss_fn_outputs = []
+            for out in results:
+                loss_fn_outputs.extend(out.get("loss_fn_outputs", []))
+        return metrics, loss_fn_outputs
+
     async def optim_step(
         self,
         adam_params: types.AdamParams,
         lora_id: str,
     ) -> types.OptimStepResponse:
+        # Route to full-param or LoRA path
+        if lora_id in self._full_param_model_ids:
+            return await self._optim_step_full_param(adam_params)
+
         adapter_name = self._get_adapter_name(lora_id)
         if self._worker is not None:
             result = await asyncio.to_thread(
@@ -1225,14 +1740,54 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         metrics = {k: float(v) for k, v in (result or {}).items() if isinstance(v, (int, float))}
         return types.OptimStepResponse(metrics=metrics or None)
 
+    async def _optim_step_full_param(
+        self, adam_params: types.AdamParams
+    ) -> types.OptimStepResponse:
+        """Optimizer step for full-param workers."""
+        if self._full_param_worker is not None:
+            result = await asyncio.to_thread(
+                self._full_param_worker.optim_step,
+                adam_params.learning_rate,
+                adam_params.weight_decay,
+                adam_params.grad_clip_norm,
+            )
+        else:
+            import ray
+
+            refs = [
+                a.optim_step.remote(
+                    adam_params.learning_rate,
+                    adam_params.weight_decay,
+                    adam_params.grad_clip_norm,
+                )
+                for a in self._full_param_actors
+            ]
+            results = await asyncio.to_thread(ray.get, refs)
+            result = results[0] if results else {}
+        metrics = {k: float(v) for k, v in (result or {}).items() if isinstance(v, (int, float))}
+        return types.OptimStepResponse(metrics=metrics or None)
+
     async def save_state(
         self,
         lora_id: str,
         checkpoint_record: CheckpointRecord,
         optimizer: bool,
     ) -> None:
-        adapter_name = self._get_adapter_name(lora_id)
         path = checkpoint_record.adapter_path
+        # Route to full-param or LoRA path
+        if lora_id in self._full_param_model_ids:
+            if self._full_param_worker is not None:
+                await asyncio.to_thread(self._full_param_worker.save_checkpoint, path, optimizer)
+            else:
+                import ray
+
+                refs = [
+                    a.save_checkpoint.remote(str(path), optimizer) for a in self._full_param_actors
+                ]
+                await asyncio.to_thread(ray.get, refs)
+            return
+
+        adapter_name = self._get_adapter_name(lora_id)
         if self._worker is not None:
             await asyncio.to_thread(self._worker.save_checkpoint, adapter_name, path, optimizer)
         else:
@@ -1249,8 +1804,21 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         checkpoint_record: CheckpointRecord,
         optimizer: bool,
     ) -> None:
-        adapter_name = self._get_adapter_name(lora_id)
         path = checkpoint_record.adapter_path
+        # Route to full-param or LoRA path
+        if lora_id in self._full_param_model_ids:
+            if self._full_param_worker is not None:
+                await asyncio.to_thread(self._full_param_worker.load_checkpoint, path, optimizer)
+            else:
+                import ray
+
+                refs = [
+                    a.load_checkpoint.remote(str(path), optimizer) for a in self._full_param_actors
+                ]
+                await asyncio.to_thread(ray.get, refs)
+            return
+
+        adapter_name = self._get_adapter_name(lora_id)
         if self._worker is not None:
             await asyncio.to_thread(self._worker.load_checkpoint, adapter_name, path, optimizer)
         else:

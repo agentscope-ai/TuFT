@@ -20,6 +20,7 @@ from .exceptions import (
     CheckpointAccessDeniedException,
     CheckpointMetadataReadException,
     CheckpointNotFoundException,
+    InvalidRequestException,
     SequenceConflictException,
     UnknownModelException,
     UserMismatchException,
@@ -59,7 +60,8 @@ class TrainingRunRecord(BaseModel):
 
     training_run_id: str
     base_model: str
-    lora_rank: int
+    lora_rank: int | None = None
+    is_lora: bool = True
     session_id: str
     model_owner: str
     user_metadata: dict[str, str] | None = None
@@ -84,7 +86,7 @@ class TrainingRunRecord(BaseModel):
             training_run_id=self.training_run_id,
             base_model=self.base_model,
             model_owner=self.model_owner,
-            is_lora=True,
+            is_lora=self.is_lora,
             corrupted=self.corrupted,
             lora_rank=self.lora_rank,
             last_request_time=self.last_request_time,
@@ -131,6 +133,13 @@ class TrainingController:
                 worker_venv_path=self.config.worker_venv_path,
             )
         return backends
+
+    def _get_model_config(self, base_model: str) -> ModelConfig | None:
+        """Find the ModelConfig for the given base_model name."""
+        for cfg in self.config.supported_models:
+            if cfg.model_name == base_model:
+                return cfg
+        return None
 
     def _build_key(self, model_id: str) -> str:
         return get_redis_store().build_key(self.REDIS_KEY_PREFIX, model_id)
@@ -300,32 +309,51 @@ class TrainingController:
         self,
         session_id: str,
         base_model: str,
-        lora_config: types.LoraConfig,
+        lora_config: types.LoraConfig | None,
         model_owner: str,
         user_metadata: dict[str, str] | None,
     ) -> TrainingRunRecord:
         model_id = str(uuid.uuid4())
+        is_lora = lora_config is not None
         with _get_tracer().start_as_current_span("training_controller.create_model") as span:
             span.set_attribute("tuft.training_run_id", model_id)
             span.set_attribute("tuft.session_id", session_id)
             span.set_attribute("tuft.base_model", base_model)
-            span.set_attribute("tuft.lora_rank", lora_config.rank)
+            span.set_attribute("tuft.is_lora", is_lora)
+            if lora_config is not None:
+                span.set_attribute("tuft.lora_rank", lora_config.rank)
             try:
-                logger.info("Creating model %s", model_id)
+                logger.info("Creating model %s (is_lora=%s)", model_id, is_lora)
 
                 if base_model not in self.training_backends:
                     raise UnknownModelException(model_name=base_model)
                 backend = self.training_backends[base_model]
+
+                # Find the ModelConfig for this base_model to check allow_full_param
+                if not is_lora:
+                    model_cfg = self._get_model_config(base_model)
+                    if model_cfg is None or not model_cfg.allow_full_param:
+                        raise InvalidRequestException(
+                            "Model does not support full-parameter training. "
+                            "Set allow_full_param=True in model config to enable."
+                        )
+
                 record = TrainingRunRecord(
                     training_run_id=model_id,
                     base_model=base_model,
-                    lora_rank=lora_config.rank,
+                    lora_rank=lora_config.rank if lora_config else None,
+                    is_lora=is_lora,
                     session_id=session_id,
                     model_owner=model_owner,
                     user_metadata=user_metadata,
                     backend=backend,
                 )
-                await backend.create_adapter(model_id, lora_config)
+
+                if is_lora:
+                    await backend.create_adapter(model_id, lora_config)
+                else:
+                    await backend.init_full_param(model_id)
+
                 self.training_runs[model_id] = record
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, self._save_training_run, model_id)
@@ -487,7 +515,7 @@ class TrainingController:
         return types.GetInfoResponse(
             model_data=model_data,
             model_id=model_id,
-            is_lora=True,
+            is_lora=record.is_lora,
             lora_rank=record.lora_rank,
             model_name=record.base_model,
         )
@@ -741,7 +769,10 @@ class TrainingController:
         if record is None or record.backend is None:
             return None
         try:
-            await record.backend.create_adapter(model_id, types.LoraConfig(rank=record.lora_rank))
+            if record.lora_rank is not None:
+                await record.backend.create_adapter(
+                    model_id, types.LoraConfig(rank=record.lora_rank)
+                )
         except Exception:
             logger.exception("Failed to create adapter for model %s during restore", model_id)
         try:

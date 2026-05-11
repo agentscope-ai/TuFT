@@ -37,6 +37,14 @@ Enable server state persistence with Redis for crash recovery.
 OpenTelemetry integration for tracing, metrics, and logs.
 :::
 
+:::{grid-item-card} Full-Param Fine-Tuning
+:link: full-param-finetuning
+:link-type: doc
+:shadow: none
+
+Full-parameter fine-tuning (all weights) via FSDP backend.
+:::
+
 :::{grid-item-card} Console
 :link: console
 :link-type: doc
@@ -52,6 +60,7 @@ Dashboard for monitoring training runs, checkpoints, and sampling playground.
 
 chat-sft
 countdown-rl
+full-param-finetuning
 persistence
 telemetry
 console

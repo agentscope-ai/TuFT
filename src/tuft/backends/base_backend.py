@@ -108,6 +108,16 @@ class BaseTrainingBackend(BaseBackend):
     ) -> None:
         """Abstract method for loading model state."""
 
+    async def init_full_param(self, model_id: str) -> None:
+        """Initialize full-parameter training (no LoRA).
+
+        Override in backends that support full-parameter training.
+        By default, raises NotImplementedError.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support full-parameter training."
+        )
+
     @classmethod
     def create_backend(
         cls,

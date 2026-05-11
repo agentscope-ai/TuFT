@@ -212,19 +212,19 @@ def get_service_client() -> tinker.ServiceClient:
 
 def create_training_client(
     base_model: str,
-    rank: int = 16,
+    rank: int | None = 16,
     **kwargs,
 ):
-    """Convenience: create a LoRA training client via the global ServiceClient.
+    """Convenience: create a training client via the global ServiceClient.
 
     Args:
         base_model: The base model name/path registered on the server.
             If a full path is given, it will be resolved to the model directory name.
-        rank: LoRA rank.
+        rank: LoRA rank. Set to None for full-parameter training (no LoRA).
         **kwargs: Additional arguments passed to create_lora_training_client.
 
     Returns:
-        A LoRA training client.
+        A training client (LoRA or full-param depending on rank).
     """
     # If base_model looks like an absolute path, extract the directory name
     # since the server registers models by directory name (e.g. "Qwen2.5-0.5B-Instruct")
@@ -232,6 +232,11 @@ def create_training_client(
         base_model = Path(base_model).name
 
     client = get_service_client()
+
+    if rank is None:
+        # Full-parameter training path
+        return _create_full_param_training_client(client, base_model, **kwargs)
+
     return client.create_lora_training_client(
         base_model=base_model,
         rank=rank,
@@ -268,6 +273,56 @@ def create_sampling_client(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _create_full_param_training_client(
+    service_client: tinker.ServiceClient,
+    base_model: str,
+    user_metadata: dict[str, str] | None = None,
+    **kwargs,
+):
+    """Create a TrainingClient for full-parameter training (lora_config=None).
+
+    Uses the Tinker SDK's internal mechanisms to send a CreateModelRequest
+    with lora_config=None, then wraps the response into a TrainingClient.
+    """
+    import time
+
+    from tinker import types as tinker_types
+    from tinker.lib.api_future_impl import _APIFuture
+    from tinker.lib.client_connection_pool_type import ClientConnectionPoolType
+    from tinker.lib.public_interfaces.training_client import TrainingClient
+    from tinker.lib.queue_state_logger import QueueStateLogger
+
+    holder = service_client.holder
+    session_id = holder.get_session_id()
+    model_seq_id = holder.get_training_client_id()
+
+    async def _create_async():
+        start_time = time.time()
+        with holder.aclient(ClientConnectionPoolType.TRAIN) as client:
+            request = tinker_types.CreateModelRequest(
+                session_id=session_id,
+                model_seq_id=model_seq_id,
+                base_model=base_model,
+                lora_config=None,
+                user_metadata=user_metadata,
+            )
+            future = await client.models.create(request=request)
+        create_model_response = await _APIFuture(
+            tinker_types.CreateModelResponse,
+            holder,
+            future,
+            request_start_time=start_time,
+            request_type="CreateModel",
+            queue_state_observer=QueueStateLogger(base_model, "Model creation"),
+        ).result_async()
+        model_id = create_model_response.model_id
+        training_client = TrainingClient(holder, model_seq_id=model_seq_id, model_id=model_id)
+        logger.info("Full-param TrainingClient initialized for model %s", model_id)
+        return training_client
+
+    return holder.run_coroutine_threadsafe(_create_async()).result()
 
 
 def _resolve_config_for_launch(

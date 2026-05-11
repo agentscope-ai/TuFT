@@ -292,6 +292,10 @@ class DummyTrainingBackend(BaseTrainingBackend):
     async def create_adapter(self, lora_id: str, lora_config: types.LoraConfig) -> None:
         self._adapters[lora_id] = lora_config
 
+    async def init_full_param(self, model_id: str) -> None:
+        """Mark model_id as full-param (no LoRA adapter)."""
+        self._adapters[model_id] = None
+
     async def remove_adapter(self, lora_id: str) -> None:
         self._adapters.pop(lora_id, None)
 

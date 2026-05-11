@@ -139,6 +139,35 @@ def fsdp_server_endpoint(tmp_path_factory: pytest.TempPathFactory):
 
 
 @pytest.fixture(scope="module")
+def fsdp_full_param_server_endpoint(tmp_path_factory: pytest.TempPathFactory):
+    """Single-model FSDP server with allow_full_param=True (1 GPU)."""
+    model_path = _get_model_path()
+    if not _tmp_space_ok():
+        pytest.skip("/tmp has insufficient free space for Ray working_dir packaging; need ~500MB+")
+    _log(f"FSDP full-param fixture using model path: {model_path}")
+
+    config = ServerFixtureConfig(
+        model_configs=[
+            ModelConfig(
+                model_name="Qwen/Qwen3-0.6B",
+                model_path=model_path,
+                max_model_len=4096,
+                tensor_parallel_size=1,
+                training_backend="fsdp",
+                fsdp_num_gpus=1,
+                max_lora_rank=8,
+                allow_full_param=True,
+                sampling_memory_fraction=0.3,
+            ),
+        ],
+        checkpoint_subdir="checkpoints_fsdp_full_param",
+        ray_env_vars={"UV_CACHE_DIR": "/home/ray_uv_cache"},
+        ray_excludes=[".git", "*.pack", "*.tar.gz", "checkpoints"],
+    )
+    yield from _create_server_endpoint(tmp_path_factory, config)
+
+
+@pytest.fixture(scope="module")
 def fsdp_multi_gpu_server_endpoint(tmp_path_factory: pytest.TempPathFactory):
     """Single-model FSDP server with 2 GPUs for multi-GPU training."""
     model_path = _get_model_path()
@@ -609,5 +638,91 @@ def test_fsdp_multi_gpu_training_flow(fsdp_multi_gpu_server_endpoint: str) -> No
         ).result(timeout=120)
         assert sampler_response.path.startswith("tinker://")
         _log(f"[Multi-GPU] Sampler path: {sampler_response.path}")
+    finally:
+        service_client.holder.close()
+
+
+@pytest.mark.integration
+@pytest.mark.gpu
+def test_fsdp_full_param_training_flow(fsdp_full_param_server_endpoint: str) -> None:
+    """FSDP full-parameter training (no LoRA): forward/backward + optim_step + checkpoint."""
+    import time
+
+    import torch
+
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is not available, skipping GPU integration test")
+
+    from tinker.lib.api_future_impl import _APIFuture
+    from tinker.lib.client_connection_pool_type import ClientConnectionPoolType
+    from tinker.lib.public_interfaces.training_client import TrainingClient
+    from tinker.lib.queue_state_logger import QueueStateLogger
+
+    service_client = ServiceClient(
+        api_key="tml-test-key",  # pragma: allowlist secret
+        base_url=fsdp_full_param_server_endpoint,
+        timeout=180,
+    )
+    tokenizer = AutoTokenizer.from_pretrained(os.environ["TUFT_TEST_MODEL"])
+    try:
+        capabilities = service_client.get_server_capabilities()
+        assert capabilities.supported_models, "server did not report supported models"
+        assert len(capabilities.supported_models) == 1
+        base_model = capabilities.supported_models[0].model_name or "Qwen/Qwen3-0.6B"
+        _log(f"[Full-Param] Base model: {base_model}")
+
+        # Create full-param model (lora_config=None) via SDK internals
+        _log("[Full-Param] Creating full-parameter model (no LoRA)...")
+        holder = service_client.holder
+        session_id = holder.get_session_id()
+        model_seq_id = holder.get_training_client_id()
+
+        async def _create_full_param_async():
+            start_time = time.time()
+            with holder.aclient(ClientConnectionPoolType.TRAIN) as client:
+                request = types.CreateModelRequest(
+                    session_id=session_id,
+                    model_seq_id=model_seq_id,
+                    base_model=base_model,
+                    lora_config=None,
+                )
+                future = await client.models.create(request=request)
+            create_model_response = await _APIFuture(
+                types.CreateModelResponse,
+                holder,
+                future,
+                request_start_time=start_time,
+                request_type="CreateModel",
+                queue_state_observer=QueueStateLogger(base_model, "Model creation"),
+            ).result_async()
+            return create_model_response.model_id
+
+        model_id = holder.run_coroutine_threadsafe(_create_full_param_async()).result(timeout=120)
+        assert model_id, "full-param model creation returned no model_id"
+        _log(f"[Full-Param] Model ID: {model_id}")
+
+        # Build a TrainingClient from the model_id
+        training_client = TrainingClient(holder, model_seq_id=model_seq_id, model_id=model_id)
+
+        # Prepare training data
+        train_data = _create_training_data(tokenizer)
+        _log(f"[Full-Param] Training samples: {len(train_data)}")
+
+        # Train for a few epochs
+        num_epochs = 5
+        for epoch in range(1, num_epochs + 1):
+            fwd_out = training_client.forward_backward(train_data, "cross_entropy").result(
+                timeout=120
+            )
+            loss = fwd_out.metrics.get("loss:sum", fwd_out.metrics.get("loss", "\u2014"))
+            training_client.optim_step(types.AdamParams(learning_rate=1e-5)).result(timeout=120)
+            if epoch % 2 == 0 or epoch == 1:
+                _log(f"[Full-Param] FSDP training epoch {epoch}/{num_epochs}, loss: {loss}")
+        _log("[Full-Param] FSDP full-param training complete")
+
+        # Save checkpoint
+        checkpoint_response = training_client.save_state("full-param-ckpt-1").result(timeout=120)
+        assert checkpoint_response.path.startswith("tinker://")
+        _log(f"[Full-Param] Checkpoint path: {checkpoint_response.path}")
     finally:
         service_client.holder.close()

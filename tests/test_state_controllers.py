@@ -11,6 +11,7 @@ from tuft.auth import User
 from tuft.config import AppConfig, ModelConfig
 from tuft.exceptions import (
     CheckpointAccessDeniedException,
+    InvalidRequestException,
     LossFunctionMissingInputException,
     MissingSequenceIDException,
     SequenceConflictException,
@@ -581,3 +582,162 @@ async def test_rest_client(request, tmp_path) -> None:
             sampler_id=sampler_1,
             user_id="other_user",
         )
+
+
+# ===========================================================================
+# Full-parameter training tests
+# ===========================================================================
+
+
+def _build_full_param_state(tmp_path, use_gpu: bool = False) -> ServerState:
+    """Build a ServerState with allow_full_param=True for testing."""
+    if use_gpu:
+        assert "TUFT_TEST_MODEL" in os.environ
+        model_path = Path(os.environ.get("TUFT_TEST_MODEL", "Qwen/Qwen3-0.6B"))
+    else:
+        model_path = Path("/path/to/model")
+
+    config = AppConfig(checkpoint_dir=tmp_path)
+    config.supported_models = [
+        ModelConfig(
+            model_name="Qwen/Qwen3-0.6B",
+            model_path=model_path,
+            max_model_len=2048,
+            tensor_parallel_size=1,
+            sampling_memory_fraction=0.6,
+            allow_full_param=True,
+        )
+    ]
+    return ServerState(config)
+
+
+@pytest.mark.asyncio
+async def test_full_param_create_model(request, tmp_path) -> None:
+    """Test that create_model with lora_config=None succeeds when allow_full_param=True."""
+    use_gpu = request.config.getoption("--gpu")
+    state = _build_full_param_state(tmp_path, use_gpu)
+    session_id = _create_session(state)
+
+    record = await state.create_model(
+        session_id,
+        base_model="Qwen/Qwen3-0.6B",
+        lora_config=None,
+        model_owner="tester",
+        user_metadata=None,
+    )
+    assert record.training_run_id is not None
+    assert record.is_lora is False
+    assert record.lora_rank is None
+
+
+@pytest.mark.asyncio
+async def test_full_param_rejected_when_not_allowed(request, tmp_path) -> None:
+    """Test that create_model with lora_config=None fails when allow_full_param=False."""
+    use_gpu = request.config.getoption("--gpu")
+    state = _build_state(tmp_path, use_gpu)  # uses default allow_full_param=False
+    session_id = _create_session(state)
+
+    with pytest.raises(InvalidRequestException) as excinfo:
+        await state.create_model(
+            session_id,
+            base_model="Qwen/Qwen3-0.6B",
+            lora_config=None,
+            model_owner="tester",
+            user_metadata=None,
+        )
+    assert "does not support full-parameter training" in excinfo.value.detail
+
+
+@pytest.mark.asyncio
+async def test_full_param_forward_and_optim(request, tmp_path) -> None:
+    """Test full-param training flow: create_model -> forward -> optim_step."""
+    use_gpu = request.config.getoption("--gpu")
+    state = _build_full_param_state(tmp_path, use_gpu)
+    session_id = _create_session(state)
+
+    record = await state.create_model(
+        session_id,
+        base_model="Qwen/Qwen3-0.6B",
+        lora_config=None,
+        model_owner="tester",
+        user_metadata=None,
+    )
+    model_id = record.training_run_id
+
+    datum = types.Datum(
+        model_input=types.ModelInput.from_ints([11, 12, 13, 14]),
+        loss_fn_inputs={
+            "target_tokens": types.TensorData(data=[21, 22, 23, 24], dtype="int64", shape=[4]),
+            "weights": types.TensorData(data=[1.0, 1.0, 1.0, 1.0], dtype="float32", shape=[4]),
+        },
+    )
+
+    # Forward pass
+    result = await state.run_forward(
+        model_id,
+        user_id="tester",
+        data=[datum],
+        loss_fn="cross_entropy",
+        loss_fn_config=None,
+        seq_id=1,
+        backward=True,
+    )
+    assert result is not None
+
+    # Optimizer step
+    optim_result = await state.run_optim_step(
+        model_id,
+        user_id="tester",
+        params=types.AdamParams(learning_rate=1e-4),
+        seq_id=2,
+    )
+    assert optim_result is not None
+
+
+@pytest.mark.asyncio
+async def test_full_param_get_model_info(request, tmp_path) -> None:
+    """Test that get_model_info returns is_lora=False for full-param models."""
+    use_gpu = request.config.getoption("--gpu")
+    state = _build_full_param_state(tmp_path, use_gpu)
+    session_id = _create_session(state)
+
+    record = await state.create_model(
+        session_id,
+        base_model="Qwen/Qwen3-0.6B",
+        lora_config=None,
+        model_owner="tester",
+        user_metadata=None,
+    )
+    model_id = record.training_run_id
+
+    info = state.training.get_model_info(model_id=model_id, user_id="tester")
+    assert info.is_lora is False
+    assert info.lora_rank is None
+
+
+@pytest.mark.asyncio
+async def test_full_param_save_and_load(request, tmp_path) -> None:
+    """Test full-param save_state and load_state."""
+    use_gpu = request.config.getoption("--gpu")
+    state = _build_full_param_state(tmp_path, use_gpu)
+    session_id = _create_session(state)
+
+    record = await state.create_model(
+        session_id,
+        base_model="Qwen/Qwen3-0.6B",
+        lora_config=None,
+        model_owner="tester",
+        user_metadata=None,
+    )
+    model_id = record.training_run_id
+
+    # Save checkpoint
+    checkpoint_response = await state.save_checkpoint(
+        model_id=model_id,
+        user_id="tester",
+        name="full-param-ckpt-1",
+        checkpoint_type="training",
+        seq_id=1,
+    )
+    assert checkpoint_response is not None
+    assert checkpoint_response.checkpoint_id == "full-param-ckpt-1"

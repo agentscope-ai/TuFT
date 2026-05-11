@@ -214,10 +214,6 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         state: ServerState = Depends(_get_state),
         user: User = Depends(_get_user),
     ) -> types.UntypedAPIFuture:
-        if request.lora_config is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail="Missing LoRA config"
-            )
         try:
             training_record = await state.create_model(
                 session_id=request.session_id,

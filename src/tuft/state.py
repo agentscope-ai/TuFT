@@ -171,7 +171,7 @@ class ServerState:
         self,
         session_id: str,
         base_model: str,
-        lora_config: types.LoraConfig,
+        lora_config: types.LoraConfig | None,
         model_owner: str,
         user_metadata: dict[str, str] | None,
     ) -> TrainingRunRecord:

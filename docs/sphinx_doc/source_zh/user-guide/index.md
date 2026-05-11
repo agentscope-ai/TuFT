@@ -37,6 +37,14 @@
 集成 OpenTelemetry，用于链路追踪、指标监控和日志记录。
 :::
 
+:::{grid-item-card} 全参微调
+:link: full-param-finetuning
+:link-type: doc
+:shadow: none
+
+通过 FSDP 后端进行全参数微调（训练所有权重）。
+:::
+
 :::{grid-item-card} 控制台
 :link: console
 :link-type: doc
@@ -52,6 +60,7 @@
 
 chat-sft
 countdown-rl
+full-param-finetuning
 persistence
 telemetry
 console
