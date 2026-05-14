@@ -21,9 +21,9 @@
 <meta content="#ffffff" media="(prefers-color-scheme: light)" name="theme-color"/>
 <meta content="#030711" media="(prefers-color-scheme: dark)" name="theme-color"/>
 <meta content="width=device-width, initial-scale=1" name="viewport"/>
-<title>Installation | TuFT</title>
-<meta content="Installation | TuFT" property="og:title"/>
-<meta content="Installation | TuFT" name="twitter:title"/>
+<title>Embedded Mode | TuFT</title>
+<meta content="Embedded Mode | TuFT" property="og:title"/>
+<meta content="Embedded Mode | TuFT" name="twitter:title"/>
 <link href="../_static/pygments.css?v=03e43079" rel="stylesheet" type="text/css"/>
 <link href="../_static/theme.css?v=979577e3" rel="stylesheet" type="text/css"/>
 <link href="../_static/sphinx-design.min.css?v=95c83b7e" rel="stylesheet" type="text/css"/>
@@ -32,8 +32,8 @@
 <link href="../_static/logo_wo_text.svg" rel="icon"/>
 <link href="../search.html" rel="search" title="Search"/>
 <link href="../genindex.html" rel="index" title="Index"/>
-<link href="quickstart.html" rel="next" title="Quickstart"/>
-<link href="index.html" rel="prev" title="Getting Started"/>
+<link href="../user-guide/index.html" rel="next" title="User Guide"/>
+<link href="quickstart.html" rel="prev" title="Quickstart"/>
 </head>
 <body :class="{ 'overflow-hidden': showSidebar }" class="min-h-screen font-sans antialiased bg-background text-foreground" x-data="{ showSidebar: false, showScrollTop: false }">
 <div @click.self="showSidebar = false" class="fixed inset-0 z-50 overflow-hidden bg-background/80 backdrop-blur-sm md:hidden" x-cloak="" x-show="showSidebar"></div><div class="relative flex flex-col min-h-screen" id="page"><a class="absolute top-0 left-0 z-[100] block bg-background p-4 text-xl transition -translate-x-full opacity-0 focus:translate-x-0 focus:opacity-100" href="#content">
@@ -93,9 +93,9 @@
 <div class="overflow-y-auto h-full w-full relative pr-6"><nav class="table w-full min-w-full my-6 lg:my-8">
 <ul class="current">
 <li class="toctree-l1 current" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="index.html">Getting Started<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul class="current" x-show="expanded">
-<li class="toctree-l2 current"><a class="current reference internal" href="#">Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="installation.html">Installation</a></li>
 <li class="toctree-l2"><a class="reference internal" href="quickstart.html">Quickstart</a></li>
-<li class="toctree-l2"><a class="reference internal" href="embedded-mode.html">Embedded Mode</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">Embedded Mode</a></li>
 </ul>
 </li>
 <li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="../user-guide/index.html">User Guide<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
@@ -131,135 +131,194 @@
 </svg>
 </a>
 <div class="mr-1">/</div><a class="hover:text-foreground overflow-hidden text-ellipsis whitespace-nowrap" href="index.html">Getting Started</a>
-<div class="mr-1">/</div><span aria-current="page" class="font-medium text-foreground overflow-hidden text-ellipsis whitespace-nowrap">Installation</span>
+<div class="mr-1">/</div><span aria-current="page" class="font-medium text-foreground overflow-hidden text-ellipsis whitespace-nowrap">Embedded Mode</span>
 </nav>
 <div id="content" role="main">
-<section class="tex2jax_ignore mathjax_ignore" id="installation">
-<h1>Installation<a class="headerlink" href="#installation" title="Link to this heading">¶</a></h1>
-<p>This guide covers different ways to install TuFT.</p>
-<section id="quick-install">
-<h2>Quick Install<a class="headerlink" href="#quick-install" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#quick-install'">¶</a></h2>
-<blockquote>
-<div><p><strong>Note</strong>: This script supports unix platforms. For other platforms, see the manual installation sections below.</p>
-</div></blockquote>
-<p>Install TuFT with a single command:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">/bin/bash<span class="w"> </span>-c<span class="w"> </span><span class="s2">"</span><span class="k">$(</span>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install.sh<span class="k">)</span><span class="s2">"</span>
-</span></code></pre></div>
-</div>
-<p>This installs TuFT with full backend support (GPU dependencies, persistence, flash-attn) and a bundled Python environment to <code class="docutils literal notranslate"><span class="pre">~/.tuft</span></code>. After installation, restart your terminal and run:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">tuft
-</span></code></pre></div>
-</div>
-</section>
-<section id="install-from-source-code">
-<h2>Install from Source Code<a class="headerlink" href="#install-from-source-code" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#install-from-source-code'">¶</a></h2>
-<p>We recommend using <a class="reference external" href="https://github.com/astral-sh/uv">uv</a> for dependency management.</p>
-<ol class="arabic">
-<li><p>Clone the repository:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">git<span class="w"> </span>clone<span class="w"> </span>https://github.com/agentscope-ai/TuFT
-</span></code></pre></div>
-</div>
-</li>
-<li><p>Create a virtual environment:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="nb">cd</span><span class="w"> </span>TuFT
-</span><span id="line-2">uv<span class="w"> </span>venv<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.12
-</span></code></pre></div>
-</div>
-</li>
-<li><p>Activate environment:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="nb">source</span><span class="w"> </span>.venv/bin/activate
-</span></code></pre></div>
-</div>
-</li>
-<li><p>Install dependencies:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="c1"># Install minimal dependencies for non-development installs</span>
-</span><span id="line-2">uv<span class="w"> </span>sync
-</span><span id="line-3">
-</span><span id="line-4"><span class="c1"># If you need to develop or run tests, install dev dependencies</span>
-</span><span id="line-5">uv<span class="w"> </span>sync<span class="w"> </span>--extra<span class="w"> </span>dev
-</span><span id="line-6">
-</span><span id="line-7"><span class="c1"># If you want to run the full feature set (e.g., model serving, persistence),</span>
-</span><span id="line-8"><span class="c1"># please install all dependencies</span>
-</span><span id="line-9">uv<span class="w"> </span>sync<span class="w"> </span>--all-extras
-</span><span id="line-10">python<span class="w"> </span>scripts/install_flash_attn.py
-</span><span id="line-11"><span class="c1"># If you face issues with flash-attn installation, you can try installing it manually:</span>
-</span><span id="line-12"><span class="c1"># uv pip install flash-attn --no-build-isolation</span>
-</span></code></pre></div>
-</div>
-</li>
+<section class="tex2jax_ignore mathjax_ignore" id="embedded-mode">
+<h1>Embedded Mode<a class="headerlink" href="#embedded-mode" title="Link to this heading">¶</a></h1>
+<section id="background">
+<h2>Background<a class="headerlink" href="#background" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#background'">¶</a></h2>
+<p>TuFT is designed to serve as a <strong>transparent compute service layer</strong> for RL training frameworks like Trinity and veRL. In production, TuFT typically runs as a standalone daemon (<code class="docutils literal notranslate"><span class="pre">tuft</span> <span class="pre">launch</span></code>), and users must:</p>
+<ol class="arabic simple">
+<li><p>Write a <code class="docutils literal notranslate"><span class="pre">tuft_config.yaml</span></code> configuration file</p></li>
+<li><p>Manually start the server with <code class="docutils literal notranslate"><span class="pre">tuft</span> <span class="pre">launch</span> <span class="pre">--config</span> <span class="pre">...</span></code></p></li>
+<li><p>Set the <code class="docutils literal notranslate"><span class="pre">TINKER_BASE_URL</span></code> environment variable for clients to connect</p></li>
 </ol>
+<p>This manual setup creates friction, especially for:</p>
+<ul class="simple">
+<li><p><strong>RL framework users</strong> who just want to run training scripts without learning TuFT internals</p></li>
+<li><p><strong>Development/debugging</strong> workflows where quick iteration is key</p></li>
+<li><p><strong>CI pipelines</strong> that need reproducible, self-contained environments</p></li>
+</ul>
+<p><strong>Embedded mode</strong> solves this by providing a <code class="docutils literal notranslate"><span class="pre">tuft.init()</span></code> API — similar to <code class="docutils literal notranslate"><span class="pre">ray.init()</span></code> — that handles service discovery, configuration generation, startup, and connection automatically.</p>
 </section>
-<section id="install-via-pypi">
-<h2>Install via PyPI<a class="headerlink" href="#install-via-pypi" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#install-via-pypi'">¶</a></h2>
-<p>You can also install TuFT directly from PyPI:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>tuft
+<section id="two-modes-of-operation">
+<h2>Two Modes of Operation<a class="headerlink" href="#two-modes-of-operation" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#two-modes-of-operation'">¶</a></h2>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p></p></th>
+<th class="head"><p>Daemon Mode</p></th>
+<th class="head"><p>Embedded Mode</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>How to start</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">tuft</span> <span class="pre">launch</span> <span class="pre">--config</span> <span class="pre">...</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">tuft.init(model=...)</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p>Lifecycle</p></td>
+<td><p>Independent process, manually managed</p></td>
+<td><p>Follows main process, auto-cleanup via atexit</p></td>
+</tr>
+<tr class="row-even"><td><p>Best for</p></td>
+<td><p>Production deployments, multi-user shared clusters</p></td>
+<td><p>Dev/debug, training scripts, CI</p></td>
+</tr>
+<tr class="row-odd"><td><p>Service discovery</p></td>
+<td><p>User sets <code class="docutils literal notranslate"><span class="pre">TINKER_BASE_URL</span></code> manually</p></td>
+<td><p>Automatic (env var → address file → process scan → default port)</p></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Both modes coexist</strong>: <code class="docutils literal notranslate"><span class="pre">tuft.init()</span></code> first tries to discover an existing daemon. Only when no running service is found does it start an embedded instance.</p>
+</section>
+<section id="quick-start">
+<h2>Quick Start<a class="headerlink" href="#quick-start" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#quick-start'">¶</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="kn">import</span><span class="w"> </span><span class="nn">tuft</span>
 </span><span id="line-2">
-</span><span id="line-3"><span class="c1"># Install optional dependencies as needed</span>
-</span><span id="line-4">uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"tuft[dev,backend,persistence]"</span>
+</span><span id="line-3"><span class="c1"># Initialize TuFT — auto-discovers existing service or starts one</span>
+</span><span id="line-4"><span class="n">tuft</span><span class="o">.</span><span class="n">init</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">"/path/to/Qwen2.5-0.5B-Instruct"</span><span class="p">)</span>
+</span><span id="line-5">
+</span><span id="line-6"><span class="c1"># Use the service client for training</span>
+</span><span id="line-7"><span class="n">training_client</span> <span class="o">=</span> <span class="n">tuft</span><span class="o">.</span><span class="n">create_training_client</span><span class="p">(</span>
+</span><span id="line-8">    <span class="n">base_model</span><span class="o">=</span><span class="s2">"Qwen2.5-0.5B-Instruct"</span><span class="p">,</span>
+</span><span id="line-9">    <span class="n">rank</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span>
+</span><span id="line-10"><span class="p">)</span>
+</span><span id="line-11"><span class="c1"># ... your training loop ...</span>
+</span><span id="line-12">
+</span><span id="line-13"><span class="c1"># Optional: explicit shutdown (atexit handles this automatically)</span>
+</span><span id="line-14"><span class="n">tuft</span><span class="o">.</span><span class="n">shutdown</span><span class="p">()</span>
+</span></code></pre></div>
+</div>
+<section id="other-init-patterns">
+<h3>Other <code class="docutils literal notranslate"><span class="pre">init()</span></code> patterns<a class="headerlink" href="#other-init-patterns" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#other-init-patterns'">¶</a></h3>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="c1"># Connect to a specific running server</span>
+</span><span id="line-2"><span class="n">tuft</span><span class="o">.</span><span class="n">init</span><span class="p">(</span><span class="n">address</span><span class="o">=</span><span class="s2">"http://gpu-cluster:10610"</span><span class="p">)</span>
+</span><span id="line-3">
+</span><span id="line-4"><span class="c1"># Use an existing config file</span>
+</span><span id="line-5"><span class="n">tuft</span><span class="o">.</span><span class="n">init</span><span class="p">(</span><span class="n">config</span><span class="o">=</span><span class="s2">"/path/to/tuft_config.yaml"</span><span class="p">)</span>
+</span><span id="line-6">
+</span><span id="line-7"><span class="c1"># No arguments — relies on env vars or default config file</span>
+</span><span id="line-8"><span class="n">tuft</span><span class="o">.</span><span class="n">init</span><span class="p">()</span>
+</span><span id="line-9">
+</span><span id="line-10"><span class="c1"># Get a service client (auto-inits if not already done)</span>
+</span><span id="line-11"><span class="n">service_client</span> <span class="o">=</span> <span class="n">tuft</span><span class="o">.</span><span class="n">get_service_client</span><span class="p">()</span>
 </span></code></pre></div>
 </div>
 </section>
-<section id="use-the-pre-built-docker-image">
-<h2>Use the Pre-built Docker Image<a class="headerlink" href="#use-the-pre-built-docker-image" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#use-the-pre-built-docker-image'">¶</a></h2>
-<p>If you face issues with local installation or want to get started quickly, you can use the pre-built Docker image.</p>
-<ol class="arabic">
-<li><p>Pull the latest image from GitHub Container Registry:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/agentscope-ai/tuft:latest
-</span></code></pre></div>
-</div>
-</li>
-<li><p>Run the Docker container and start the TuFT server on port 10610:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">docker<span class="w"> </span>run<span class="w"> </span>-it<span class="w"> </span><span class="se">\</span>
-</span><span id="line-2"><span class="w">    </span>--gpus<span class="w"> </span>all<span class="w"> </span><span class="se">\</span>
-</span><span id="line-3"><span class="w">    </span>--shm-size<span class="o">=</span><span class="s2">"128g"</span><span class="w"> </span><span class="se">\</span>
-</span><span id="line-4"><span class="w">    </span>--rm<span class="w"> </span><span class="se">\</span>
-</span><span id="line-5"><span class="w">    </span>-p<span class="w"> </span><span class="m">10610</span>:10610<span class="w"> </span><span class="se">\</span>
-</span><span id="line-6"><span class="w">    </span>-v<span class="w"> </span>&lt;host_dir&gt;:/data<span class="w"> </span><span class="se">\</span>
-</span><span id="line-7"><span class="w">    </span>ghcr.io/agentscope-ai/tuft:latest<span class="w"> </span><span class="se">\</span>
-</span><span id="line-8"><span class="w">    </span>tuft<span class="w"> </span>launch<span class="w"> </span>--port<span class="w"> </span><span class="m">10610</span><span class="w"> </span>--config<span class="w"> </span>/data/tuft_config.yaml
-</span></code></pre></div>
-</div>
-<p>Please replace <code class="docutils literal notranslate"><span class="pre">&lt;host_dir&gt;</span></code> with a directory on your host machine where you want to store model checkpoints and other data.</p>
-<p>Suppose you have the following structure on your host machine:</p>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">&lt;host_dir&gt;/
-</span><span id="line-2">    ├── checkpoints/
-</span><span id="line-3">    ├── Qwen3-4B/
-</span><span id="line-4">    ├── Qwen3-8B/
-</span><span id="line-5">    └── tuft_config.yaml
-</span></code></pre></div>
-</div>
-</li>
+</section>
+<section id="service-discovery-priority">
+<h2>Service Discovery Priority<a class="headerlink" href="#service-discovery-priority" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#service-discovery-priority'">¶</a></h2>
+<p>When <code class="docutils literal notranslate"><span class="pre">tuft.init()</span></code> is called, it tries to find an existing service in this order:</p>
+<ol class="arabic simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">address=...</span></code> argument passed to <code class="docutils literal notranslate"><span class="pre">init()</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">TUFT_ADDRESS</span></code> environment variable</p></li>
+<li><p>Address file at <code class="docutils literal notranslate"><span class="pre">~/.tuft/tuft_current_server</span></code></p></li>
+<li><p>Process scan (looks for running <code class="docutils literal notranslate"><span class="pre">tuft</span> <span class="pre">launch</span></code> or <code class="docutils literal notranslate"><span class="pre">uvicorn</span></code> processes)</p></li>
+<li><p>Default port probe: <code class="docutils literal notranslate"><span class="pre">http://127.0.0.1:10610</span></code></p></li>
+</ol>
+<p>If no service is found, embedded mode starts a new one using configuration from:</p>
+<ol class="arabic simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">config=...</span></code> argument passed to <code class="docutils literal notranslate"><span class="pre">init()</span></code></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">TUFT_CONFIG</span></code> environment variable</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">model=...</span></code> argument → auto-generates minimal config</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">TUFT_MODEL_PATH</span></code> environment variable → auto-generates minimal config</p></li>
+<li><p>Default config file: <code class="docutils literal notranslate"><span class="pre">~/.tuft/configs/tuft_config.yaml</span></code></p></li>
+<li><p>None available → raises <code class="docutils literal notranslate"><span class="pre">RuntimeError</span></code> with helpful guidance</p></li>
 </ol>
 </section>
-<section id="run-the-server">
-<h2>Run the Server<a class="headerlink" href="#run-the-server" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#run-the-server'">¶</a></h2>
-<p>The CLI starts a FastAPI server:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">tuft<span class="w"> </span>launch<span class="w"> </span>--port<span class="w"> </span><span class="m">10610</span><span class="w"> </span>--config<span class="w"> </span>/path/to/tuft_config.yaml
+<section id="environment-variables">
+<h2>Environment Variables<a class="headerlink" href="#environment-variables" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#environment-variables'">¶</a></h2>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Variable</p></th>
+<th class="head"><p>Description</p></th>
+<th class="head"><p>Default</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TUFT_ADDRESS</span></code></p></td>
+<td><p>Address of running TuFT service</p></td>
+<td><p>—</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TUFT_API_KEY</span></code></p></td>
+<td><p>API authentication key</p></td>
+<td><p>Auto-generated</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TUFT_CONFIG</span></code></p></td>
+<td><p>Path to configuration file</p></td>
+<td><p>—</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TUFT_MODEL_PATH</span></code></p></td>
+<td><p>Model path for auto-config generation</p></td>
+<td><p>—</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TUFT_ENABLE_AUTO_CONNECT</span></code></p></td>
+<td><p>Enable auto-connect in <code class="docutils literal notranslate"><span class="pre">get_service_client()</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">"1"</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TUFT_HOME</span></code></p></td>
+<td><p>TuFT home directory</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">~/.tuft</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TUFT_HOST</span></code></p></td>
+<td><p>Server bind address</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">127.0.0.1</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TUFT_PORT</span></code></p></td>
+<td><p>Server bind port</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">10610</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="lifecycle">
+<h2>Lifecycle<a class="headerlink" href="#lifecycle" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#lifecycle'">¶</a></h2>
+<ul class="simple">
+<li><p><strong>Embedded services</strong> are tied to the main process. When the Python process exits (normally or via signal), the embedded TuFT server is automatically terminated via <code class="docutils literal notranslate"><span class="pre">atexit</span></code>.</p></li>
+<li><p><strong>Daemon services</strong> (<code class="docutils literal notranslate"><span class="pre">tuft</span> <span class="pre">launch</span></code>) are independent and persist until manually stopped.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.shutdown()</span></code> can be called explicitly to stop an embedded service early.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.init()</span></code> is <strong>idempotent</strong> — calling it multiple times is safe (no-op after first success).</p></li>
+</ul>
+</section>
+<section id="integration-with-rl-frameworks">
+<h2>Integration with RL Frameworks<a class="headerlink" href="#integration-with-rl-frameworks" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#integration-with-rl-frameworks'">¶</a></h2>
+<p>For framework integrations (e.g., Trinity), the pattern is:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="kn">import</span><span class="w"> </span><span class="nn">tuft</span>
+</span><span id="line-2">
+</span><span id="line-3"><span class="c1"># In your framework's initialization code:</span>
+</span><span id="line-4"><span class="n">tuft</span><span class="o">.</span><span class="n">init</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="n">model_path</span><span class="p">,</span> <span class="n">ignore_reinit_error</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="line-5"><span class="n">service_client</span> <span class="o">=</span> <span class="n">tuft</span><span class="o">.</span><span class="n">get_service_client</span><span class="p">()</span>
+</span><span id="line-6">
+</span><span id="line-7"><span class="c1"># Use service_client as before...</span>
 </span></code></pre></div>
 </div>
-<p>The config file <code class="docutils literal notranslate"><span class="pre">tuft_config.yaml</span></code> specifies server settings including available base models, authentication, persistence, and telemetry. Below is a minimal example:</p>
-<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="nt">supported_models</span><span class="p">:</span>
-</span><span id="line-2"><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">model_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Qwen/Qwen3-4B</span>
-</span><span id="line-3"><span class="w">    </span><span class="nt">model_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Qwen/Qwen3-4B</span>
-</span><span id="line-4"><span class="w">    </span><span class="nt">max_model_len</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">32768</span>
-</span><span id="line-5"><span class="w">    </span><span class="nt">tensor_parallel_size</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
-</span><span id="line-6"><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">model_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Qwen/Qwen3-8B</span>
-</span><span id="line-7"><span class="w">    </span><span class="nt">model_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Qwen/Qwen3-8B</span>
-</span><span id="line-8"><span class="w">    </span><span class="nt">max_model_len</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">32768</span>
-</span><span id="line-9"><span class="w">    </span><span class="nt">tensor_parallel_size</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
-</span></code></pre></div>
-</div>
-<p>See <code class="docutils literal notranslate"><span class="pre">config/tuft_config.example.yaml</span></code> in the repository for a complete example configuration with all available options.</p>
+<p>This requires no changes to the user’s workflow — the framework handles TuFT setup transparently.</p>
 </section>
 </section>
 </div></div><aside class="hidden text-sm xl:block" id="right-sidebar">
 <div class="sticky top-16 -mt-10 max-h-[calc(100vh-5rem)] h-full overflow-y-auto pt-6 space-y-2"><p class="font-medium">On this page</p>
 <ul>
-<li><a :data-current="activeSection === '#quick-install'" class="reference internal" href="#quick-install">Quick Install</a></li>
-<li><a :data-current="activeSection === '#install-from-source-code'" class="reference internal" href="#install-from-source-code">Install from Source Code</a></li>
-<li><a :data-current="activeSection === '#install-via-pypi'" class="reference internal" href="#install-via-pypi">Install via PyPI</a></li>
-<li><a :data-current="activeSection === '#use-the-pre-built-docker-image'" class="reference internal" href="#use-the-pre-built-docker-image">Use the Pre-built Docker Image</a></li>
-<li><a :data-current="activeSection === '#run-the-server'" class="reference internal" href="#run-the-server">Run the Server</a></li>
+<li><a :data-current="activeSection === '#background'" class="reference internal" href="#background">Background</a></li>
+<li><a :data-current="activeSection === '#two-modes-of-operation'" class="reference internal" href="#two-modes-of-operation">Two Modes of Operation</a></li>
+<li><a :data-current="activeSection === '#quick-start'" class="reference internal" href="#quick-start">Quick Start</a><ul>
+<li><a :data-current="activeSection === '#other-init-patterns'" class="reference internal" href="#other-init-patterns">Other <code class="docutils literal notranslate"><span class="pre">init()</span></code> patterns</a></li>
+</ul>
+</li>
+<li><a :data-current="activeSection === '#service-discovery-priority'" class="reference internal" href="#service-discovery-priority">Service Discovery Priority</a></li>
+<li><a :data-current="activeSection === '#environment-variables'" class="reference internal" href="#environment-variables">Environment Variables</a></li>
+<li><a :data-current="activeSection === '#lifecycle'" class="reference internal" href="#lifecycle">Lifecycle</a></li>
+<li><a :data-current="activeSection === '#integration-with-rl-frameworks'" class="reference internal" href="#integration-with-rl-frameworks">Integration with RL Frameworks</a></li>
 </ul>
 </div>
 </aside>

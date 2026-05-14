@@ -21,9 +21,9 @@
 <meta content="#ffffff" media="(prefers-color-scheme: light)" name="theme-color"/>
 <meta content="#030711" media="(prefers-color-scheme: dark)" name="theme-color"/>
 <meta content="width=device-width, initial-scale=1" name="viewport"/>
-<title>入门指南 | TuFT</title>
-<meta content="入门指南 | TuFT" property="og:title"/>
-<meta content="入门指南 | TuFT" name="twitter:title"/>
+<title>嵌入式模式 | TuFT</title>
+<meta content="嵌入式模式 | TuFT" property="og:title"/>
+<meta content="嵌入式模式 | TuFT" name="twitter:title"/>
 <link href="../_static/pygments.css?v=03e43079" rel="stylesheet" type="text/css"/>
 <link href="../_static/theme.css?v=979577e3" rel="stylesheet" type="text/css"/>
 <link href="../_static/sphinx-design.min.css?v=95c83b7e" rel="stylesheet" type="text/css"/>
@@ -32,8 +32,8 @@
 <link href="../_static/logo_wo_text.svg" rel="icon"/>
 <link href="../search.html" rel="search" title="搜索"/>
 <link href="../genindex.html" rel="index" title="索引"/>
-<link href="installation.html" rel="next" title="安装指南"/>
-<link href="../index.html" rel="prev" title="TuFT"/>
+<link href="../user-guide/index.html" rel="next" title="用户指南"/>
+<link href="quickstart.html" rel="prev" title="快速开始"/>
 </head>
 <body :class="{ 'overflow-hidden': showSidebar }" class="min-h-screen font-sans antialiased bg-background text-foreground" x-data="{ showSidebar: false, showScrollTop: false }">
 <div @click.self="showSidebar = false" class="fixed inset-0 z-50 overflow-hidden bg-background/80 backdrop-blur-sm md:hidden" x-cloak="" x-show="showSidebar"></div><div class="relative flex flex-col min-h-screen" id="page"><a class="absolute top-0 left-0 z-[100] block bg-background p-4 text-xl transition -translate-x-full opacity-0 focus:translate-x-0 focus:opacity-100" href="#content">
@@ -92,10 +92,10 @@
 <div class="relative overflow-hidden md:overflow-auto my-4 md:my-0">
 <div class="overflow-y-auto h-full w-full relative pr-6"><nav class="table w-full min-w-full my-6 lg:my-8">
 <ul class="current">
-<li class="toctree-l1 current" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="current reference internal expandable" href="#">入门指南<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
+<li class="toctree-l1 current" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="index.html">入门指南<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul class="current" x-show="expanded">
 <li class="toctree-l2"><a class="reference internal" href="installation.html">安装指南</a></li>
 <li class="toctree-l2"><a class="reference internal" href="quickstart.html">快速开始</a></li>
-<li class="toctree-l2"><a class="reference internal" href="embedded-mode.html">嵌入式模式</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">嵌入式模式</a></li>
 </ul>
 </li>
 <li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="../user-guide/index.html">用户指南<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
@@ -130,46 +130,198 @@
 <path d="M240 856h120V616h240v240h120V496L480 316 240 496v360Zm-80 80V456l320-240 320 240v480H520V696h-80v240H160Zm320-350Z"></path>
 </svg>
 </a>
-<div class="mr-1">/</div><span aria-current="page" class="font-medium text-foreground overflow-hidden text-ellipsis whitespace-nowrap">入门指南</span>
+<div class="mr-1">/</div><a class="hover:text-foreground overflow-hidden text-ellipsis whitespace-nowrap" href="index.html">入门指南</a>
+<div class="mr-1">/</div><span aria-current="page" class="font-medium text-foreground overflow-hidden text-ellipsis whitespace-nowrap">嵌入式模式</span>
 </nav>
 <div id="content" role="main">
 <section id="id1">
-<h1>入门指南<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h1>
-<p>欢迎使用 TuFT！本节将帮助您快速上手。</p>
-<div class="sd-container-fluid sd-sphinx-override sd-mb-4 docutils">
-<div class="sd-row sd-row-cols-1 sd-row-cols-xs-1 sd-row-cols-sm-2 sd-row-cols-md-2 sd-row-cols-lg-2 sd-g-3 sd-g-xs-3 sd-g-sm-3 sd-g-md-3 sd-g-lg-3 docutils">
-<div class="sd-col sd-d-flex-row docutils">
-<div class="sd-card sd-sphinx-override sd-w-100 sd-shadow-none sd-card-hover docutils">
-<div class="sd-card-body docutils">
-<div class="sd-card-title sd-font-weight-bold docutils">
-安装指南</div>
-<p class="sd-card-text">从源码、PyPI 或 Docker 安装 TuFT。</p>
-</div>
-<a class="sd-stretched-link sd-hide-link-text reference internal" href="installation.html"><span class="doc">安装指南</span></a></div>
-</div>
-<div class="sd-col sd-d-flex-row docutils">
-<div class="sd-card sd-sphinx-override sd-w-100 sd-shadow-none sd-card-hover docutils">
-<div class="sd-card-body docutils">
-<div class="sd-card-title sd-font-weight-bold docutils">
-快速开始</div>
-<p class="sd-card-text">使用 TuFT 运行您的第一个训练与推理示例。</p>
-</div>
-<a class="sd-stretched-link sd-hide-link-text reference internal" href="quickstart.html"><span class="doc">快速开始</span></a></div>
-</div>
-<div class="sd-col sd-d-flex-row docutils">
-<div class="sd-card sd-sphinx-override sd-w-100 sd-shadow-none sd-card-hover docutils">
-<div class="sd-card-body docutils">
-<div class="sd-card-title sd-font-weight-bold docutils">
-嵌入式模式</div>
-<p class="sd-card-text">使用 <code class="docutils literal notranslate"><span class="pre">tuft.init()</span></code> 实现自动服务发现和启动。</p>
-</div>
-<a class="sd-stretched-link sd-hide-link-text reference internal" href="embedded-mode.html"><span class="doc">嵌入式模式</span></a></div>
-</div>
-</div>
-</div>
-
+<h1>嵌入式模式<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h1>
+<section id="id2">
+<h2>背景<a class="headerlink" href="#id2" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id2'">¶</a></h2>
+<p>TuFT 被设计为 RL 训练框架（如 Trinity）的<strong>透明计算服务层</strong>。在生产环境中，TuFT 通常作为独立守护进程运行（<code class="docutils literal notranslate"><span class="pre">tuft</span> <span class="pre">launch</span></code>），用户需要：</p>
+<ol class="arabic simple">
+<li><p>编写 <code class="docutils literal notranslate"><span class="pre">tuft_config.yaml</span></code> 配置文件</p></li>
+<li><p>手动执行 <code class="docutils literal notranslate"><span class="pre">tuft</span> <span class="pre">launch</span> <span class="pre">--config</span> <span class="pre">...</span></code> 启动服务</p></li>
+<li><p>设置 <code class="docutils literal notranslate"><span class="pre">TINKER_BASE_URL</span></code> 环境变量供客户端连接</p></li>
+</ol>
+<p>这种手动配置带来了额外负担，尤其是：</p>
+<ul class="simple">
+<li><p><strong>RL 框架用户</strong>：只想运行训练脚本，不想学习 TuFT 的安装和配置</p></li>
+<li><p><strong>开发调试</strong>：需要快速迭代的工作流</p></li>
+<li><p><strong>CI 流水线</strong>：需要可复现的自包含环境</p></li>
+</ul>
+<p><strong>嵌入式模式</strong>通过提供 <code class="docutils literal notranslate"><span class="pre">tuft.init()</span></code> API 解决了这个问题——类似 <code class="docutils literal notranslate"><span class="pre">ray.init()</span></code>——自动完成服务发现、配置生成、启动和连接。</p>
 </section>
-</div></div>
+<section id="id3">
+<h2>两种运行模式<a class="headerlink" href="#id3" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id3'">¶</a></h2>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p></p></th>
+<th class="head"><p>守护进程模式</p></th>
+<th class="head"><p>嵌入式模式</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>启动方式</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">tuft</span> <span class="pre">launch</span> <span class="pre">--config</span> <span class="pre">...</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">tuft.init(model=...)</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p>生命周期</p></td>
+<td><p>独立进程，手动管理</p></td>
+<td><p>跟随主进程，atexit 自动清理</p></td>
+</tr>
+<tr class="row-even"><td><p>适用场景</p></td>
+<td><p>生产部署、多用户共享集群</p></td>
+<td><p>开发调试、训练脚本、CI</p></td>
+</tr>
+<tr class="row-odd"><td><p>服务发现</p></td>
+<td><p>用户手动设置 <code class="docutils literal notranslate"><span class="pre">TINKER_BASE_URL</span></code></p></td>
+<td><p>自动（环境变量 → 地址文件 → 进程扫描 → 默认端口）</p></td>
+</tr>
+</tbody>
+</table>
+<p><strong>两种模式共存</strong>：<code class="docutils literal notranslate"><span class="pre">tuft.init()</span></code> 首先尝试发现已有的守护进程服务。只有在找不到运行中的服务时，才会启动嵌入式实例。</p>
+</section>
+<section id="id4">
+<h2>快速开始<a class="headerlink" href="#id4" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id4'">¶</a></h2>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="kn">import</span><span class="w"> </span><span class="nn">tuft</span>
+</span><span id="line-2">
+</span><span id="line-3"><span class="c1"># 初始化 TuFT — 自动发现已有服务或启动一个新的</span>
+</span><span id="line-4"><span class="n">tuft</span><span class="o">.</span><span class="n">init</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">"/path/to/Qwen2.5-0.5B-Instruct"</span><span class="p">)</span>
+</span><span id="line-5">
+</span><span id="line-6"><span class="c1"># 使用 service client 进行训练</span>
+</span><span id="line-7"><span class="n">training_client</span> <span class="o">=</span> <span class="n">tuft</span><span class="o">.</span><span class="n">create_training_client</span><span class="p">(</span>
+</span><span id="line-8">    <span class="n">base_model</span><span class="o">=</span><span class="s2">"Qwen2.5-0.5B-Instruct"</span><span class="p">,</span>
+</span><span id="line-9">    <span class="n">rank</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span>
+</span><span id="line-10"><span class="p">)</span>
+</span><span id="line-11"><span class="c1"># ... 你的训练循环 ...</span>
+</span><span id="line-12">
+</span><span id="line-13"><span class="c1"># 可选：显式关闭（atexit 会自动处理）</span>
+</span><span id="line-14"><span class="n">tuft</span><span class="o">.</span><span class="n">shutdown</span><span class="p">()</span>
+</span></code></pre></div>
+</div>
+<section id="init">
+<h3>其他 <code class="docutils literal notranslate"><span class="pre">init()</span></code> 模式<a class="headerlink" href="#init" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#init'">¶</a></h3>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="c1"># 连接到指定的运行中服务</span>
+</span><span id="line-2"><span class="n">tuft</span><span class="o">.</span><span class="n">init</span><span class="p">(</span><span class="n">address</span><span class="o">=</span><span class="s2">"http://gpu-cluster:10610"</span><span class="p">)</span>
+</span><span id="line-3">
+</span><span id="line-4"><span class="c1"># 使用已有配置文件</span>
+</span><span id="line-5"><span class="n">tuft</span><span class="o">.</span><span class="n">init</span><span class="p">(</span><span class="n">config</span><span class="o">=</span><span class="s2">"/path/to/tuft_config.yaml"</span><span class="p">)</span>
+</span><span id="line-6">
+</span><span id="line-7"><span class="c1"># 无参数 — 依赖环境变量或默认配置文件</span>
+</span><span id="line-8"><span class="n">tuft</span><span class="o">.</span><span class="n">init</span><span class="p">()</span>
+</span><span id="line-9">
+</span><span id="line-10"><span class="c1"># 获取 service client（未初始化时自动触发 init）</span>
+</span><span id="line-11"><span class="n">service_client</span> <span class="o">=</span> <span class="n">tuft</span><span class="o">.</span><span class="n">get_service_client</span><span class="p">()</span>
+</span></code></pre></div>
+</div>
+</section>
+</section>
+<section id="id5">
+<h2>服务发现优先级<a class="headerlink" href="#id5" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id5'">¶</a></h2>
+<p>调用 <code class="docutils literal notranslate"><span class="pre">tuft.init()</span></code> 时，按以下顺序尝试发现已有服务：</p>
+<ol class="arabic simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">address=...</span></code> 参数显式传入</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">TUFT_ADDRESS</span></code> 环境变量</p></li>
+<li><p>地址文件 <code class="docutils literal notranslate"><span class="pre">~/.tuft/tuft_current_server</span></code></p></li>
+<li><p>进程扫描（查找运行中的 <code class="docutils literal notranslate"><span class="pre">tuft</span> <span class="pre">launch</span></code> 或 <code class="docutils literal notranslate"><span class="pre">uvicorn</span></code> 进程）</p></li>
+<li><p>默认端口探测：<code class="docutils literal notranslate"><span class="pre">http://127.0.0.1:10610</span></code></p></li>
+</ol>
+<p>如果未发现服务，嵌入式模式按以下优先级获取配置并启动：</p>
+<ol class="arabic simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">config=...</span></code> 参数显式传入</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">TUFT_CONFIG</span></code> 环境变量</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">model=...</span></code> 参数 → 自动生成最小配置</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">TUFT_MODEL_PATH</span></code> 环境变量 → 自动生成最小配置</p></li>
+<li><p>默认配置文件：<code class="docutils literal notranslate"><span class="pre">~/.tuft/configs/tuft_config.yaml</span></code></p></li>
+<li><p>全部没有 → 抛出 <code class="docutils literal notranslate"><span class="pre">RuntimeError</span></code> 并给出提示</p></li>
+</ol>
+</section>
+<section id="id6">
+<h2>环境变量<a class="headerlink" href="#id6" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id6'">¶</a></h2>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>变量</p></th>
+<th class="head"><p>说明</p></th>
+<th class="head"><p>默认值</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TUFT_ADDRESS</span></code></p></td>
+<td><p>TuFT 服务地址</p></td>
+<td><p>—</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TUFT_API_KEY</span></code></p></td>
+<td><p>API 认证密钥</p></td>
+<td><p>自动生成</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TUFT_CONFIG</span></code></p></td>
+<td><p>配置文件路径</p></td>
+<td><p>—</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TUFT_MODEL_PATH</span></code></p></td>
+<td><p>模型路径（用于自动生成配置）</p></td>
+<td><p>—</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TUFT_ENABLE_AUTO_CONNECT</span></code></p></td>
+<td><p>启用 <code class="docutils literal notranslate"><span class="pre">get_service_client()</span></code> 自动连接</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">"1"</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TUFT_HOME</span></code></p></td>
+<td><p>TuFT 主目录</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">~/.tuft</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TUFT_HOST</span></code></p></td>
+<td><p>服务绑定地址</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">127.0.0.1</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TUFT_PORT</span></code></p></td>
+<td><p>服务绑定端口</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">10610</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="id7">
+<h2>生命周期<a class="headerlink" href="#id7" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id7'">¶</a></h2>
+<ul class="simple">
+<li><p><strong>嵌入式服务</strong>绑定到主进程。当 Python 进程退出（正常或信号）时，嵌入式 TuFT 服务通过 <code class="docutils literal notranslate"><span class="pre">atexit</span></code> 自动终止。</p></li>
+<li><p><strong>守护进程服务</strong>（<code class="docutils literal notranslate"><span class="pre">tuft</span> <span class="pre">launch</span></code>）独立运行，持续到手动停止。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.shutdown()</span></code> 可显式调用以提前停止嵌入式服务。</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">tuft.init()</span></code> 是<strong>幂等的</strong> — 多次调用安全（首次成功后为空操作）。</p></li>
+</ul>
+</section>
+<section id="rl">
+<h2>与 RL 框架集成<a class="headerlink" href="#rl" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#rl'">¶</a></h2>
+<p>框架集成（如 Trinity）的模式：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="kn">import</span><span class="w"> </span><span class="nn">tuft</span>
+</span><span id="line-2">
+</span><span id="line-3"><span class="c1"># 在框架的初始化代码中：</span>
+</span><span id="line-4"><span class="n">tuft</span><span class="o">.</span><span class="n">init</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="n">model_path</span><span class="p">,</span> <span class="n">ignore_reinit_error</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+</span><span id="line-5"><span class="n">service_client</span> <span class="o">=</span> <span class="n">tuft</span><span class="o">.</span><span class="n">get_service_client</span><span class="p">()</span>
+</span><span id="line-6">
+</span><span id="line-7"><span class="c1"># 像之前一样使用 service_client...</span>
+</span></code></pre></div>
+</div>
+<p>这不需要改变用户的工作流 — 框架透明地处理 TuFT 的配置和启动。</p>
+</section>
+</section>
+</div></div><aside class="hidden text-sm xl:block" id="right-sidebar">
+<div class="sticky top-16 -mt-10 max-h-[calc(100vh-5rem)] h-full overflow-y-auto pt-6 space-y-2"><p class="font-medium">On this page</p>
+<ul>
+<li><a :data-current="activeSection === '#id2'" class="reference internal" href="#id2">背景</a></li>
+<li><a :data-current="activeSection === '#id3'" class="reference internal" href="#id3">两种运行模式</a></li>
+<li><a :data-current="activeSection === '#id4'" class="reference internal" href="#id4">快速开始</a><ul>
+<li><a :data-current="activeSection === '#init'" class="reference internal" href="#init">其他 <code class="docutils literal notranslate"><span class="pre">init()</span></code> 模式</a></li>
+</ul>
+</li>
+<li><a :data-current="activeSection === '#id5'" class="reference internal" href="#id5">服务发现优先级</a></li>
+<li><a :data-current="activeSection === '#id6'" class="reference internal" href="#id6">环境变量</a></li>
+<li><a :data-current="activeSection === '#id7'" class="reference internal" href="#id7">生命周期</a></li>
+<li><a :data-current="activeSection === '#rl'" class="reference internal" href="#rl">与 RL 框架集成</a></li>
+</ul>
+</div>
+</aside>
 </main>
 </div>
 </div><footer class="py-6 border-t border-border md:py-0">
