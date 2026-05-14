@@ -17,6 +17,7 @@ from .persistence import (
     get_redis_store,
     validate_config_signature,
 )
+from .runtime._constants import get_address_file
 from .server import create_root_app
 from .telemetry import init_telemetry
 from .telemetry.metrics import ResourceMetricsCollector
@@ -227,13 +228,43 @@ def launch(
     # Initialize telemetry before starting the server
     _init_telemetry(app_config, log_level)
     logging.getLogger("tuft").info("Server starting on %s:%s", host, port)
-    uvicorn.run(
-        create_root_app(app_config),
-        host=host,
-        port=port,
-        log_level=log_level,
-        reload=reload,
-    )
+
+    # Write address file so embedded mode / other processes can discover this server
+    _write_address_file(host, port)
+
+    try:
+        uvicorn.run(
+            create_root_app(app_config),
+            host=host,
+            port=port,
+            log_level=log_level,
+            reload=reload,
+        )
+    finally:
+        _remove_address_file(host, port)
+
+
+def _write_address_file(host: str, port: int) -> None:
+    """Write server address to the discovery file."""
+    address_file = get_address_file()
+    address = f"http://{host}:{port}"
+    try:
+        address_file.parent.mkdir(parents=True, exist_ok=True)
+        address_file.write_text(address)
+    except OSError:
+        pass
+
+
+def _remove_address_file(host: str, port: int) -> None:
+    """Remove address file if it points to this server."""
+    address_file = get_address_file()
+    try:
+        if address_file.exists():
+            content = address_file.read_text().strip()
+            if content == f"http://{host}:{port}":
+                address_file.unlink()
+    except OSError:
+        pass
 
 
 def main() -> None:

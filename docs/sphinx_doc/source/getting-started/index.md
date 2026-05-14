@@ -20,6 +20,14 @@ Install TuFT from source, PyPI, or Docker.
 
 Run your first training and sampling example with TuFT.
 :::
+
+:::{grid-item-card} Embedded Mode
+:link: embedded-mode
+:link-type: doc
+:shadow: none
+
+Use `tuft.init()` for automatic service discovery and startup.
+:::
 ```
 
 ```{toctree}
@@ -28,4 +36,5 @@ Run your first training and sampling example with TuFT.
 
 installation
 quickstart
+embedded-mode
 ```
