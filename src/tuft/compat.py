@@ -45,14 +45,52 @@ def serialize_sample_response(response: SampleResponse) -> dict[str, Any]:
     return result
 
 
-def maybe_serialize_payload(payload: Any) -> Any:
-    """If payload is a SampleResponse dataclass, serialize it to dict.
+def _serialize_tensor_data(td: Any) -> dict[str, Any]:
+    """Serialize a TensorData dataclass to a JSON-safe dict.
 
-    Other Pydantic-based types (ForwardBackwardOutput, OptimStepResponse, etc.)
-    are handled natively by FastAPI and need no conversion.
+    Uses ``td.data`` (returns list[int] | list[float]) instead of the
+    internal ``_numpy`` field which Pydantic cannot serialize.
     """
+    d: dict[str, Any] = {
+        "data": td.data,
+        "dtype": td.dtype,
+    }
+    if td.shape is not None:
+        d["shape"] = td.shape
+    if td.sparse_crow_indices is not None:
+        d["sparse_crow_indices"] = td.sparse_crow_indices
+    if td.sparse_col_indices is not None:
+        d["sparse_col_indices"] = td.sparse_col_indices
+    return d
+
+
+def _serialize_forward_backward_output(payload: Any) -> dict[str, Any]:
+    """Serialize a ForwardBackwardOutput dataclass to a JSON-safe dict."""
+    loss_fn_outputs = [
+        {k: _serialize_tensor_data(v) for k, v in datum.items()}
+        for datum in payload.loss_fn_outputs
+    ]
+    return {
+        "loss_fn_output_type": payload.loss_fn_output_type,
+        "loss_fn_outputs": loss_fn_outputs,
+        "metrics": payload.metrics,
+    }
+
+
+def maybe_serialize_payload(payload: Any) -> Any:
+    """If payload is a SampleResponse or ForwardBackwardOutput dataclass, serialize it to dict.
+
+    These dataclass types contain numpy arrays (TensorData._numpy) that
+    Pydantic cannot serialize, so we convert them to JSON-safe dicts.
+    Other Pydantic-based types (OptimStepResponse, etc.) are handled
+    natively by FastAPI and need no conversion.
+    """
+    from tinker.types.forward_backward_output import ForwardBackwardOutput
+
     if isinstance(payload, SampleResponse):
         return serialize_sample_response(payload)
+    if isinstance(payload, ForwardBackwardOutput):
+        return _serialize_forward_backward_output(payload)
     return payload
 
 

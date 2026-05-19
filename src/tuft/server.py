@@ -15,6 +15,10 @@ from fastapi.security import APIKeyHeader
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from pydantic import BaseModel
 from tinker import types
+from tinker.types import (
+    ForwardBackwardRequest as PydanticForwardBackwardRequest,
+    ForwardRequest as PydanticForwardRequest,
+)
 
 from .auth import User
 from .compat import maybe_serialize_payload, serialize_sample_response_proto
@@ -296,7 +300,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         status_code=status.HTTP_202_ACCEPTED,
     )
     async def forward(
-        request: types.ForwardRequest,
+        request: PydanticForwardRequest,
         state: ServerState = Depends(_get_state),
         user: User = Depends(_get_user),
     ) -> types.UntypedAPIFuture:
@@ -336,7 +340,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         status_code=status.HTTP_202_ACCEPTED,
     )
     async def forward_backward(
-        request: types.ForwardBackwardRequest,
+        request: PydanticForwardBackwardRequest,
         state: ServerState = Depends(_get_state),
         user: User = Depends(_get_user),
     ) -> types.UntypedAPIFuture:
