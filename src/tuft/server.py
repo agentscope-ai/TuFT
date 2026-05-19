@@ -6,7 +6,7 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import timezone
 from functools import partial
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
@@ -15,10 +15,20 @@ from fastapi.security import APIKeyHeader
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from pydantic import BaseModel
 from tinker import types
-from tinker.types import (
-    ForwardBackwardRequest as PydanticForwardBackwardRequest,
-    ForwardRequest as PydanticForwardRequest,
-)
+
+
+try:
+    from tinker.types._pydantic_types.forward_backward_request import (
+        ForwardBackwardRequest as PydanticForwardBackwardRequest,
+    )
+    from tinker.types._pydantic_types.forward_request import (
+        ForwardRequest as PydanticForwardRequest,
+    )
+except ModuleNotFoundError:
+    from tinker.types import (
+        ForwardBackwardRequest as PydanticForwardBackwardRequest,
+        ForwardRequest as PydanticForwardRequest,
+    )
 
 from .auth import User
 from .compat import maybe_serialize_payload, serialize_sample_response_proto
@@ -305,12 +315,13 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         user: User = Depends(_get_user),
     ) -> types.UntypedAPIFuture:
         inp = request.forward_input
+        data = cast(list[types.Datum], inp.data)
 
         async def _operation() -> types.ForwardBackwardOutput:
             return await state.run_forward(
                 request.model_id,
                 user.user_id,
-                inp.data,
+                data,
                 inp.loss_fn,
                 inp.loss_fn_config,
                 request.seq_id,
@@ -326,7 +337,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
             operation_args={
                 "model_id": request.model_id,
                 "user_id": user.user_id,
-                "data": inp.data,
+                "data": data,
                 "loss_fn": inp.loss_fn,
                 "loss_fn_config": inp.loss_fn_config,
                 "seq_id": request.seq_id,
@@ -345,12 +356,13 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         user: User = Depends(_get_user),
     ) -> types.UntypedAPIFuture:
         inp = request.forward_backward_input
+        data = cast(list[types.Datum], inp.data)
 
         async def _operation() -> types.ForwardBackwardOutput:
             return await state.run_forward(
                 request.model_id,
                 user.user_id,
-                inp.data,
+                data,
                 inp.loss_fn,
                 inp.loss_fn_config,
                 request.seq_id,
