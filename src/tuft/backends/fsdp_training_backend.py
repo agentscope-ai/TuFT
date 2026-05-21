@@ -48,6 +48,7 @@ from tuft.backends.base_backend import BaseTrainingBackend
 from tuft.checkpoints import CheckpointRecord
 from tuft.config import ModelConfig
 from tuft.loss_fn import get_loss_fn
+from verl.utils.torch_functional import logprobs_from_logits
 
 
 def _shard_list(xs: list[Any], n_shards: int) -> list[list[Any]]:
@@ -1095,16 +1096,185 @@ class FullParamVerlWorker:
         loss_function: Callable[..., Any],
         forward_only: bool = False,
     ) -> Dict[str, Any]:
-        """Full-param forward (and backward if not forward_only)."""
-        self.engine.optimizer = self._optimizer
+        """Full-param forward (and backward if not forward_only).
+
+        Optimized training loop that bypasses engine.train_batch() to:
+          1. Skip engine.prepare_model_inputs/outputs overhead (nested↔padded
+             conversion + full-sequence logprobs computation)
+          2. Compute logprobs ONLY on response tokens (softmax over vocab_size
+             applied to response_len positions instead of full seq_len)
+
+        This follows the same pattern as veRL's dp_actor.update_policy() which
+        also self-manages micro-batch splitting, gradient accumulation, and
+        forward/backward.
+
+        Bypass rationale: engine.prepare_model_outputs computes logprobs_from_logits
+        on ALL tokens (prompt + response). For typical SFT/RLHF workloads where
+        prompt >> response, this wastes ~50% of forward compute on softmax over
+        151K vocab for prompt tokens whose logprobs are immediately discarded.
+
+        Rollback: To revert to the original engine-delegated path, replace this
+        method body with a call to engine.train_batch(data, loss_function) and
+        remove the response-only slicing logic.
+        """
+        from contextlib import nullcontext as _nullcontext
+
+        import torch.nn.functional as F
+
+        from verl.workers.engine.utils import prepare_micro_batches
+
+        engine = self.engine
+
+        # --- zero_grad ---
+        engine.optimizer = self._optimizer
         if not forward_only:
             self._optimizer.zero_grad()
+
+        # --- train_mode ---
         self._ensure_train_mode_entered()
-        output = self.engine.forward_backward_batch(
-            data=data,
-            loss_function=loss_function,
-            forward_only=forward_only,
+
+        # --- prepare micro-batches (same splitting as engine.forward_backward_batch) ---
+        from verl.utils import tensordict_utils as _tu
+        from verl.utils.device import get_device_id
+
+        _tu.assign_non_tensor(data, sp_size=engine.ulysses_sequence_parallel_size)
+        batch_num_tokens = data["loss_mask"].sum().to(get_device_id())
+        torch.distributed.all_reduce(
+            batch_num_tokens, op=torch.distributed.ReduceOp.SUM, group=engine.get_data_parallel_group()
         )
+        _tu.assign_non_tensor(data, batch_num_tokens=batch_num_tokens.item())
+        _tu.assign_non_tensor(data, dp_size=engine.get_data_parallel_size())
+        micro_batches, indices = prepare_micro_batches(
+            data=data, dp_group=engine.get_data_parallel_group(), same_micro_num_in_dp=True
+        )
+
+        # --- forward + response-only logprobs + loss + backward (per micro-batch) ---
+        output_lst = []
+        ctx = torch.no_grad() if forward_only else _nullcontext()
+
+        for micro_batch in micro_batches:
+            with ctx:
+                # --- Forward: lightweight nested→padded + model forward ---
+                micro_batch = micro_batch.to(get_device_id())
+
+                # Extract nested tensors and convert to padded (bypass prepare_model_inputs)
+                input_ids_nested = micro_batch["input_ids"]
+                position_ids_nested = micro_batch["position_ids"]
+                offsets = input_ids_nested.offsets()
+                seq_lens_t = offsets[1:] - offsets[:-1]
+                seq_lens_list = seq_lens_t.tolist()
+                bs = len(seq_lens_list)
+                max_sl = max(seq_lens_list)
+                device = input_ids_nested.device
+
+                # Pad nested→2D using values (vectorized scatter)
+                input_ids_padded = torch.zeros(bs, max_sl, dtype=torch.long, device=device)
+                attention_mask = torch.zeros(bs, max_sl, dtype=torch.long, device=device)
+                position_ids_padded = torch.zeros(bs, max_sl, dtype=torch.long, device=device)
+
+                ids_v = input_ids_nested.values()
+                pos_v = position_ids_nested.values()
+                off = 0
+                for i, sl in enumerate(seq_lens_list):
+                    input_ids_padded[i, :sl] = ids_v[off : off + sl]
+                    position_ids_padded[i, :sl] = pos_v[off : off + sl]
+                    attention_mask[i, :sl] = 1
+                    off += sl
+
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                    raw_output = engine.module(
+                        input_ids=input_ids_padded,
+                        attention_mask=attention_mask,
+                        position_ids=position_ids_padded,
+                        use_cache=False,
+                    )
+                    logits = raw_output.logits  # (bs, max_sl, vocab_size)
+
+                # --- Loss: response-only logprobs (bypass prepare_model_outputs) ---
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                    # loss_mask/weights are padded (bs, original_max_len); clip to max_sl
+                    weights = micro_batch["weights"][:, :max_sl]
+                    # Shift for next-token prediction: logits[t] predicts token[t+1]
+                    shift_weights = weights[:, 1:]  # (bs, max_sl - 1)
+
+                    # Find earliest response position across batch for slicing
+                    # (slight over-compute for samples with later response start, but
+                    # those positions have weight=0 so they don't affect loss/grad)
+                    resp_starts = []
+                    for i in range(bs):
+                        nz = shift_weights[i].nonzero(as_tuple=True)[0]
+                        resp_starts.append(nz[0].item() if len(nz) > 0 else max_sl - 1)
+                    resp_start = min(resp_starts)
+
+                    # Slice logits to response range only — the KEY optimization:
+                    # softmax over vocab_size applied to resp_range positions instead
+                    # of full max_sl positions.
+                    resp_logits = logits[:, resp_start:-1, :]  # (bs, resp_range, vocab)
+                    resp_ids = input_ids_padded[:, resp_start + 1:]  # (bs, resp_range)
+                    resp_weights = shift_weights[:, resp_start:]  # (bs, resp_range)
+
+                    # logprobs_from_logits: log_softmax + gather (differentiable)
+                    log_probs = logprobs_from_logits(resp_logits, resp_ids)  # (bs, resp_range)
+
+                    # Construct full-length logprobs (differentiable via F.pad)
+                    # for loss_function compatibility:
+                    # pad left with resp_start zeros, right with 1 zero to match max_sl
+                    full_log_probs = F.pad(log_probs, (resp_start, 1), value=0.0)  # (bs, max_sl)
+
+                    # Build nested tensor preserving autograd for loss_function
+                    # Use nested_tensor_from_jagged (differentiable) with original offsets
+                    values_flat = torch.cat(
+                        [full_log_probs[i, :seq_lens_list[i]] for i in range(bs)]
+                    )
+                    log_probs_nt = torch.nested.nested_tensor_from_jagged(
+                        values_flat, offsets
+                    )
+                    model_output = {"log_probs": log_probs_nt}
+
+                    # Call loss_function (unchanged interface, supports cross_entropy + RLHF)
+                    loss, metrics = loss_function(
+                        model_output=model_output,
+                        data=micro_batch,
+                        dp_group=engine.get_data_parallel_group(),
+                    )
+
+                # --- Backward ---
+                if not forward_only:
+                    loss.backward()
+
+            output_lst.append({
+                "model_output": model_output,
+                "loss": loss.detach().item(),
+                "metrics": metrics,
+            })
+
+        # --- postprocess: aggregate metrics across micro-batches ---
+        all_metrics: Dict[str, Any] = {}
+        all_losses: list = []
+        for out in output_lst:
+            all_losses.append(out["loss"])
+            for k, v in (out["metrics"] or {}).items():
+                all_metrics.setdefault(k, []).append(v)
+        # Average list metrics
+        for k, v in all_metrics.items():
+            if isinstance(v, list):
+                all_metrics[k] = sum(v) / len(v) if v else 0.0
+        # Combine model_output log_probs across micro-batches for return
+        combined_log_probs_list = []
+        for out in output_lst:
+            lp_nt = out["model_output"].get("log_probs")
+            if lp_nt is not None and hasattr(lp_nt, "unbind"):
+                combined_log_probs_list.extend(lp_nt.unbind(dim=0))
+        combined_model_output = {}
+        if combined_log_probs_list:
+            combined_model_output["log_probs"] = torch.nested.nested_tensor(
+                [t.detach() for t in combined_log_probs_list], layout=torch.jagged
+            )
+        output = {
+            "model_output": combined_model_output,
+            "metrics": all_metrics,
+            "loss": all_losses,
+        }
         return output
 
     def optim_step(
