@@ -18,17 +18,11 @@ from tinker import types
 
 
 try:
-    from tinker.types._pydantic_types.forward_backward_request import (
-        ForwardBackwardRequest as PydanticForwardBackwardRequest,
-    )
-    from tinker.types._pydantic_types.forward_request import (
-        ForwardRequest as PydanticForwardRequest,
-    )
+    from tinker.types._pydantic_types.forward_backward_request import ForwardBackwardRequest
+    from tinker.types._pydantic_types.forward_request import ForwardRequest
+
 except ModuleNotFoundError:
-    from tinker.types import (
-        ForwardBackwardRequest as PydanticForwardBackwardRequest,
-        ForwardRequest as PydanticForwardRequest,
-    )
+    from tinker.types import ForwardBackwardRequest, ForwardRequest
 
 from .auth import User
 from .compat import maybe_serialize_payload, serialize_sample_response_proto
@@ -310,7 +304,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         status_code=status.HTTP_202_ACCEPTED,
     )
     async def forward(
-        request: PydanticForwardRequest,
+        request: ForwardRequest,
         state: ServerState = Depends(_get_state),
         user: User = Depends(_get_user),
     ) -> types.UntypedAPIFuture:
@@ -351,7 +345,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         status_code=status.HTTP_202_ACCEPTED,
     )
     async def forward_backward(
-        request: PydanticForwardBackwardRequest,
+        request: ForwardBackwardRequest,
         state: ServerState = Depends(_get_state),
         user: User = Depends(_get_user),
     ) -> types.UntypedAPIFuture:
