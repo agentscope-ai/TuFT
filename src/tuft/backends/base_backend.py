@@ -37,8 +37,31 @@ class BaseSamplingBackend(BaseBackend):
         """Abstract method for sampling."""
 
     @abstractmethod
-    async def add_adapter(self, lora_id: str, adapter_path: Path) -> None:
-        """Add LoRA adapter to the backend."""
+    async def add_adapter(
+        self,
+        lora_id: str,
+        adapter_path: Path,
+        is_initial: Optional[bool] = None,
+    ) -> None:
+        """Add LoRA adapter to the backend.
+
+        Args:
+            lora_id: Unique identifier for the adapter.
+            adapter_path: On-disk PEFT adapter directory.
+            is_initial: Tri-state flag describing whether the adapter has
+                ever been trained:
+
+                * ``True``  -- adapter is freshly initialised (lora_B == 0);
+                  its inference output is identical to the base model.
+                * ``False`` -- adapter has been trained.
+                * ``None``  -- unknown; backends that care (notably the
+                  :class:`SamplingRequestScheduler`) will fall back to
+                  weight inspection to decide.
+
+                Used by :class:`SamplingRequestScheduler` to coalesce
+                requests against initial adapters into the base-model
+                bucket for higher throughput.
+        """
 
     @abstractmethod
     async def remove_adapter(self, lora_id: str) -> None:
