@@ -16,13 +16,23 @@ Two coalescing principles are applied (in order):
    requests are scheduled as if they had ``lora_id=None``.
 
 2. Inside a short coalescing window the buffered batch is **stably
-   sorted by effective lora_id**.  asyncio's task queue is FIFO and
-   :meth:`VLLMSamplingBackend.sample` enters its lock in submission
-   order, so this sort directly controls the order in which
-   ``engine._generate_internal.remote()`` calls reach the vLLM actor's
-   mailbox.  Same-adapter requests therefore appear contiguously in
-   vLLM's prefill queue, minimising the number of distinct adapters
-   live in any concurrent batch.
+   sorted so that requests sharing the same effective_lora_id are
+   contiguous**, and groups are ordered by *the enqueue time of the
+   first request seen for that adapter in the window* (FIFO between
+   groups, original arrival order within a group).  This preserves the
+   contiguity that vLLM's LoRA scheduler benefits from while removing
+   the previous lexicographic bias where adapters with larger string
+   ids were systematically pushed to the tail of every batch.  asyncio's
+   task queue is FIFO and :meth:`VLLMSamplingBackend.sample` enters its
+   lock in submission order, so this sort directly controls the order
+   in which ``engine._generate_internal.remote()`` calls reach the vLLM
+   actor's mailbox.
+
+Per-adapter fairness/latency observability is emitted via three
+histograms (see :meth:`SamplingRequestScheduler._record_dispatch_metrics`):
+``tuft.sampling.scheduler.queue_wait``,
+``tuft.sampling.scheduler.batch_position``,
+``tuft.sampling.scheduler.window_share``.
 """
 
 from __future__ import annotations
@@ -36,9 +46,14 @@ from typing import Optional
 from tinker import types
 
 from .backends.base_backend import BaseSamplingBackend
+from .telemetry.metrics import get_metrics
 
 
 logger = logging.getLogger(__name__)
+
+# Attribute value used in metrics when the request targets the base model bucket
+# (no LoRA, or an is_initial adapter that has been folded into the base bucket).
+_BASE_BUCKET_LABEL = "__base__"
 
 
 @dataclass
@@ -51,6 +66,11 @@ class _PendingItem:
     # None means "route to base model" (no LoRA, or is_initial adapter).
     effective_lora_id: Optional[str]
     future: asyncio.Future = field(repr=False)
+    # Monotonic timestamp (event-loop time) at which the item was enqueued.
+    # Used both for fair group ordering ("earliest-arriving group goes first")
+    # and for the per-request queue_wait metric.  Filled in by ``sample`` just
+    # before ``self._queue.put``; 0.0 is a safe sentinel meaning "unknown".
+    enqueue_ts: float = 0.0
 
 
 class SamplingRequestScheduler(BaseSamplingBackend):
@@ -271,6 +291,7 @@ class SamplingRequestScheduler(BaseSamplingBackend):
             topk_prompt_logprobs=topk_prompt_logprobs,
             effective_lora_id=self._effective_lora_id(lora_id),
             future=loop.create_future(),
+            enqueue_ts=loop.time(),
         )
         await self._queue.put(item)
         return await item.future
@@ -307,11 +328,28 @@ class SamplingRequestScheduler(BaseSamplingBackend):
                         break
                     batch.append(nxt)
 
-                # Stable sort: requests with the same effective lora_id keep
-                # their arrival order; different adapters become contiguous.
-                # The empty string is used as the sort key for the base
-                # bucket (None) so it always sorts first.
-                batch.sort(key=lambda it: it.effective_lora_id or "")
+                # Group-fair stable sort:
+                #   * primary key  = enqueue_ts of the *first* request seen for
+                #     each effective_lora_id in this batch -- the group that
+                #     arrived first in the window goes first;
+                #   * secondary key = item.enqueue_ts -- within a group the
+                #     original arrival order is preserved.
+                # This still keeps requests sharing an adapter contiguous (so
+                # vLLM LoRA scheduling benefits unchanged), but removes the
+                # previous lexicographic bias where adapters with larger string
+                # ids were systematically pushed to the tail of every batch.
+                group_first_ts: dict[Optional[str], float] = {}
+                for it in batch:
+                    if it.effective_lora_id not in group_first_ts:
+                        group_first_ts[it.effective_lora_id] = it.enqueue_ts
+                batch.sort(
+                    key=lambda it: (
+                        group_first_ts[it.effective_lora_id],
+                        it.enqueue_ts,
+                    )
+                )
+
+                self._record_dispatch_metrics(batch, loop.time())
 
                 if logger.isEnabledFor(logging.DEBUG):
                     distinct = {it.effective_lora_id for it in batch}
@@ -332,6 +370,42 @@ class SamplingRequestScheduler(BaseSamplingBackend):
             logger.exception("sampling scheduler dispatcher crashed")
             self._drain_pending(exc)
             raise
+
+    def _record_dispatch_metrics(self, batch: list[_PendingItem], dispatch_ts: float) -> None:
+        """Emit per-adapter fairness metrics for a dispatched batch.
+
+        Three histograms are recorded (all labelled by ``lora_id`` where the
+        base-model / is_initial bucket uses :data:`_BASE_BUCKET_LABEL`):
+
+        * ``tuft.sampling.scheduler.queue_wait`` -- seconds between enqueue
+          and dispatch for each request.  Reveals per-adapter wait-time
+          distributions (p50/p99) and is the primary starvation indicator.
+        * ``tuft.sampling.scheduler.batch_position`` -- 0-based index of
+          the request within the sorted batch.  Systematic bias against an
+          adapter shows up as a consistently large position.
+        * ``tuft.sampling.scheduler.window_share`` -- number of requests an
+          adapter contributed to this batch (emitted once per adapter per
+          batch).  Surfaces adapters monopolising windows.
+
+        Failures are swallowed: telemetry is best-effort and must never
+        break the dispatch path.  When no MeterProvider is configured the
+        OpenTelemetry NoOp meter makes these calls effectively free.
+        """
+        try:
+            metrics_ = get_metrics()
+            share_counts: dict[Optional[str], int] = {}
+            for position, it in enumerate(batch):
+                label = it.effective_lora_id or _BASE_BUCKET_LABEL
+                attrs = {"lora_id": label}
+                wait_s = max(0.0, dispatch_ts - it.enqueue_ts) if it.enqueue_ts else 0.0
+                metrics_.scheduler_queue_wait.record(wait_s, attrs)
+                metrics_.scheduler_batch_position.record(position, attrs)
+                share_counts[it.effective_lora_id] = share_counts.get(it.effective_lora_id, 0) + 1
+            for lora_id, count in share_counts.items():
+                label = lora_id or _BASE_BUCKET_LABEL
+                metrics_.scheduler_window_share.record(count, {"lora_id": label})
+        except Exception:  # pragma: no cover - telemetry must never break dispatch
+            logger.debug("failed to record scheduler dispatch metrics", exc_info=True)
 
     def _dispatch_concurrent(self, batch: list[_PendingItem]) -> None:
         """Fire all batch items concurrently, preserving sort order.
