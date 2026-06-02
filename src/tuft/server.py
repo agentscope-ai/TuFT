@@ -27,7 +27,7 @@ except ModuleNotFoundError:
 from .auth import User
 from .compat import maybe_serialize_payload, serialize_sample_response_proto
 from .config import AppConfig
-from .exceptions import TuFTException
+from .exceptions import ServerException, TuFTException
 from .oai import create_oai_router
 from .persistence import get_redis_store, save_config_signature
 from .state import ServerState
@@ -576,6 +576,21 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
                 request_id=request.request_id, user_id=user.user_id
             )
         except TuFTException as exc:
+            # A `ServerException` here means the future *operation itself*
+            # raised an unhandled exception (terminal business failure: e.g.
+            # vLLM EngineGenerateError, bad sampling params). These will never
+            # recover on retry, but ServerException defaults to status_code=500
+            # which makes tinker SDK enter an exponential-backoff retry loop
+            # against /retrieve_future, manifesting as a multi-minute hang.
+            # Map terminal failures to 422 (Unprocessable Entity) so the SDK
+            # surfaces the failure to the caller instead of retrying. Other
+            # TuFTException subclasses (404 / 409 / 503 etc.) keep their
+            # original semantics.
+            if isinstance(exc, ServerException):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Future failed: {exc.detail}",
+                ) from exc
             raise HTTPException(
                 status_code=exc.status_code,
                 detail=f"Failed to retrieve future: {exc.detail}",
