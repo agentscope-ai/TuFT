@@ -1161,6 +1161,24 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         else:
             import ray
 
+            # FSDP-2 死锁防护：fsdp_num_gpus >= 2 时，len(data) 必须 >= world_size，
+            # 否则下面 _shard_list 产生空 shard，对应 actor 被 line 1178 的
+            # `if not shard: continue` 跳过不被调用；其他 actor 内部的 NCCL
+            # collective 永久等不到它 → 进程 hang，record._execution_lock 也不会释放，
+            # 后续所有 RPC 同次死锁 → 只能重启 server。
+            # fail-fast: 报 ValueError，使该次 _operation 正常抛异常 → async with
+            # _execution_lock 释放锁，client 拿到 failed future，server 状态安全。
+            world_size = len(self._actors)
+            if len(data) < world_size:
+                raise ValueError(
+                    f"FSDP forward requires len(data) >= fsdp_num_gpus (world_size). "
+                    f"Got len(data)={len(data)}, world_size={world_size}. "
+                    f"Sending fewer datums than ranks leaves some ranks idle and causes "
+                    f"NCCL collectives in other ranks to hang permanently, deadlocking "
+                    f"the entire training_run record's execution lock. Increase batch "
+                    f"size or upstream chunking, or set fsdp_num_gpus=1 in tuft_config.yaml."
+                )
+
             shards = _shard_list(data, len(self._actors))
 
             refs = []
