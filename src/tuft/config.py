@@ -65,6 +65,11 @@ class ModelConfig(BaseModel):
     # optional override for FSDP backend HFModelConfig (e.g. attn_implementation)
     fsdp_override_config: dict[str, Any] | None = None
 
+    # Quantization method for the sampling (vLLM) engine.
+    # Supported values: "fp8", "awq", "gptq", "bitsandbytes", etc.
+    # If None, no quantization is applied (model runs in dtype as-is).
+    quantization: str | None = None
+
     # whether to colocate sampling and training on the same device
     # only for local testing purposes
     colocate: bool = False
