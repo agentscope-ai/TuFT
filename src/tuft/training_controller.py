@@ -72,6 +72,10 @@ class TrainingRunRecord(BaseModel):
     next_sampler_checkpoint: int = 1
     corrupted: bool = False
     next_seq_id: int = 1
+    # Number of completed optim_step calls on this training run.  Used to
+    # decide whether checkpoints saved from this run are "initial"
+    # (untrained).  Persisted so that the flag is correct across restarts.
+    optim_step_count: int = 0
     # Runtime-only fields, excluded from serialization
     backend: BaseTrainingBackend | None = Field(default=None, exclude=True)
     # Private attribute for execution lock (not a model field)
@@ -435,6 +439,9 @@ class TrainingController:
                 if record.backend is None:
                     raise UnknownModelException(model_name=model_id)
                 result = await record.backend.optim_step(adam_params=params, lora_id=model_id)
+                # Track optim_step count so subsequent checkpoints can be
+                # correctly tagged as non-initial.
+                record.optim_step_count += 1
                 logger.info("Optimizer step completed for %s", model_id)
                 return result
 
@@ -545,10 +552,12 @@ class TrainingController:
                     )
 
                 # Write metadata once so metadata.json exists
+                is_initial = training_run.optim_step_count == 0
                 checkpoint.save_metadata(
                     base_model=training_run.base_model,
                     session_id=training_run.session_id,
                     lora_rank=training_run.lora_rank,
+                    is_initial=is_initial,
                 )
 
                 # Compute total size including metadata.json
@@ -559,6 +568,7 @@ class TrainingController:
                     base_model=training_run.base_model,
                     session_id=training_run.session_id,
                     lora_rank=training_run.lora_rank,
+                    is_initial=is_initial,
                 )
                 # save the checkpoint record in the training run
                 target_map[checkpoint_name] = checkpoint

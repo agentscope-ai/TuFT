@@ -38,6 +38,14 @@ class CheckpointMetadata(BaseModel):
     public: bool = False
     future_id: int = 0
     seq_id: int | None = None
+    # True if this checkpoint was saved before any optim_step happened, i.e.
+    # the LoRA adapter was never trained.  Such adapters have lora_B == 0,
+    # so their inference output is identical to the base model and the
+    # SamplingRequestScheduler can collapse their requests into the base
+    # bucket without any disk inspection.
+    # None means "unknown" -- the scheduler will fall back to weight
+    # inspection for is_initial detection.
+    is_initial: bool | None = None
 
 
 class CheckpointRecord(BaseModel):
@@ -120,9 +128,16 @@ class CheckpointRecord(BaseModel):
             base_model=metadata.base_model,
             session_id=metadata.session_id,
             lora_rank=metadata.lora_rank,
+            is_initial=metadata.is_initial,
         )
 
-    def save_metadata(self, base_model: str, session_id: str, lora_rank: int | None) -> None:
+    def save_metadata(
+        self,
+        base_model: str,
+        session_id: str,
+        lora_rank: int | None,
+        is_initial: bool | None = None,
+    ) -> None:
         """Save the checkpoint metadata to disk."""
         # check the format of metadata
         try:
@@ -140,6 +155,7 @@ class CheckpointRecord(BaseModel):
                 size_bytes=self.size_bytes,
                 future_id=self.future_id,
                 seq_id=self.seq_id,
+                is_initial=is_initial,
             )
         except Exception as e:
             raise ValueError(f"Invalid checkpoint metadata: {e}") from e

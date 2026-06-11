@@ -424,11 +424,20 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                 span.set_status(StatusCode.ERROR)
                 raise
 
-    async def add_adapter(self, lora_id: str, adapter_path: Path) -> None:
+    async def add_adapter(
+        self,
+        lora_id: str,
+        adapter_path: Path,
+        is_initial: Optional[bool] = None,
+    ) -> None:
         from vllm.lora.request import LoRARequest
 
         with _get_tracer().start_as_current_span("sampling_backend.add_adapter") as span:
             span.set_attribute("tuft.lora_id", lora_id)
+            # Span attribute must be a primitive; serialise the tri-state.
+            span.set_attribute(
+                "tuft.is_initial", "unknown" if is_initial is None else str(is_initial)
+            )
             try:
                 async with self._lock:
                     self._counter += 1
@@ -752,7 +761,12 @@ class DummySamplingBackend(BaseSamplingBackend):
         start = prompt_tokens[-1] if prompt_tokens else (abs(self.config.seed) % 32000) + 1
         return [(start + i) % 32000 for i in range(1, max_tokens + 1)]
 
-    async def add_adapter(self, lora_id: str, adapter_path: Path) -> None:
+    async def add_adapter(
+        self,
+        lora_id: str,
+        adapter_path: Path,
+        is_initial: Optional[bool] = None,
+    ) -> None:
         self.lora_adapters[lora_id] = adapter_path
 
     async def remove_adapter(self, lora_id: str) -> None:

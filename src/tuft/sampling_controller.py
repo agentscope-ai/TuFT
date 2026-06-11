@@ -30,6 +30,7 @@ from .persistence import (
     load_record,
     save_record,
 )
+from .sampling_scheduler import SamplingRequestScheduler
 from .sequence_executor import SequenceExecutor
 from .telemetry.metrics import get_metrics
 from .telemetry.tracing import get_tracer
@@ -71,6 +72,12 @@ class SamplingSessionRecord(BaseModel):
     model_path: str | None = None
     session_seq_id: int
     last_seq_id: int = -1
+    # Whether the adapter that backs this session was untrained at the
+    # time it was loaded.  Persisted so that the SamplingRequestScheduler
+    # can re-apply the optimisation across server restarts without
+    # re-reading checkpoint metadata from disk.  None means "unknown";
+    # the scheduler will fall back to weight inspection.
+    is_initial: bool | None = None
     history: list[SamplingHistoryEntry] = Field(default_factory=list)
     executor: SequenceExecutor = Field(default_factory=SequenceExecutor, exclude=True)
 
@@ -160,7 +167,9 @@ class SamplingController:
                 try:
                     backend = self._base_backends[record.base_model]
                     await backend.add_adapter(
-                        lora_id=record.sampling_session_id, adapter_path=adapter_path
+                        lora_id=record.sampling_session_id,
+                        adapter_path=adapter_path,
+                        is_initial=record.is_initial,
                     )
                 except Exception:
                     logger.exception(
@@ -174,9 +183,22 @@ class SamplingController:
     def _create_backends(self, model_configs: List[ModelConfig]) -> Dict[str, BaseSamplingBackend]:
         backends: Dict[str, BaseSamplingBackend] = {}
         for config in model_configs:
-            backends[config.model_name] = BaseSamplingBackend.create_backend(
+            raw_backend = BaseSamplingBackend.create_backend(
                 config, worker_venv_path=self.config.worker_venv_path
             )
+            if config.scheduling_strategy == "none":
+                # No scheduler; requests pass directly to backend.
+                backends[config.model_name] = raw_backend
+            else:
+                # Wrap with request scheduler ("batch" or "fcfs" strategy).
+                backends[config.model_name] = SamplingRequestScheduler(
+                    raw_backend,
+                    coalesce_window_s=config.scheduler_coalesce_window_s,
+                    max_batch_size=config.scheduler_max_batch_size,
+                    serialize_groups=config.scheduler_serialize_groups,
+                    coalesce_initial_adapters=config.coalesce_initial_adapters,
+                    scheduling_strategy=config.scheduling_strategy,
+                )
         return backends
 
     async def create_sampling_session(
@@ -226,14 +248,18 @@ class SamplingController:
                         raise UnknownModelException(model_name=base_model_ref)
                     adapter_path = parsed_checkpoint.adapter_path
                     sampling_backend = self._base_backends[base_model_ref]
+                    adapter_is_initial = metadata.is_initial
                     await sampling_backend.add_adapter(
-                        lora_id=sampling_session_id, adapter_path=adapter_path
+                        lora_id=sampling_session_id,
+                        adapter_path=adapter_path,
+                        is_initial=adapter_is_initial,
                     )
                     # TODO: remove adapter when session is deleted
                 elif base_model:
                     base_model_ref = base_model
                     if base_model_ref not in self._base_backends:
                         raise UnknownModelException(model_name=base_model_ref)
+                    adapter_is_initial = None
                 else:
                     raise UnknownModelException(model_name="None")
                 self.sampling_sessions[sampling_session_id] = SamplingSessionRecord(
@@ -244,6 +270,7 @@ class SamplingController:
                     base_model=base_model_ref,
                     model_path=str(adapter_path) if adapter_path else None,
                     session_seq_id=session_seq_id,
+                    is_initial=adapter_is_initial,
                 )
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, self._save_session, sampling_session_id)

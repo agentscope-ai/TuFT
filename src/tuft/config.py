@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -82,6 +82,31 @@ class ModelConfig(BaseModel):
     enable_auto_tool_choice: bool = False
     tool_call_parser: str | None = None
     reasoning_parser: str | None = None
+
+    # -- Sampling Scheduling Configuration --
+    # Whether to treat initial (untrained) adapters as the base model for scheduling
+    # purposes. When True, requests targeting freshly-initialised adapters (lora_B == 0)
+    # are coalesced into the base-model bucket, improving throughput.
+    coalesce_initial_adapters: bool = True
+
+    # Scheduling strategy for sampling requests:
+    #   "none"       -- no scheduler; requests pass directly to the backend (no reordering).
+    #   "batch"      -- naive adapter-based sort within the coalescing window. Requests are
+    #                    grouped by effective_lora_id and sorted lexicographically. This
+    #                    maximises adapter contiguity but may starve adapters whose IDs sort
+    #                    later in every window.
+    #   "batch_fcfs" -- fair FCFS-then-batch. Adapter groups are ordered by the arrival time
+    #                    of their first request in the window (first-come-first-served between
+    #                    groups), and requests within a group preserve arrival order.  This
+    #                    combines FCFS fairness with batch contiguity -- eliminates starvation
+    #                    while still keeping same-adapter requests contiguous for vLLM
+    #                    throughput benefit.
+    scheduling_strategy: Literal["none", "batch", "batch_fcfs"] = "batch_fcfs"
+
+    # Scheduler tuning parameters (only effective when scheduling_strategy != "none")
+    scheduler_coalesce_window_s: float = 0.005  # coalescing window in seconds
+    scheduler_max_batch_size: int = 32  # max items per dispatch round
+    scheduler_serialize_groups: bool = False  # serialize adapter groups for stronger batching
 
     @model_validator(mode="after")
     def validate_colocate(self) -> "ModelConfig":
