@@ -241,6 +241,7 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                     lora_kwargs={
                         "max_lora_rank": config.max_lora_rank,
                         "max_loras": config.max_loras,
+                        **({"quantization": config.quantization} if config.quantization else {}),
                     },
                     # sampling use less memory than training
                     gpu_memory_utilization=config.sampling_memory_fraction,
@@ -300,6 +301,7 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                     lora_kwargs={
                         "max_lora_rank": config.max_lora_rank,
                         "max_loras": config.max_loras,
+                        **({"quantization": config.quantization} if config.quantization else {}),
                     },
                     gpu_memory_utilization=config.sampling_memory_fraction,
                     bundle_indices=bundle_indices,

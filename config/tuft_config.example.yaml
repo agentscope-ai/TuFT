@@ -40,6 +40,7 @@ model_owner: local-user
 #   - max_loras: Maximum simultaneous LoRA adapters (default: 1)
 #   - colocate: Colocate sampling and training on same device (default: false)
 #   - sampling_memory_fraction: GPU memory fraction for sampling (default: 0.2)
+#   - quantization: Quantization method for sampling (default: none)
 
 supported_models:
   - model_name: Qwen/Qwen3-4B
