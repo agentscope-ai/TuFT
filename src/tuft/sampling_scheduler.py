@@ -359,6 +359,16 @@ class SamplingRequestScheduler(BaseSamplingBackend):
                     # groups), and requests within a group preserve arrival order.
                     # This eliminates starvation while keeping same-adapter
                     # requests contiguous for vLLM throughput benefit.
+                    #
+                    # IMPORTANT: effective_lora_id is included as a tiebreaker
+                    # between the group_first_ts and enqueue_ts keys.  When
+                    # two adapters' first requests arrive in the same event-
+                    # loop tick (or very close together) their group_first_ts
+                    # values are equal (or near-equal).  Without the adapter
+                    # ID tiebreaker, the secondary key (enqueue_ts) would
+                    # interleave different adapters' requests, breaking the
+                    # contiguity guarantee that vLLM's LoRA scheduler relies
+                    # on for batching efficiency.
                     group_first_ts: dict[Optional[str], float] = {}
                     for it in batch:
                         if it.effective_lora_id not in group_first_ts:
@@ -366,6 +376,7 @@ class SamplingRequestScheduler(BaseSamplingBackend):
                     batch.sort(
                         key=lambda it: (
                             group_first_ts[it.effective_lora_id],
+                            it.effective_lora_id or "",
                             it.enqueue_ts,
                         )
                     )
