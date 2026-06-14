@@ -55,7 +55,11 @@ class ModelConfig(BaseModel):
     micro_batch_size: int = 1  # micro-batch size for training
     # training backend: "hf" (HFTrainingBackend) or "fsdp" (FSDPTrainingBackend)
     training_backend: str = "hf"
-    # number of GPUs (Ray actors) for FSDP backend; default 1
+    # number of GPUs (Ray actors) for FSDP backend; default 1.
+    # Currently only fsdp_num_gpus=1 is supported by the FSDP backend's
+    # forward path (see backends/fsdp_training_backend.py: multi-actor
+    # path raises NotImplementedError after the 2026-06-09 silent logprob
+    # batch-order corruption post-mortem).
     fsdp_num_gpus: int = 1
     # TCP port for torch.distributed init (FSDP multi-GPU); default 29500
     fsdp_master_port: int = 29500

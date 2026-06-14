@@ -50,25 +50,6 @@ from tuft.config import ModelConfig
 from tuft.loss_fn import get_loss_fn
 
 
-def _shard_list(xs: list[Any], n_shards: int) -> list[list[Any]]:
-    """Split xs into n_shards contiguous shards."""
-    if n_shards <= 0:
-        raise ValueError(f"n_shards must be > 0, got {n_shards}")
-
-    total = len(xs)
-    base = total // n_shards
-    rem = total % n_shards
-
-    shards = []
-    start = 0
-    for i in range(n_shards):
-        size = base + (1 if i < rem else 0)
-        end = start + size
-        shards.append(xs[start:end])
-        start = end
-    return shards
-
-
 def _merge_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
     merged: dict[str, Any] = {}
 
@@ -122,6 +103,75 @@ def _chunk_tensordict_allow_2d_nested(td: TensorDict, chunks: int) -> list | tup
 # Monkey-patch so prepare_micro_batches uses 2D-nested-safe chunk (avoids NestedTensor slice)
 tu.chunk_tensordict = _chunk_tensordict_allow_2d_nested
 
+# Monkey-patch verl `forward_backward_batch` + `forward_step` to print live
+# per-micro-batch progress (token lengths + index + elapsed). v22 debugging
+# needs visibility into which trajectory is being processed when forward_backward
+# takes 8+ minutes; without this the only signal is GPU util / nvidia-smi.
+#
+# Output goes to actor stdout, which Ray forwards into the server log
+# (server_v22replay.log) prefixed with `(VerlWorkerActor pid=...)`.
+import time as _time  # noqa: E402
+from verl.workers.engine.fsdp.transformer_impl import (  # noqa: E402
+    FSDPEngineWithLMHead as _FSDPEngineWithLMHead,
+)
+
+_v22_mb_state: Dict[str, Any] = {"count": 0, "start": 0.0}
+_v22_orig_forward_step = _FSDPEngineWithLMHead.forward_step
+_v22_orig_forward_backward_batch = _FSDPEngineWithLMHead.forward_backward_batch
+
+
+def _v22_logged_forward_step(self, micro_batch, loss_function, forward_only):
+    _v22_mb_state["count"] += 1
+    idx = _v22_mb_state["count"]
+    elapsed = _time.time() - _v22_mb_state["start"] if _v22_mb_state["start"] else 0.0
+    try:
+        seq_lens = micro_batch["input_ids"].offsets().diff().tolist()
+    except Exception:
+        seq_lens = []
+    sum_tok = sum(seq_lens)
+    max_tok = max(seq_lens) if seq_lens else 0
+    print(
+        f"[v22-mb {idx}] tokens=sum:{sum_tok} max:{max_tok} n_seq:{len(seq_lens)} "
+        f"seqs={seq_lens} elapsed={elapsed:.1f}s {'fwd_only' if forward_only else 'fwd+bwd'}",
+        flush=True,
+    )
+    return _v22_orig_forward_step(self, micro_batch, loss_function, forward_only)
+
+
+def _v22_logged_forward_backward_batch(self, data, loss_function, forward_only=False):
+    _v22_mb_state["count"] = 0
+    _v22_mb_state["start"] = _time.time()
+    try:
+        bs = len(data)
+    except Exception:
+        bs = -1
+    print(
+        f"[v22-fwdbwd] START batch_size={bs} forward_only={forward_only}",
+        flush=True,
+    )
+    try:
+        result = _v22_orig_forward_backward_batch(
+            self, data, loss_function, forward_only=forward_only
+        )
+    except Exception as e:
+        elapsed = _time.time() - _v22_mb_state["start"]
+        print(
+            f"[v22-fwdbwd] FAILED after {_v22_mb_state['count']} mb in "
+            f"{elapsed:.1f}s: {type(e).__name__}: {e}",
+            flush=True,
+        )
+        raise
+    elapsed = _time.time() - _v22_mb_state["start"]
+    print(
+        f"[v22-fwdbwd] DONE mb_count={_v22_mb_state['count']} elapsed={elapsed:.1f}s",
+        flush=True,
+    )
+    return result
+
+
+_FSDPEngineWithLMHead.forward_step = _v22_logged_forward_step
+_FSDPEngineWithLMHead.forward_backward_batch = _v22_logged_forward_backward_batch
+
 # Default port for torch.distributed init (multi-GPU). ModelConfig.fsdp_master_port should match.
 DEFAULT_MASTER_PORT = 29500
 
@@ -135,16 +185,31 @@ def _datum_list_to_tensordict(
     data: list[types.Datum],
     adapter_id: str,
     device: str = "cuda",
+    micro_batch_size: Optional[int] = None,
 ) -> "TensorDict":
-    """Convert list[types.Datum] to TensorDict (input_ids, position_ids, weights, etc.)."""
+    """Convert list[types.Datum] to TensorDict (input_ids, position_ids, weights, etc.).
+
+    If `micro_batch_size` is given and divides len(data), verl's
+    `forward_backward_batch` will internally split into
+    `len(data) // micro_batch_size` micro-batches and accumulate gradients
+    across them (no zero_grad inside). This keeps the number of NCCL
+    collectives per RPC at 1 across all dp ranks (one
+    `all_reduce(batch_num_tokens)` + verl's `same_micro_num_in_dp` sync),
+    which is required to avoid dp-imbalance hangs in multi-rank FSDP.
+    """
     from torch.nn.utils.rnn import pad_sequence
 
     input_ids_list = [torch.tensor(datum.model_input.to_ints(), dtype=torch.long) for datum in data]
     global_token_num = [x.size(0) for x in input_ids_list]
     # NO_PADDING path expects 2D nested (batch, seq_len) for to_padded_tensor
-    # output_size=(batch_size, max_seq_len)
+    # output_size=(batch_size, max_seq_len). Use `layout=torch.jagged` so
+    # downstream verl code can call `.offsets()` (required by
+    # `rearrange_micro_batches` under `use_dynamic_bsz=True`).
     input_ids_nested = torch.nested.nested_tensor(
-        [t.to(device) for t in input_ids_list], dtype=torch.long, device=device
+        [t.to(device) for t in input_ids_list],
+        dtype=torch.long,
+        device=device,
+        layout=torch.jagged,
     )
     # position_ids must be 2D nested for prepare_model_inputs to_padded_tensor
     position_ids_list = [
@@ -152,7 +217,10 @@ def _datum_list_to_tensordict(
         for seq_len in (x.size(0) for x in input_ids_list)
     ]
     position_ids_nested = torch.nested.nested_tensor(
-        position_ids_list, dtype=torch.long, device=device
+        position_ids_list,
+        dtype=torch.long,
+        device=device,
+        layout=torch.jagged,
     )
 
     # target_tokens, weights for loss from loss_fn_inputs
@@ -200,6 +268,11 @@ def _datum_list_to_tensordict(
         "target_tokens": target_tokens.to(device),
         "weights": weights_device,
         "loss_mask": weights_device,
+        # Temperature shape (B, 1, 1): TensorDict requires all leaf tensors to
+        # have batch_size as a prefix dimension. A 0-dim scalar is rejected by
+        # td batch_size validation, and verl's use_remove_padding=True path does
+        # `logits.div_(temperature)` which broadcasts (B,1,1) -> (B, seq, V).
+        # Keep (B,1,1) — it is correct for both padded and rmpad paths.
         "temperature": torch.full((batch_size, 1, 1), 1.0, device=device, dtype=torch.float32),
         "adapter_id": adapter_id,
     }
@@ -215,10 +288,28 @@ def _datum_list_to_tensordict(
     td["input_ids"] = input_ids_nested
     td["position_ids"] = position_ids_nested
     tu.assign_non_tensor(td, global_token_num=global_token_num)
+    # v22 grad-accum: route through verl's `use_dynamic_bsz=False` path with
+    # a fixed `micro_batch_size_per_gpu`. verl's loop never zero_grad's, so
+    # gradients accumulate across all mb's; the caller's optim_step then
+    # consumes the accumulated grad and zero_grad's.
+    if micro_batch_size and micro_batch_size > 0 and batch_size % micro_batch_size == 0:
+        mb = micro_batch_size
+    else:
+        mb = batch_size
     tu.assign_non_tensor(
         td,
         use_dynamic_bsz=False,
-        micro_batch_size_per_gpu=batch_size,
+        micro_batch_size_per_gpu=mb,
+        # use_remove_padding=False: we use NO_PADDING pad_mode (jagged tensors)
+        # but NOT verl's rmpad path because rmpad does
+        #   `logits_rmpad.div_(temperature)` with a scalar temperature
+        # while our TensorDict-resident temperature must be (B,1,1) to pass
+        # TensorDict batch_size validation. These two constraints conflict;
+        # fixing requires monkey-patching verl's prepare_model_outputs (TODO).
+        # With False + jagged nested tensors + NO_PADDING, verl pads to
+        # max_seq_len internally, forwards, then narrows logits back per
+        # sample, so per-sample logprob lengths still equal their real
+        # input_ids lengths (verified in post-mortem replay 2026-06-09).
         use_remove_padding=False,
         pad_mode=DatasetPadMode.NO_PADDING,
     )
@@ -606,14 +697,31 @@ class MultiAdapterVerlWorker:
         loss_function: Callable[..., Any],
         forward_only: bool = False,
     ) -> Dict[str, Any]:
-        """Set PEFT active adapter, then call engine.forward_backward_batch (no step)."""
+        """Set PEFT active adapter, then call engine.forward_backward_batch (no step).
+
+        NOTE: We deliberately do NOT call optimizer.zero_grad() here. Multiple
+        consecutive forward_backward calls between two optim_step calls will
+        accumulate gradients (standard PyTorch grad-accumulation semantics).
+        zero_grad happens inside optim_step() at the end of each training step
+        (see optim_step below, line ~662). verl `forward_backward_batch` itself
+        only calls `loss.backward()` per micro-batch and never zero_grad's.
+        verl `EngineTrainModeCtx.__exit__` does call optimizer_zero_grad, but
+        we keep that context permanently entered via `_ensure_train_mode_entered`
+        and only exit it on adapter release (`leave_train_mode`).
+
+        This is required for two cases:
+          1. Per-call internal micro-batch accumulation (callers split a large
+             batch into chunks of ModelConfig.micro_batch_size and rely on grads
+             persisting across the loop).
+          2. Cross-call grad accumulation (e.g. trinity v22: 32 forward_backward
+             calls + 1 optim_step), which removes mini-batch SGD intra-step
+             off-policy drift in PPO-style RL training.
+        """
         self._activate_adapter(adapter_name)
         info = self._adapters[adapter_name]
         if info.optimizer is None:
             self._create_optimizer_for_adapter(adapter_name)
         self.engine.optimizer = info.optimizer
-        if not forward_only:
-            info.optimizer.zero_grad()
         self._ensure_train_mode_entered()
         output = self.engine.forward_backward_batch(
             data=data,
@@ -878,47 +986,67 @@ class VerlWorkerActor:
         loss_fn_name: str,
         loss_fn_config: Optional[dict] = None,
         forward_only: bool = False,
+        micro_batch_size: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """data: list[types.Datum] (or dicts after Ray serialization). Returns shard result."""
+        """Run forward (+backward) on this actor's data shard.
+
+        data: list[types.Datum] (or dicts after Ray serialization).
+
+        Grad-accum strategy (v22): we issue **a single** verl
+        `forward_backward_batch` call per RPC, passing `micro_batch_size`
+        through the TensorDict's `micro_batch_size_per_gpu` non-tensor.
+        verl then splits the shard into `len(data) // micro_batch_size`
+        micro-batches and accumulates gradients across them (verl's loop
+        never zero_grad's). This keeps NCCL collective count per RPC
+        constant across dp ranks (1 batch_num_tokens all_reduce + 1
+        same_micro_num_in_dp sync), avoiding the dp-imbalance hang we hit
+        when the actor itself looped multiple verl calls per RPC.
+
+        Caller is responsible for invoking `optim_step` afterwards
+        (which will step + zero_grad).
+        """
         if data and isinstance(data[0], dict):
             data = [types.Datum(**d) for d in data]
 
-        if not data:
+        if not data or self._worker is None:
             return {
                 "metrics": {},
                 "loss_fn_outputs": [],
             }
 
-        td = _datum_list_to_tensordict(data, adapter_name, "cuda")
+        # mb honored only when it cleanly divides len(data); otherwise we
+        # fall back to mb=len(data) (single micro-batch) to keep verl
+        # `chunk_tensordict` happy (it asserts len % chunks == 0).
+        if (
+            micro_batch_size
+            and micro_batch_size > 0
+            and len(data) % micro_batch_size == 0
+        ):
+            mb = micro_batch_size
+        else:
+            mb = len(data)
+        n_micro = len(data) // mb
         loss_fn = _make_verl_loss_fn(loss_fn_name, loss_fn_config)
-
-        if self._worker is None:
-            return {
-                "metrics": {},
-                "loss_fn_outputs": [],
-            }
-
-        out = self._worker.forward_backward(
-            adapter_name,
-            td,
-            loss_fn,
-            forward_only=forward_only,
-        )
-
-        metrics = out.get("metrics", {}) or {}
 
         def _to_scalar(v: Any) -> Any:
             if isinstance(v, list) and v and all(isinstance(x, (int, float)) for x in v):
                 return sum(v) if len(v) > 1 else float(v[0])
             return v
 
-        metrics = {k: _to_scalar(v) for k, v in metrics.items()}
-
-        loss_fn_outputs = _fsdp_logprobs_to_loss_fn_outputs(out, data)
+        td = _datum_list_to_tensordict(data, adapter_name, "cuda", micro_batch_size=mb)
+        out = self._worker.forward_backward(
+            adapter_name,
+            td,
+            loss_fn,
+            forward_only=forward_only,
+        )
+        metrics = {k: _to_scalar(v) for k, v in (out.get("metrics") or {}).items()}
+        metrics["actor/num_micro_batches"] = float(n_micro)
+        all_outputs = _fsdp_logprobs_to_loss_fn_outputs(out, data)
 
         return {
             "metrics": metrics,
-            "loss_fn_outputs": loss_fn_outputs,
+            "loss_fn_outputs": all_outputs,
         }
 
     def optim_step(
@@ -1140,14 +1268,42 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             loss_fn if isinstance(loss_fn, str) else getattr(loss_fn, "__name__", "cross_entropy")
         )
 
+        # Per-call internal micro-batch grad accumulation.
+        #
+        # When ModelConfig.micro_batch_size < len(data) (or, in multi-GPU mode,
+        # < shard length), each call splits its (sharded) batch into
+        # ceil(len/mb) micro-batches. Each micro-batch runs a full
+        # forward+backward, and gradients accumulate across micro-batches
+        # because MultiAdapterVerlWorker.forward_backward no longer zero_grad's
+        # at entry. The final optim_step (called by the user) consumes the
+        # accumulated gradients and zero_grad's.
+        #
+        # This makes the FSDP backend behave like the HF backend's built-in
+        # micro-batching (see hf_training_model.HFTrainingModel.forward), and
+        # lets callers (e.g. Trinity-RFT v22) pass a large train batch +
+        # 1 optim_step instead of N (forward_backward + optim_step) loops --
+        # eliminating mini-batch SGD intra-step off-policy drift in PPO/GRPO.
+        mb = int(getattr(self.config, "micro_batch_size", 0) or 0)
+
         def _to_scalar(v: Any) -> Any:
             if isinstance(v, list) and v and all(isinstance(x, (int, float)) for x in v):
                 return sum(v) if len(v) > 1 else float(v[0])
             return v
 
         if self._worker is not None:
-            td = await asyncio.to_thread(_datum_list_to_tensordict, data, adapter_name, "cuda")
             verl_loss_fn = _make_verl_loss_fn(loss_fn_name, loss_fn_config)
+            # Single-worker (single GPU) path: trust verl's
+            # `forward_backward_batch` to internally split into mb-sized
+            # micro-batches and accumulate gradients (mirrors the multi-actor
+            # path; see VerlWorkerActor.forward_backward).
+            if mb > 0 and len(data) % mb == 0:
+                eff_mb = mb
+            else:
+                eff_mb = max(len(data), 1)
+            n_micro = max(len(data) // eff_mb, 1) if data else 0
+            td = await asyncio.to_thread(
+                _datum_list_to_tensordict, data, adapter_name, "cuda", eff_mb
+            )
             out = await asyncio.to_thread(
                 self._worker.forward_backward,
                 adapter_name,
@@ -1155,53 +1311,55 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                 verl_loss_fn,
                 not backward,
             )
-            metrics = out.get("metrics", {}) or {}
-            metrics = {k: _to_scalar(v) for k, v in metrics.items()}
+            metrics = {k: _to_scalar(v) for k, v in (out.get("metrics") or {}).items()}
+            metrics["actor/num_micro_batches"] = float(n_micro)
             loss_fn_outputs = _fsdp_logprobs_to_loss_fn_outputs(out, data)
         else:
             import ray
-
-            # FSDP-2 死锁防护：fsdp_num_gpus >= 2 时，len(data) 必须 >= world_size，
-            # 否则下面 _shard_list 产生空 shard，对应 actor 被 line 1178 的
-            # `if not shard: continue` 跳过不被调用；其他 actor 内部的 NCCL
-            # collective 永久等不到它 → 进程 hang，record._execution_lock 也不会释放，
-            # 后续所有 RPC 同次死锁 → 只能重启 server。
-            # fail-fast: 报 ValueError，使该次 _operation 正常抛异常 → async with
-            # _execution_lock 释放锁，client 拿到 failed future，server 状态安全。
-            world_size = len(self._actors)
-            if len(data) < world_size:
-                raise ValueError(
-                    f"FSDP forward requires len(data) >= fsdp_num_gpus (world_size). "
-                    f"Got len(data)={len(data)}, world_size={world_size}. "
-                    f"Sending fewer datums than ranks leaves some ranks idle and causes "
-                    f"NCCL collectives in other ranks to hang permanently, deadlocking "
-                    f"the entire training_run record's execution lock. Increase batch "
-                    f"size or upstream chunking, or set fsdp_num_gpus=1 in tuft_config.yaml."
+        
+            # Ray actor path. Currently we only support n_actors == 1
+            # (single-GPU FSDP wrapped in a Ray actor; this is what
+            # `fsdp_num_gpus=1` produces). Multi-actor (fsdp_num_gpus >= 2)
+            # is intentionally NOT supported because the prior token-balanced
+            # sharding broke the tinker SDK order contract:
+            #   - SDK side: `zip(data, logprobs_list)`
+            #   - trinity side: `zip(model_inputs_list, logprobs)`
+            # Both assume `loss_fn_outputs` come back in the SAME order as
+            # input data. Any reorder/shard-then-merge silently corrupts
+            # training (Python's `[-am:]` slicing hides shape mismatches
+            # when am < server_logprob_len). To re-enable multi-actor we
+            # must (1) preserve original batch order or pass an inverse
+            # permutation through the Ray result merge, and (2) re-validate
+            # the per-step logprob alignment via the post-mortem replay.
+            n_actors = len(self._actors)
+            if n_actors != 1:
+                raise NotImplementedError(
+                    f"Multi-actor FSDP (n_actors={n_actors}) is currently"
+                    " disabled because the previous token-balanced sharding"
+                    " silently broke the tinker SDK batch-order contract"
+                    " (see post-mortem 2026-06-09). Use fsdp_num_gpus=1."
                 )
-
-            shards = _shard_list(data, len(self._actors))
-
-            refs = []
-            for actor, shard in zip(self._actors, shards, strict=False):
-                if not shard:
-                    continue
-                refs.append(
-                    actor.forward_backward.remote(
-                        shard,
-                        adapter_name,
-                        loss_fn_name,
-                        loss_fn_config,
-                        not backward,
-                    )
+            if not data:
+                return types.ForwardBackwardOutput(
+                    loss_fn_output_type=loss_fn_name,
+                    loss_fn_outputs=[],
+                    metrics={},
                 )
-
-            results = await asyncio.to_thread(ray.get, refs) if refs else []
-
-            metrics = _merge_metrics(results)
-
-            loss_fn_outputs = []
-            for out in results:
-                loss_fn_outputs.extend(out.get("loss_fn_outputs", []))
+            self.logger.info(
+                "FSDP single-actor forward: batch=%d mb=%s", len(data), mb,
+            )
+            ref = self._actors[0].forward_backward.remote(
+                list(data),
+                adapter_name,
+                loss_fn_name,
+                loss_fn_config,
+                not backward,
+                mb if mb > 0 else None,
+            )
+            result = await asyncio.to_thread(ray.get, ref)
+        
+            metrics = _merge_metrics([result])
+            loss_fn_outputs = list(result.get("loss_fn_outputs", []))
 
         # Tinker expects every metric key to be "name:reduction" (e.g. loss:sum)
         metrics = {k: v for k, v in metrics.items() if ":" in k}
