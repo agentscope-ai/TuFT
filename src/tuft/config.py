@@ -78,6 +78,11 @@ class ModelConfig(BaseModel):
     # Can be set smaller (e.g. 2048) in testing to reduce GPU memory and startup time.
     sampling_max_model_len: int | None = None
 
+    # OpenAI-compatible vLLM API: tool calling (required for qwenpaw ReAct agents).
+    enable_auto_tool_choice: bool = False
+    tool_call_parser: str | None = None
+    reasoning_parser: str | None = None
+
     @model_validator(mode="after")
     def validate_colocate(self) -> "ModelConfig":
         if self.colocate and self.tensor_parallel_size != 1:
@@ -89,6 +94,15 @@ class ModelConfig(BaseModel):
         """Ensure fsdp_rank_slots keys are int (YAML/JSON may load them as str)."""
         if self.fsdp_rank_slots is not None and len(self.fsdp_rank_slots) > 0:
             self.fsdp_rank_slots = {int(k): v for k, v in self.fsdp_rank_slots.items()}
+        return self
+
+    @model_validator(mode="after")
+    def validate_tool_calling(self) -> "ModelConfig":
+        if self.enable_auto_tool_choice and not self.tool_call_parser:
+            raise ValueError(
+                "enable_auto_tool_choice requires tool_call_parser "
+                "(e.g. hermes for Qwen3-Thinking models)."
+            )
         return self
 
 
