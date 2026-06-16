@@ -41,6 +41,9 @@ model_owner: local-user
 #   - colocate: Colocate sampling and training on same device (default: false)
 #   - sampling_memory_fraction: GPU memory fraction for sampling (default: 0.2)
 #   - quantization: Quantization method for sampling (default: none)
+#   - enable_auto_tool_choice: vLLM OpenAI API auto tool choice (qwenpaw ReAct)
+#   - tool_call_parser: vLLM tool parser (e.g. hermes for Qwen3-Thinking)
+#   - reasoning_parser: vLLM reasoning parser (e.g. qwen3)
 
 supported_models:
   - model_name: Qwen/Qwen3-4B

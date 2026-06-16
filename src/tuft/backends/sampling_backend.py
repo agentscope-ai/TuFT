@@ -196,9 +196,42 @@ class VLLMSamplingBackend(BaseSamplingBackend):
         else:
             return self._create_standalone_engine(config)
 
+    def _build_inference_model_config(self, config: ModelConfig, **extra_kwargs):
+        from trinity.common.config import InferenceModelConfig
+
+        return InferenceModelConfig(
+            model_path=str(config.model_path),
+            tensor_parallel_size=extra_kwargs.pop("tensor_parallel_size"),
+            max_model_len=(
+                config.sampling_max_model_len
+                if config.sampling_max_model_len is not None
+                else config.max_model_len
+            ),
+            temperature=config.temperature,
+            top_p=config.top_p,
+            top_k=config.top_k,
+            logprobs=config.logprobs,
+            min_response_tokens=config.min_response_tokens,
+            repetition_penalty=1.0,
+            enable_lora=True,
+            enable_runtime_lora_updating=True,
+            enable_openai_api=True,
+            enable_auto_tool_choice=config.enable_auto_tool_choice,
+            tool_call_parser=config.tool_call_parser,
+            reasoning_parser=config.reasoning_parser,
+            lora_kwargs={
+                "max_lora_rank": config.max_lora_rank,
+                "max_loras": config.max_loras,
+                **({"quantization": config.quantization} if config.quantization else {}),
+            },
+            gpu_memory_utilization=extra_kwargs.pop(
+                "gpu_memory_utilization", config.sampling_memory_fraction
+            ),
+            **extra_kwargs,
+        )
+
     def _create_colocated_engine(self, config: ModelConfig):
         import ray
-        from trinity.common.config import InferenceModelConfig
         from trinity.common.models.vllm_model import vLLMRolloutModel
 
         if not self._worker_venv_path or not self._worker_venv_path.strip():
@@ -221,29 +254,9 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                 runtime_env=_runtime_env,
             )
             .remote(
-                config=InferenceModelConfig(
-                    model_path=str(config.model_path),
+                config=self._build_inference_model_config(
+                    config,
                     tensor_parallel_size=1,
-                    max_model_len=(
-                        config.sampling_max_model_len
-                        if config.sampling_max_model_len is not None
-                        else config.max_model_len
-                    ),
-                    temperature=config.temperature,
-                    top_p=config.top_p,
-                    top_k=config.top_k,
-                    logprobs=config.logprobs,
-                    min_response_tokens=config.min_response_tokens,
-                    repetition_penalty=1.0,
-                    enable_lora=True,
-                    enable_runtime_lora_updating=True,
-                    enable_openai_api=True,
-                    lora_kwargs={
-                        "max_lora_rank": config.max_lora_rank,
-                        "max_loras": config.max_loras,
-                        **({"quantization": config.quantization} if config.quantization else {}),
-                    },
-                    # sampling use less memory than training
                     gpu_memory_utilization=config.sampling_memory_fraction,
                 )
             )
@@ -251,7 +264,6 @@ class VLLMSamplingBackend(BaseSamplingBackend):
 
     def _create_standalone_engine(self, config: ModelConfig):
         import ray
-        from trinity.common.config import InferenceModelConfig
         from trinity.common.models.vllm_model import vLLMRolloutModel
 
         # Assign tensor_parallel_size GPUs to the actor itself
@@ -281,29 +293,9 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                 runtime_env=_runtime_env,
             )
             .remote(
-                config=InferenceModelConfig(
-                    model_path=str(config.model_path),
+                config=self._build_inference_model_config(
+                    config,
                     tensor_parallel_size=config.tensor_parallel_size,
-                    max_model_len=(
-                        config.sampling_max_model_len
-                        if config.sampling_max_model_len is not None
-                        else config.max_model_len
-                    ),
-                    temperature=config.temperature,
-                    top_p=config.top_p,
-                    top_k=config.top_k,
-                    logprobs=config.logprobs,
-                    min_response_tokens=config.min_response_tokens,
-                    repetition_penalty=1.0,
-                    enable_lora=True,
-                    enable_runtime_lora_updating=True,
-                    enable_openai_api=True,
-                    lora_kwargs={
-                        "max_lora_rank": config.max_lora_rank,
-                        "max_loras": config.max_loras,
-                        **({"quantization": config.quantization} if config.quantization else {}),
-                    },
-                    gpu_memory_utilization=config.sampling_memory_fraction,
                     bundle_indices=bundle_indices,
                 )
             )
