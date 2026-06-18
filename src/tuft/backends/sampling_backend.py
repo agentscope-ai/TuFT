@@ -561,15 +561,11 @@ class DPSamplingBackend(BaseSamplingBackend):
 
     async def add_adapter(self, lora_id: str, adapter_path: Path) -> None:
         """Add LoRA adapter to ALL DP instances."""
-        await asyncio.gather(
-            *[inst.add_adapter(lora_id, adapter_path) for inst in self._instances]
-        )
+        await asyncio.gather(*[inst.add_adapter(lora_id, adapter_path) for inst in self._instances])
 
     async def remove_adapter(self, lora_id: str) -> None:
         """Remove LoRA adapter from ALL DP instances."""
-        await asyncio.gather(
-            *[inst.remove_adapter(lora_id) for inst in self._instances]
-        )
+        await asyncio.gather(*[inst.remove_adapter(lora_id) for inst in self._instances])
 
 
 def _build_mock_openai_app(model_name: str):

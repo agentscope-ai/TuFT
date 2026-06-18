@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from ..auth import User
-from ..backends.sampling_backend import DPSamplingBackend
+from ..backends.sampling_backend import BaseSamplingBackend, DPSamplingBackend
 from ..exceptions import (
     InvalidRequestException,
     ServerException,
@@ -201,10 +201,7 @@ def create_oai_router() -> APIRouter:
         if isinstance(backend, DPSamplingBackend):
             urls = backend.get_openai_api_urls()
             await asyncio.gather(
-                *[
-                    _ensure_lora_loaded(client, url, lora_name, lora_path)
-                    for url in urls
-                ]
+                *[_ensure_lora_loaded(client, url, lora_name, lora_path) for url in urls]
             )
         else:
             url = backend.get_openai_api_url()

@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import os
 import sys
-import time
 from pathlib import Path
 
 import httpx
@@ -28,9 +27,11 @@ import tinker
 from tinker import types
 from transformers import AutoTokenizer
 
+
 # Add examples dir to path for dataset import
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "examples" / "chat_sft"))
 from dataset import ChatDataset, conversation_to_datum, load_chat_dataset
+
 
 # Configuration (can be overridden via env vars)
 BASE_URL = os.getenv("TUFT_BASE_URL", "http://localhost:10610")
@@ -63,11 +64,13 @@ def pick_test_examples(train_dataset: ChatDataset, n: int = 3):
                 # Pick examples with medium-length answers (not too long, not too short)
                 content = asst_msg["content"]
                 if 50 < len(content) < 500:
-                    examples.append({
-                        "user_content": user_msg["content"],
-                        "expected_answer": content,
-                        "messages": messages,
-                    })
+                    examples.append(
+                        {
+                            "user_content": user_msg["content"],
+                            "expected_answer": content,
+                            "messages": messages,
+                        }
+                    )
                     if len(examples) >= n:
                         break
     return examples
@@ -93,9 +96,7 @@ def query_oai_api(model: str, user_content: str, max_tokens: int = 256) -> str:
         return data["choices"][0]["message"]["content"]
 
 
-def query_sdk_sample(
-    sampling_client, tokenizer, user_content: str, max_tokens: int = 256
-) -> str:
+def query_sdk_sample(sampling_client, tokenizer, user_content: str, max_tokens: int = 256) -> str:
     """Query via tinker SDK sampling."""
     messages = [{"role": "user", "content": user_content}]
     prompt_text = tokenizer.apply_chat_template(
@@ -138,9 +139,7 @@ def train_lora(service_client, tokenizer, train_dataset, test_examples):
             continue
 
         fb = training_client.forward_backward(datums, loss_fn="cross_entropy").result()
-        training_client.optim_step(
-            types.AdamParams(learning_rate=LEARNING_RATE)
-        ).result()
+        training_client.optim_step(types.AdamParams(learning_rate=LEARNING_RATE)).result()
 
         if step % 10 == 0 or step == NUM_STEPS - 1:
             # Compute loss
@@ -153,9 +152,7 @@ def train_lora(service_client, tokenizer, train_dataset, test_examples):
 
     # Save weights
     print("\n[Training] Saving weights for sampler...")
-    save_result = training_client.save_weights_for_sampler(
-        name="lora-before-after-test"
-    ).result()
+    save_result = training_client.save_weights_for_sampler(name="lora-before-after-test").result()
     print(f"  path={save_result.path}")
 
     return training_client, save_result.path
@@ -167,8 +164,8 @@ def main():
     print("=" * 70)
     print(f"  Server: {BASE_URL}")
     print(f"  Model: {BASE_MODEL}")
-    print(f"  This test trains a LoRA and compares outputs before/after training")
-    print(f"  using both the SDK sampling path and the OAI API path.")
+    print("  This test trains a LoRA and compares outputs before/after training")
+    print("  using both the SDK sampling path and the OAI API path.")
     print()
 
     # Setup
@@ -181,7 +178,7 @@ def main():
     test_examples = pick_test_examples(train_dataset, n=3)
     print(f"  Selected {len(test_examples)} test examples from training data:")
     for i, ex in enumerate(test_examples):
-        print(f"    Example {i+1}: Q='{ex['user_content'][:80]}...'")
+        print(f"    Example {i + 1}: Q='{ex['user_content'][:80]}...'")
         print(f"               A='{ex['expected_answer'][:80]}...'")
     print()
 
@@ -191,7 +188,7 @@ def main():
     for i, ex in enumerate(test_examples):
         resp = query_oai_api(BASE_MODEL, ex["user_content"], max_tokens=200)
         base_responses_oai.append(resp)
-        print(f"  Base OAI #{i+1}: '{resp[:120]}...'")
+        print(f"  Base OAI #{i + 1}: '{resp[:120]}...'")
     print()
 
     # Step 3: Query BASE model via SDK (create a base-model sampling session)
@@ -201,14 +198,12 @@ def main():
     for i, ex in enumerate(test_examples):
         resp = query_sdk_sample(base_sampling_client, tokenizer, ex["user_content"], max_tokens=200)
         base_responses_sdk.append(resp)
-        print(f"  Base SDK #{i+1}: '{resp[:120]}...'")
+        print(f"  Base SDK #{i + 1}: '{resp[:120]}...'")
     print()
 
     # Step 4: Train LoRA
     print("[4] Training LoRA adapter...")
-    training_client, lora_path = train_lora(
-        service_client, tokenizer, train_dataset, test_examples
-    )
+    training_client, lora_path = train_lora(service_client, tokenizer, train_dataset, test_examples)
     print()
 
     # Step 5: Query FINE-TUNED model via OAI API
@@ -217,7 +212,7 @@ def main():
     for i, ex in enumerate(test_examples):
         resp = query_oai_api(lora_path, ex["user_content"], max_tokens=200)
         ft_responses_oai.append(resp)
-        print(f"  LoRA OAI #{i+1}: '{resp[:120]}...'")
+        print(f"  LoRA OAI #{i + 1}: '{resp[:120]}...'")
     print()
 
     # Step 6: Query FINE-TUNED model via SDK
@@ -227,7 +222,7 @@ def main():
     for i, ex in enumerate(test_examples):
         resp = query_sdk_sample(lora_sampling_client, tokenizer, ex["user_content"], max_tokens=200)
         ft_responses_sdk.append(resp)
-        print(f"  LoRA SDK #{i+1}: '{resp[:120]}...'")
+        print(f"  LoRA SDK #{i + 1}: '{resp[:120]}...'")
     print()
 
     # Step 7: Compare and report
@@ -237,7 +232,7 @@ def main():
 
     all_different = True
     for i, ex in enumerate(test_examples):
-        print(f"\n--- Example {i+1} ---")
+        print(f"\n--- Example {i + 1} ---")
         print(f"  Question: {ex['user_content'][:100]}")
         print(f"  Expected (training data): {ex['expected_answer'][:100]}...")
         print()

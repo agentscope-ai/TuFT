@@ -13,8 +13,6 @@ Or directly:
 
 from __future__ import annotations
 
-import asyncio
-import json
 import os
 import subprocess
 import time
@@ -25,6 +23,7 @@ import pytest
 import tinker
 from tinker import types
 from transformers import AutoTokenizer
+
 
 # Configuration (can be overridden via env vars)
 BASE_URL = os.getenv("TUFT_BASE_URL", "http://localhost:10610")
@@ -55,7 +54,11 @@ def get_gpu_utilization():
     for line in result.stdout.strip().split("\n"):
         parts = [p.strip() for p in line.split(",")]
         gpus.append(
-            {"index": int(parts[0]), "memory_used_mib": int(parts[1]), "gpu_util_pct": int(parts[2])}
+            {
+                "index": int(parts[0]),
+                "memory_used_mib": int(parts[1]),
+                "gpu_util_pct": int(parts[2]),
+            }
         )
     return gpus
 
@@ -65,7 +68,10 @@ def send_chat_request(client: httpx.Client, request_id: int) -> dict:
     payload = {
         "model": BASE_MODEL,
         "messages": [
-            {"role": "user", "content": f"Write a short poem about the number {request_id}. Be creative."}
+            {
+                "role": "user",
+                "content": f"Write a short poem about the number {request_id}. Be creative.",
+            }
         ],
         "max_tokens": 200,
         "temperature": 0.8,
@@ -99,14 +105,17 @@ def test_concurrent_inference():
     print("=" * 70)
     print(f"  Sending {NUM_CONCURRENT_REQUESTS} concurrent requests to {BASE_URL}")
     print(f"  Model: {BASE_MODEL}")
-    print(f"  Expected: requests distributed across 4 DP vLLM instances")
+    print("  Expected: requests distributed across 4 DP vLLM instances")
     print()
 
     # Check GPU state before
     print("[Before] GPU utilization:")
     for gpu in get_gpu_utilization():
         status = "LOADED" if gpu["memory_used_mib"] > 5000 else "idle"
-        print(f"  GPU {gpu['index']}: mem={gpu['memory_used_mib']}MiB  util={gpu['gpu_util_pct']}%  [{status}]")
+        print(
+            f"  GPU {gpu['index']}: mem={gpu['memory_used_mib']}MiB"
+            f"  util={gpu['gpu_util_pct']}%  [{status}]"
+        )
     print()
 
     # Send concurrent requests
@@ -147,7 +156,10 @@ def test_concurrent_inference():
     print("[After] GPU utilization:")
     for gpu in get_gpu_utilization():
         status = "LOADED" if gpu["memory_used_mib"] > 5000 else "idle"
-        print(f"  GPU {gpu['index']}: mem={gpu['memory_used_mib']}MiB  util={gpu['gpu_util_pct']}%  [{status}]")
+        print(
+            f"  GPU {gpu['index']}: mem={gpu['memory_used_mib']}MiB"
+            f"  util={gpu['gpu_util_pct']}%  [{status}]"
+        )
     print()
 
     # Verify: all requests should succeed
@@ -175,7 +187,7 @@ def test_training():
         train_attn=True,
         train_unembed=True,
     )
-    print(f"  Created LoRA training client (rank=8)")
+    print("  Created LoRA training client (rank=8)")
 
     # Prepare a training datum
     messages = [
@@ -197,9 +209,7 @@ def test_training():
             "target_tokens": types.TensorData(
                 data=target_tokens, dtype="int64", shape=[len(target_tokens)]
             ),
-            "weights": types.TensorData(
-                data=weights, dtype="float32", shape=[len(weights)]
-            ),
+            "weights": types.TensorData(data=weights, dtype="float32", shape=[len(weights)]),
         },
     )
     print(f"  Prepared training datum: {len(input_tokens)} input tokens")
@@ -224,7 +234,7 @@ def test_training():
         adam_params=types.AdamParams(learning_rate=1e-4)
     ).result()
     optim_time = time.perf_counter() - start
-    grad_norm = getattr(optim_resp, 'grad_norm', None) or getattr(optim_resp, 'gradient_norm', None)
+    grad_norm = getattr(optim_resp, "grad_norm", None) or getattr(optim_resp, "gradient_norm", None)
     print(f"  Optim step completed in {optim_time:.2f}s")
     if grad_norm is not None:
         print(f"  Grad norm: {grad_norm:.4f}")
@@ -236,7 +246,10 @@ def test_training():
 
 
 def test_inference_after_training():
-    """Test 3: Verify inference still works after training (save weights + sample via tinker SDK)."""
+    """Test 3: Verify inference still works after training.
+
+    Saves weights and samples via tinker SDK.
+    """
     print("=" * 70)
     print("TEST 3: Save Weights & Sample via tinker SDK (inference after training)")
     print("=" * 70)
@@ -262,7 +275,9 @@ def test_inference_after_training():
     sampling_client = service_client.create_sampling_client(model_path=save_result.path)
 
     messages = [{"role": "user", "content": "Explain data parallelism in one sentence."}]
-    prompt_text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    prompt_text = tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
     prompt_tokens = tokenizer.encode(prompt_text, add_special_tokens=False)
 
     start = time.perf_counter()
@@ -312,8 +327,10 @@ def test_oai_lora_dp_routing():
     # With 4 DP instances and round-robin, this ensures each instance gets at least 2 requests.
     # If LoRA is not loaded on all instances, some requests will fail.
     num_requests = 8
-    print(f"  Sending {num_requests} OAI requests with LoRA model (round-robin across 4 DP instances)")
-    print(f"  Each instance should handle ~2 requests with the LoRA adapter loaded.")
+    print(
+        f"  Sending {num_requests} OAI requests with LoRA model (round-robin across 4 DP instances)"
+    )
+    print("  Each instance should handle ~2 requests with the LoRA adapter loaded.")
     print()
 
     results = []
@@ -333,13 +350,15 @@ def test_oai_lora_dp_routing():
                 timeout=120.0,
             )
             elapsed = time.perf_counter() - start
-            results.append({
-                "id": i,
-                "status": resp.status_code,
-                "elapsed": round(elapsed, 2),
-                "ok": resp.status_code == 200,
-                "detail": resp.json().get("detail", "")[:80] if resp.status_code != 200 else "",
-            })
+            results.append(
+                {
+                    "id": i,
+                    "status": resp.status_code,
+                    "elapsed": round(elapsed, 2),
+                    "ok": resp.status_code == 200,
+                    "detail": resp.json().get("detail", "")[:80] if resp.status_code != 200 else "",
+                }
+            )
 
     successes = sum(1 for r in results if r["ok"])
     failures = num_requests - successes
@@ -368,11 +387,10 @@ def test_sustained_concurrent_load():
     concurrency = 14  # 2 requests per DP instance in flight at any time
     print(f"  Duration: {duration_seconds}s")
     print(f"  Concurrency: {concurrency} in-flight requests")
-    print(f"  DP instances: 7 (each handling ~2 concurrent requests)")
+    print("  DP instances: 7 (each handling ~2 concurrent requests)")
     print()
 
     results = []
-    errors = []
     start_time = time.perf_counter()
     request_counter = [0]  # mutable counter for threads
 
@@ -382,7 +400,10 @@ def test_sustained_concurrent_load():
         payload = {
             "model": BASE_MODEL,
             "messages": [
-                {"role": "user", "content": f"Write a creative haiku about number {req_id % 100}. Be brief."}
+                {
+                    "role": "user",
+                    "content": f"Write a creative haiku about number {req_id % 100}. Be brief.",
+                }
             ],
             "max_tokens": 128,
             "temperature": 0.9,
@@ -396,7 +417,12 @@ def test_sustained_concurrent_load():
                 timeout=120.0,
             )
             elapsed = time.perf_counter() - req_start
-            return {"id": req_id, "status": resp.status_code, "elapsed": elapsed, "ok": resp.status_code == 200}
+            return {
+                "id": req_id,
+                "status": resp.status_code,
+                "elapsed": elapsed,
+                "ok": resp.status_code == 200,
+            }
         except Exception as e:
             elapsed = time.perf_counter() - req_start
             return {"id": req_id, "status": 0, "elapsed": elapsed, "ok": False, "error": str(e)}
@@ -415,7 +441,10 @@ def test_sustained_concurrent_load():
                     futures.remove(f)
 
                 # Submit new requests to maintain concurrency
-                while len(futures) < concurrency and (time.perf_counter() - start_time) < duration_seconds:
+                while (
+                    len(futures) < concurrency
+                    and (time.perf_counter() - start_time) < duration_seconds
+                ):
                     futures.append(executor.submit(send_request, client))
 
                 time.sleep(0.05)  # Small sleep to avoid busy-waiting
@@ -432,7 +461,7 @@ def test_sustained_concurrent_load():
     p99 = sorted(r["elapsed"] for r in results)[int(len(results) * 0.99)] if results else 0
     throughput = len(results) / total_time
 
-    print(f"  === Results ===")
+    print("  === Results ===")
     print(f"  Total requests:  {len(results)}")
     print(f"  Successes:       {successes}/{len(results)}")
     print(f"  Failures:        {failures}")
@@ -446,8 +475,15 @@ def test_sustained_concurrent_load():
     # Check GPU utilization
     print("  [Final] GPU utilization:")
     for gpu in get_gpu_utilization():
-        status = "ACTIVE" if gpu["gpu_util_pct"] > 0 else ("LOADED" if gpu["memory_used_mib"] > 5000 else "idle")
-        print(f"    GPU {gpu['index']}: mem={gpu['memory_used_mib']}MiB  util={gpu['gpu_util_pct']}%  [{status}]")
+        status = (
+            "ACTIVE"
+            if gpu["gpu_util_pct"] > 0
+            else ("LOADED" if gpu["memory_used_mib"] > 5000 else "idle")
+        )
+        print(
+            f"    GPU {gpu['index']}: mem={gpu['memory_used_mib']}MiB"
+            f"  util={gpu['gpu_util_pct']}%  [{status}]"
+        )
     print()
 
     assert successes == len(results), f"{failures} requests failed"
@@ -462,8 +498,8 @@ def main():
     print("=" * 70)
     print(f"  Server: {BASE_URL}")
     print(f"  Model: {BASE_MODEL}")
-    print(f"  Config: data_parallel_size=7, tensor_parallel_size=1, fsdp_num_gpus=1")
-    print(f"  GPU layout: GPU 0 = training, GPU 1-7 = inference DP instances")
+    print("  Config: data_parallel_size=7, tensor_parallel_size=1, fsdp_num_gpus=1")
+    print("  GPU layout: GPU 0 = training, GPU 1-7 = inference DP instances")
     print()
 
     all_pass = True
