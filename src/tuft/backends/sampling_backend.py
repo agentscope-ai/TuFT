@@ -416,7 +416,8 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                     # Split by isinstance to route each kind correctly.
                     str_stops: list[str] = [s for s in sampling_params.stop if isinstance(s, str)]
                     int_stops: list[int] = [
-                        s for s in sampling_params.stop
+                        s
+                        for s in sampling_params.stop
                         if isinstance(s, int) and not isinstance(s, bool)
                     ]
                     if str_stops:
