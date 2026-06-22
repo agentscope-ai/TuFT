@@ -50,6 +50,22 @@ from tuft.config import ModelConfig
 from tuft.loss_fn import get_loss_fn
 
 
+def _shard_list(xs: list[Any], n_shards: int) -> list[list[Any]]:
+    """Split xs into n_shards contiguous shards (order-preserving)."""
+    if n_shards <= 0:
+        raise ValueError(f"n_shards must be > 0, got {n_shards}")
+    total = len(xs)
+    base = total // n_shards
+    rem = total % n_shards
+    shards = []
+    start = 0
+    for i in range(n_shards):
+        size = base + (1 if i < rem else 0)
+        shards.append(xs[start : start + size])
+        start += size
+    return shards
+
+
 def _merge_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
     merged: dict[str, Any] = {}
 
@@ -111,9 +127,11 @@ tu.chunk_tensordict = _chunk_tensordict_allow_2d_nested
 # Output goes to actor stdout, which Ray forwards into the server log
 # (server_v22replay.log) prefixed with `(VerlWorkerActor pid=...)`.
 import time as _time  # noqa: E402
+
 from verl.workers.engine.fsdp.transformer_impl import (  # noqa: E402
     FSDPEngineWithLMHead as _FSDPEngineWithLMHead,
 )
+
 
 _v22_mb_state: Dict[str, Any] = {"count": 0, "start": 0.0}
 _v22_orig_forward_step = _FSDPEngineWithLMHead.forward_step
@@ -462,6 +480,9 @@ def _config_to_worker_dict(config: ModelConfig) -> dict:
         "max_model_len": config.max_model_len,
         "use_remove_padding": getattr(config, "use_remove_padding", False),
         "fsdp_override_config": dict(getattr(config, "fsdp_override_config", None) or {}),
+        # Top-level attn_implementation acts as default if fsdp_override_config does
+        # not specify one. None lets verl/transformers pick its own default.
+        "attn_implementation": getattr(config, "attn_implementation", None),
         "slot_config": {
             "rank_slots": rank_slots,
             "lora_alpha_ratio": 2,
@@ -479,7 +500,14 @@ def _worker_dict_to_training_config(config_dict: dict) -> tuple:
 
     override = dict(config_dict.get("fsdp_override_config") or {})
     if "attn_implementation" not in override:
-        override["attn_implementation"] = "eager"
+        # Resolution order: fsdp_override_config > top-level attn_implementation > "eager".
+        top_attn = config_dict.get("attn_implementation")
+        override["attn_implementation"] = top_attn or "eager"
+    logging.getLogger(__name__).info(
+        "[FSDPTrainingBackend] Loading %s with attn_implementation=%s",
+        config_dict.get("model_path"),
+        override["attn_implementation"],
+    )
     hf_model_config = HFModelConfig(
         path=config_dict["model_path"],
         use_remove_padding=config_dict.get("use_remove_padding", False),
@@ -1017,11 +1045,7 @@ class VerlWorkerActor:
         # mb honored only when it cleanly divides len(data); otherwise we
         # fall back to mb=len(data) (single micro-batch) to keep verl
         # `chunk_tensordict` happy (it asserts len % chunks == 0).
-        if (
-            micro_batch_size
-            and micro_batch_size > 0
-            and len(data) % micro_batch_size == 0
-        ):
+        if micro_batch_size and micro_batch_size > 0 and len(data) % micro_batch_size == 0:
             mb = micro_batch_size
         else:
             mb = len(data)
@@ -1316,50 +1340,56 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             loss_fn_outputs = _fsdp_logprobs_to_loss_fn_outputs(out, data)
         else:
             import ray
-        
-            # Ray actor path. Currently we only support n_actors == 1
-            # (single-GPU FSDP wrapped in a Ray actor; this is what
-            # `fsdp_num_gpus=1` produces). Multi-actor (fsdp_num_gpus >= 2)
-            # is intentionally NOT supported because the prior token-balanced
-            # sharding broke the tinker SDK order contract:
-            #   - SDK side: `zip(data, logprobs_list)`
-            #   - trinity side: `zip(model_inputs_list, logprobs)`
-            # Both assume `loss_fn_outputs` come back in the SAME order as
-            # input data. Any reorder/shard-then-merge silently corrupts
-            # training (Python's `[-am:]` slicing hides shape mismatches
-            # when am < server_logprob_len). To re-enable multi-actor we
-            # must (1) preserve original batch order or pass an inverse
-            # permutation through the Ray result merge, and (2) re-validate
-            # the per-step logprob alignment via the post-mortem replay.
+
             n_actors = len(self._actors)
-            if n_actors != 1:
-                raise NotImplementedError(
-                    f"Multi-actor FSDP (n_actors={n_actors}) is currently"
-                    " disabled because the previous token-balanced sharding"
-                    " silently broke the tinker SDK batch-order contract"
-                    " (see post-mortem 2026-06-09). Use fsdp_num_gpus=1."
-                )
             if not data:
                 return types.ForwardBackwardOutput(
                     loss_fn_output_type=loss_fn_name,
                     loss_fn_outputs=[],
                     metrics={},
                 )
+
+            # NCCL deadlock guard: each actor must receive at least one datum,
+            # otherwise idle actors block forever on FSDP-2 collectives.
+            if len(data) < n_actors:
+                raise ValueError(
+                    f"FSDP forward requires len(data) >= fsdp_num_gpus (world_size). "
+                    f"Got len(data)={len(data)}, world_size={n_actors}. "
+                    f"Sending fewer datums than ranks leaves some ranks idle and causes "
+                    f"NCCL collectives in other ranks to hang permanently, deadlocking "
+                    f"the entire training_run record's execution lock. Increase batch "
+                    f"size or upstream chunking, or set fsdp_num_gpus=1 in tuft_config.yaml."
+                )
+
+            shards = _shard_list(data, n_actors)
             self.logger.info(
-                "FSDP single-actor forward: batch=%d mb=%s", len(data), mb,
+                "FSDP multi-actor forward: batch=%d actors=%d mb=%s",
+                len(data),
+                n_actors,
+                mb,
             )
-            ref = self._actors[0].forward_backward.remote(
-                list(data),
-                adapter_name,
-                loss_fn_name,
-                loss_fn_config,
-                not backward,
-                mb if mb > 0 else None,
-            )
-            result = await asyncio.to_thread(ray.get, ref)
-        
-            metrics = _merge_metrics([result])
-            loss_fn_outputs = list(result.get("loss_fn_outputs", []))
+
+            refs = []
+            for actor, shard in zip(self._actors, shards, strict=False):
+                if not shard:
+                    continue
+                refs.append(
+                    actor.forward_backward.remote(
+                        list(shard),
+                        adapter_name,
+                        loss_fn_name,
+                        loss_fn_config,
+                        not backward,
+                        mb if mb > 0 else None,
+                    )
+                )
+
+            results = await asyncio.to_thread(ray.get, refs) if refs else []
+
+            metrics = _merge_metrics(results)
+            loss_fn_outputs = []
+            for out in results:
+                loss_fn_outputs.extend(out.get("loss_fn_outputs", []))
 
         # Tinker expects every metric key to be "name:reduction" (e.g. loss:sum)
         metrics = {k: v for k, v in metrics.items() if ":" in k}

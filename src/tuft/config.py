@@ -38,6 +38,10 @@ class ModelConfig(BaseModel):
     model_path: Path  # path to model checkpoint
     max_model_len: int  # maximum context length supported by the model
     tensor_parallel_size: int = 1  # tensor parallel size
+    # Data parallel size for inference: launch N independent vLLM instances (each with
+    # tensor_parallel_size GPUs) and load-balance requests across them.  Ideal for small
+    # models where TP introduces unnecessary cross-GPU communication overhead.
+    data_parallel_size: int = 1
 
     # default sampling parameters for this model
     temperature: float = 1.0
@@ -46,6 +50,10 @@ class ModelConfig(BaseModel):
     logprobs: int = 0
     seed: int = 42
     min_response_tokens: int = 0
+    # Default max_tokens for sampling when client does not specify one.
+    # Applies to both tinker SDK sample() and vLLM OpenAI API (max_response_tokens).
+    # If None, vLLM uses its own default (typically 16).
+    default_max_tokens: int | None = None
 
     # default lora setting
     max_lora_rank: int = 16  # maximum rank for LoRA adapters
@@ -56,10 +64,8 @@ class ModelConfig(BaseModel):
     # training backend: "hf" (HFTrainingBackend) or "fsdp" (FSDPTrainingBackend)
     training_backend: str = "hf"
     # number of GPUs (Ray actors) for FSDP backend; default 1.
-    # Currently only fsdp_num_gpus=1 is supported by the FSDP backend's
-    # forward path (see backends/fsdp_training_backend.py: multi-actor
-    # path raises NotImplementedError after the 2026-06-09 silent logprob
-    # batch-order corruption post-mortem).
+    # Multi-GPU (fsdp_num_gpus >= 2) uses contiguous batch sharding across
+    # Ray actors; each actor runs FSDP-2 with micro-batch grad accumulation.
     fsdp_num_gpus: int = 1
     # TCP port for torch.distributed init (FSDP multi-GPU); default 29500
     fsdp_master_port: int = 29500
@@ -68,11 +74,11 @@ class ModelConfig(BaseModel):
     fsdp_rank_slots: dict[int, int] | None = None
     # optional override for FSDP backend HFModelConfig (e.g. attn_implementation)
     fsdp_override_config: dict[str, Any] | None = None
-
-    # Quantization method for the sampling (vLLM) engine.
-    # Supported values: "fp8", "awq", "gptq", "bitsandbytes", etc.
-    # If None, no quantization is applied (model runs in dtype as-is).
-    quantization: str | None = None
+    # Attention implementation passed to AutoModelForCausalLM.from_pretrained for the
+    # HF training backend (and used as default for FSDP backend if fsdp_override_config
+    # does not specify one). Common values: "flash_attention_2", "sdpa", "eager".
+    # If None, transformers picks its own default (usually "sdpa").
+    attn_implementation: str | None = None
 
     # whether to colocate sampling and training on the same device
     # only for local testing purposes
@@ -91,6 +97,8 @@ class ModelConfig(BaseModel):
     def validate_colocate(self) -> "ModelConfig":
         if self.colocate and self.tensor_parallel_size != 1:
             raise ValueError("Colocate option is only supported for tensor_parallel_size=1.")
+        if self.colocate and self.data_parallel_size > 1:
+            raise ValueError("Colocate option is not supported with data_parallel_size > 1.")
         return self
 
     @model_validator(mode="after")
