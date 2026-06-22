@@ -78,12 +78,17 @@ class BaseSamplingBackend(BaseBackend):
         """Factory method to create a sampling backend instance.
 
         TUFT_CPU_TEST=1: use DummySamplingBackend (no vLLM, for CPU-only unit tests).
+        data_parallel_size > 1: use DPSamplingBackend (multiple vLLM instances with LB).
         Otherwise: VLLMSamplingBackend (creates Ray/vLLM actor in __init__, may block startup).
         """
         if os.getenv("TUFT_CPU_TEST", "0") == "1":
             from ..backends.sampling_backend import DummySamplingBackend
 
             return DummySamplingBackend(config)
+        if config.data_parallel_size > 1:
+            from ..backends.sampling_backend import DPSamplingBackend
+
+            return DPSamplingBackend(config, worker_venv_path=worker_venv_path)
         from ..backends.sampling_backend import VLLMSamplingBackend
 
         return VLLMSamplingBackend(config, worker_venv_path=worker_venv_path)
