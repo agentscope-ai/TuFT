@@ -134,8 +134,8 @@ from verl.workers.engine.fsdp.transformer_impl import (  # noqa: E402
 
 
 _v22_mb_state: Dict[str, Any] = {"count": 0, "start": 0.0}
-_v22_orig_forward_step = _FSDPEngineWithLMHead.forward_step
-_v22_orig_forward_backward_batch = _FSDPEngineWithLMHead.forward_backward_batch
+_v22_orig_forward_step = _FSDPEngineWithLMHead.forward_step  # type: ignore[attr-defined]
+_v22_orig_forward_backward_batch = _FSDPEngineWithLMHead.forward_backward_batch  # type: ignore[attr-defined]
 
 
 def _v22_logged_forward_step(self, micro_batch, loss_function, forward_only):
@@ -187,8 +187,8 @@ def _v22_logged_forward_backward_batch(self, data, loss_function, forward_only=F
     return result
 
 
-_FSDPEngineWithLMHead.forward_step = _v22_logged_forward_step
-_FSDPEngineWithLMHead.forward_backward_batch = _v22_logged_forward_backward_batch
+_FSDPEngineWithLMHead.forward_step = _v22_logged_forward_step  # type: ignore[attr-defined]
+_FSDPEngineWithLMHead.forward_backward_batch = _v22_logged_forward_backward_batch  # type: ignore[attr-defined]
 
 # Default port for torch.distributed init (multi-GPU). ModelConfig.fsdp_master_port should match.
 DEFAULT_MASTER_PORT = 29500
