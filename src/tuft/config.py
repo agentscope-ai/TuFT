@@ -79,6 +79,10 @@ class ModelConfig(BaseModel):
     # does not specify one). Common values: "flash_attention_2", "sdpa", "eager".
     # If None, transformers picks its own default (usually "sdpa").
     attn_implementation: str | None = None
+    # Quantization method for the sampling (vLLM) engine.
+    # Supported values: "fp8", "awq", "gptq", "bitsandbytes", etc.
+    # If None, no quantization is applied (model runs in dtype as-is).
+    quantization: str | None = None
 
     # whether to colocate sampling and training on the same device
     # only for local testing purposes
