@@ -425,7 +425,24 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                 if include_prompt_logprobs:
                     params["skip_reading_prefix_cache"] = True
                 if sampling_params.stop is not None:
-                    params["stop"] = sampling_params.stop
+                    # tinker.SamplingParams.stop accepts a heterogeneous list of
+                    # str (substring stops) and int (token-id stops). vLLM
+                    # however expects them in two separate fields: `stop`
+                    # (list[str]) and `stop_token_ids` (list[int]). Forwarding
+                    # the raw list to vLLM's `stop` triggers `TypeError: object
+                    # of type 'int' has no len()` inside
+                    # SamplingParams.__post_init__ (vllm/sampling_params.py:358).
+                    # Split by isinstance to route each kind correctly.
+                    str_stops: list[str] = [s for s in sampling_params.stop if isinstance(s, str)]
+                    int_stops: list[int] = [
+                        s
+                        for s in sampling_params.stop
+                        if isinstance(s, int) and not isinstance(s, bool)
+                    ]
+                    if str_stops:
+                        params["stop"] = str_stops
+                    if int_stops:
+                        params["stop_token_ids"] = int_stops
 
                 # Ray @ray.remote decorator adds .remote() method dynamically
                 req_output = await self.engine._generate_internal.remote(  # type: ignore[attr-defined]

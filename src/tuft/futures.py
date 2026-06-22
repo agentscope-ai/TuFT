@@ -277,13 +277,24 @@ class FutureStore:
                 except TuFTException as exc:
                     failure = exc
                     span.record_exception(exc)
-                    logger.error("Future failed: %s", record.request_id)
+                    # exc_info=True so the full traceback (not just request_id) is captured.
+                    logger.error(
+                        "Future failed (TuFTException): %s op=%s",
+                        record.request_id,
+                        operation_type,
+                        exc_info=True,
+                    )
                     await self._mark_failed(record.request_id, failure, operation_type)
                 except Exception as exc:  # pylint: disable=broad-except
                     # Unknown exception
                     failure = ServerException(str(exc))
                     span.record_exception(exc)
-                    logger.error("Future failed: %s", record.request_id)
+                    logger.error(
+                        "Future failed (Unhandled): %s op=%s",
+                        record.request_id,
+                        operation_type,
+                        exc_info=True,
+                    )
                     await self._mark_failed(record.request_id, failure, operation_type)
                 else:
                     logger.info("Future completed: %s", record.request_id)
