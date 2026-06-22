@@ -179,11 +179,18 @@ class VLLMSamplingBackend(BaseSamplingBackend):
     `compute_logprobs_async` are all supported by the sample method.
     """
 
-    def __init__(self, config: ModelConfig, worker_venv_path: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        config: ModelConfig,
+        worker_venv_path: Optional[str] = None,
+        *,
+        instance_index: int = 0,
+    ) -> None:
         from vllm.lora.request import LoRARequest
 
         super().__init__(config)
         self._worker_venv_path = worker_venv_path
+        self._instance_index = instance_index
         self.engine = self._create_engine(config)
         self.lora_adapters: dict[str, LoRARequest] = {}
         self._counter = 1
@@ -285,10 +292,21 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                     "PATH": f"{self._worker_venv_path}/bin:{_path}",
                 },
             }
+
+        # Use instance_index to differentiate Ray actor names for DP replicas
+        actor_name = f"sampling_model_{self.base_model}"
+        if self._instance_index > 0:
+            actor_name = f"{actor_name}_dp{self._instance_index}"
+
+        # In standalone/DP mode, each vLLM instance has a dedicated GPU.
+        # Use 0.9 (vLLM default) for max KV cache, not sampling_memory_fraction
+        # which is designed for colocate mode (shared GPU with training).
+        standalone_gpu_memory_utilization = 0.9
+
         return (
             ray.remote(vLLMRolloutModel)
             .options(
-                name="sampling_model_" + self.base_model,
+                name=actor_name,
                 num_gpus=num_gpus,
                 runtime_env=_runtime_env,
             )
@@ -297,6 +315,7 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                     config,
                     tensor_parallel_size=config.tensor_parallel_size,
                     bundle_indices=bundle_indices,
+                    gpu_memory_utilization=standalone_gpu_memory_utilization,
                 )
             )
         )
@@ -469,6 +488,101 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                 if lora_id in self.lora_adapters:
                     await self.engine.remove_lora_adapter.remote(lora_id)  # type: ignore[attr-defined]
                     del self.lora_adapters[lora_id]
+
+
+class DPSamplingBackend(BaseSamplingBackend):
+    """Data-Parallel sampling backend: N independent vLLM instances with round-robin LB.
+
+    Each instance runs on its own GPU(s) (tensor_parallel_size per instance).
+    Requests are distributed across instances using round-robin for uniform load.
+    All instances share the same LoRA adapters.
+    """
+
+    def __init__(
+        self,
+        config: ModelConfig,
+        worker_venv_path: Optional[str] = None,
+    ) -> None:
+        super().__init__(config)
+        self._dp_size = config.data_parallel_size
+        self._instances: list[VLLMSamplingBackend] = []
+        for i in range(self._dp_size):
+            instance = VLLMSamplingBackend(
+                config, worker_venv_path=worker_venv_path, instance_index=i
+            )
+            self._instances.append(instance)
+        # Atomic round-robin counter
+        self._rr_counter = 0
+        self._rr_lock = asyncio.Lock()
+        logger.info(
+            "DPSamplingBackend: created %d instances for model %s",
+            self._dp_size,
+            config.model_name,
+        )
+
+    def _next_instance(self) -> VLLMSamplingBackend:
+        """Round-robin selection (no lock needed for simple modular arithmetic)."""
+        idx = self._rr_counter % self._dp_size
+        self._rr_counter += 1
+        return self._instances[idx]
+
+    async def async_init(self) -> None:
+        """Initialize all DP instances in parallel."""
+        await asyncio.gather(*[inst.async_init() for inst in self._instances])
+        logger.info(
+            "DPSamplingBackend: all %d instances initialized for model %s",
+            self._dp_size,
+            self.base_model,
+        )
+
+    def get_openai_api_url(self) -> Optional[str]:
+        """Return a single URL (first instance) for backward compat.
+
+        For DP-aware routing, use get_openai_api_urls() instead.
+        """
+        return self._instances[0].get_openai_api_url() if self._instances else None
+
+    def get_openai_api_urls(self) -> list[str]:
+        """Return all vLLM instance URLs for DP-aware load balancing."""
+        urls = []
+        for inst in self._instances:
+            url = inst.get_openai_api_url()
+            if url:
+                urls.append(url)
+        return urls
+
+    def get_next_openai_api_url(self) -> Optional[str]:
+        """Return the next URL via round-robin for load-balanced proxying."""
+        inst = self._next_instance()
+        return inst.get_openai_api_url()
+
+    async def sample(
+        self,
+        prompt: types.ModelInput,
+        num_samples: int,
+        sampling_params: types.SamplingParams,
+        include_prompt_logprobs: bool = False,
+        topk_prompt_logprobs: int = 0,
+        lora_id: Optional[str] = None,
+    ) -> types.SampleResponse:
+        """Route sampling to a DP instance via round-robin."""
+        instance = self._next_instance()
+        return await instance.sample(
+            prompt=prompt,
+            num_samples=num_samples,
+            sampling_params=sampling_params,
+            include_prompt_logprobs=include_prompt_logprobs,
+            topk_prompt_logprobs=topk_prompt_logprobs,
+            lora_id=lora_id,
+        )
+
+    async def add_adapter(self, lora_id: str, adapter_path: Path) -> None:
+        """Add LoRA adapter to ALL DP instances."""
+        await asyncio.gather(*[inst.add_adapter(lora_id, adapter_path) for inst in self._instances])
+
+    async def remove_adapter(self, lora_id: str) -> None:
+        """Remove LoRA adapter from ALL DP instances."""
+        await asyncio.gather(*[inst.remove_adapter(lora_id) for inst in self._instances])
 
 
 def _build_mock_openai_app(model_name: str):

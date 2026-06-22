@@ -38,6 +38,10 @@ class ModelConfig(BaseModel):
     model_path: Path  # path to model checkpoint
     max_model_len: int  # maximum context length supported by the model
     tensor_parallel_size: int = 1  # tensor parallel size
+    # Data parallel size for inference: launch N independent vLLM instances (each with
+    # tensor_parallel_size GPUs) and load-balance requests across them.  Ideal for small
+    # models where TP introduces unnecessary cross-GPU communication overhead.
+    data_parallel_size: int = 1
 
     # default sampling parameters for this model
     temperature: float = 1.0
@@ -87,6 +91,8 @@ class ModelConfig(BaseModel):
     def validate_colocate(self) -> "ModelConfig":
         if self.colocate and self.tensor_parallel_size != 1:
             raise ValueError("Colocate option is only supported for tensor_parallel_size=1.")
+        if self.colocate and self.data_parallel_size > 1:
+            raise ValueError("Colocate option is not supported with data_parallel_size > 1.")
         return self
 
     @model_validator(mode="after")
