@@ -50,6 +50,9 @@ from tuft.config import ModelConfig
 from tuft.loss_fn import get_loss_fn
 
 
+logger = logging.getLogger(__name__)
+
+
 def _shard_list(xs: list[Any], n_shards: int) -> list[list[Any]]:
     """Split xs into n_shards contiguous shards (order-preserving)."""
     if n_shards <= 0:
@@ -242,6 +245,14 @@ def _datum_list_to_tensordict(
     if micro_batch_size and micro_batch_size > 0 and batch_size % micro_batch_size == 0:
         mb = micro_batch_size
     else:
+        if micro_batch_size and micro_batch_size > 0:
+            logger.warning(
+                "Configured micro_batch_size=%d does not evenly divide batch_size=%d; "
+                "falling back to full batch as a single micro-batch. "
+                "This may cause OOM for large batches.",
+                micro_batch_size,
+                batch_size,
+            )
         mb = batch_size
     tu.assign_non_tensor(
         td,

@@ -415,3 +415,39 @@ def test_shard_list_batch_order_contract_with_variable_length_data():
             f"!= tokens_len={len(datum['tokens'])}. This is the shape mismatch "
             f"that Python's [-am:] slicing would hide."
         )
+
+
+@pytest.mark.asyncio
+async def test_forward_raises_when_data_fewer_than_actors():
+    """forward() raises ValueError when len(data) < world_size (NCCL deadlock guard)."""
+    from unittest.mock import MagicMock
+
+    from tuft.backends.fsdp_training_backend import FSDPTrainingBackend
+
+    config = ModelConfig(
+        model_name="test",
+        model_path=Path("/tmp/model"),
+        max_model_len=1024,
+        training_backend="fsdp",
+        fsdp_num_gpus=2,
+    )
+    backend = FSDPTrainingBackend(config)
+    # Simulate multi-actor path: _worker is None, _actors has 2 stubs
+    backend._worker = None
+    backend._actors = [MagicMock(), MagicMock()]
+    backend._lora_id_to_adapter_name = {"lora1": "adapter_0"}
+    backend._adapter_name_to_lora_id = {"adapter_0": "lora1"}
+
+    single_datum = types.Datum(
+        model_input=types.ModelInput.from_ints(tokens=[1, 2, 3]),
+        loss_fn_inputs={},
+    )
+
+    with pytest.raises(ValueError, match=r"len\(data\)=1, world_size=2"):
+        await backend.forward(
+            data=[single_datum],
+            lora_id="lora1",
+            loss_fn="cross_entropy",
+            loss_fn_config=None,
+            backward=True,
+        )
