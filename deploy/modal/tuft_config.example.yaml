@@ -1,12 +1,12 @@
 # TuFT config for a Modal deployment — edit this, then:
-#   python deploy/modal/deploy.py --config deploy/modal/tuft_config.example.yaml --gpu H100
+#   python deploy/modal/launch.py --config deploy/modal/tuft_config.example.yaml --gpu H100
 #
 # This is a STANDARD tuft_config.yaml (the same schema `tuft launch --config` reads
 # locally / in Docker), so the file stays portable across all deploy targets.
-# deploy.py reads it, embeds it, and renders a Modal app — you never edit Python.
+# launch.py reads it, embeds it, and renders a Modal app — you never edit Python.
 #
 # Modal-specific notes:
-#   - deploy.py PINS checkpoint_dir to a Modal Volume (/data/checkpoints) via
+#   - launch.py PINS checkpoint_dir to a Modal Volume (/data/checkpoints) via
 #     --checkpoint-dir, so the value below is just a portable default.
 #   - The HuggingFace cache is a Modal Volume (HF_HOME) so weights aren't re-downloaded.
 #   - Single GPU? keep ONE model with `colocate: true`. Multiple models need
@@ -19,7 +19,7 @@ supported_models:
   - model_name: Qwen/Qwen3-4B
     model_path: Qwen/Qwen3-4B        # HF id (cached to the Volume) OR a mounted local path
     max_model_len: 32768
-    tensor_parallel_size: 1          # >1 needs a multi-GPU box: deploy.py --gpu H100:2
+    tensor_parallel_size: 1          # >1 needs a multi-GPU box: launch.py --gpu H100:2
     colocate: true                   # one GPU: training + vLLM share it (single model only)
     sampling_memory_fraction: 0.4    # vLLM's share of the GPU in colocate mode
     max_lora_rank: 16
@@ -27,7 +27,7 @@ supported_models:
     # Optional knobs (see src/tuft/config.py ModelConfig):
     # quantization: fp8              # fp8 | awq | gptq | bitsandbytes
     # sampling_max_model_len: 4096   # cap vLLM context to save KV-cache memory
-    # training_backend: fsdp         # multi-GPU training (also set deploy.py --gpu H100:N)
+    # training_backend: fsdp         # multi-GPU training (also set launch.py --gpu H100:N)
     # temperature: 0.7
     # top_p: 0.9
 
@@ -42,10 +42,10 @@ persistence:
 telemetry:
   enabled: false
 
-# Optional Modal infra for deploy.py. With this section, `python deploy/modal/deploy.py
+# Optional Modal infra for launch.py. With this section, `python deploy/modal/launch.py
 # --config <this file>` needs NO other flags. CLI flags override these; TuFT ignores this
-# whole section (deploy.py strips it before the server sees the config), so the file still
-# works with `tuft launch --config` locally. Keys mirror deploy.py's flags:
+# whole section (launch.py strips it before the server sees the config), so the file still
+# works with `tuft launch --config` locally. Keys mirror launch.py's flags:
 # modal:
 #   gpu: H100                        # H100 | A100-80GB | L4 | H100:2 ...
 #   name: tuft-server

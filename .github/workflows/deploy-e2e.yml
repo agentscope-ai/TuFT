@@ -1,0 +1,174 @@
+name: Deploy E2E (Modal + Lambda)
+
+# Cheap end-to-end tests that the published image actually deploys and serves on Modal and
+# Lambda Cloud. Each job: generate a config, deploy a small model (Qwen3-0.6B) on the
+# cheapest GPU, wait for /api/v1/healthz (which only returns 200 after vLLM has loaded), check
+# get_server_capabilities, then ALWAYS tear the deployment down so nothing keeps billing.
+#
+# Triggered manually via workflow_dispatch (choose the backend). Requires repo secrets:
+# MODAL_TOKEN_ID, MODAL_TOKEN_SECRET, LAMBDA_API_KEY.
+
+on:
+  workflow_dispatch:
+    inputs:
+      backend:
+        description: Which backend(s) to test
+        type: choice
+        options: [both, modal, lambda]
+        default: both
+
+concurrency:
+  group: deploy-e2e-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CI_MODEL: Qwen/Qwen3-0.6B
+
+jobs:
+  modal-e2e:
+    if: inputs.backend == 'both' || inputs.backend == 'modal'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      APP_NAME: tuft-ci-modal-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install --quiet modal pyyaml
+
+      - name: Write CI config
+        run: |
+          KEY="tml-$(python -c 'import secrets;print(secrets.token_urlsafe(18))')"
+          echo "TUFT_KEY=$KEY" >> "$GITHUB_ENV"
+          cat > ci_config.yaml <<EOF
+          checkpoint_dir: /data/checkpoints
+          model_owner: ci
+          supported_models:
+            - model_name: ${CI_MODEL}
+              model_path: ${CI_MODEL}
+              max_model_len: 2048
+              tensor_parallel_size: 1
+              colocate: true
+              sampling_memory_fraction: 0.3
+              sampling_max_model_len: 2048
+          authorized_users:
+            "$KEY": ci
+          persistence: {mode: DISABLE}
+          telemetry: {enabled: false}
+          modal: {gpu: L4, name: ${APP_NAME}, proxy_auth: false, min_containers: 0}
+          EOF
+          python deploy/modal/launch.py --config ci_config.yaml --dry-run
+
+      - name: Deploy to Modal
+        run: |
+          python deploy/modal/launch.py --config ci_config.yaml --name "$APP_NAME" | tee deploy.out
+          URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.modal\.run' deploy.out | head -1)
+          test -n "$URL" || { echo "::error::no Modal URL in deploy output"; exit 1; }
+          echo "TUFT_URL=$URL" >> "$GITHUB_ENV"
+
+      - name: Verify (healthz + capabilities)
+        run: |
+          echo "Health-gating $TUFT_URL (cold start: image + vLLM load)"
+          code=000
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "$TUFT_URL/api/v1/healthz" || true)
+            [ "$code" = "200" ] && break
+            sleep 15
+          done
+          [ "$code" = "200" ] || { echo "::error::healthz never returned 200 (last=$code)"; exit 1; }
+          echo "healthz OK"
+          caps=$(curl -s -H "X-API-Key: $TUFT_KEY" "$TUFT_URL/api/v1/get_server_capabilities")
+          echo "$caps" | grep -q "$CI_MODEL" || { echo "::error::model not advertised: $caps"; exit 1; }
+          echo "Modal E2E OK — image deploys and serves $CI_MODEL"
+
+      - name: Tear down (always)
+        if: always()
+        run: python deploy/modal/launch.py --down --name "$APP_NAME" || true
+
+  lambda-e2e:
+    if: inputs.backend == 'both' || inputs.backend == 'lambda'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      LAMBDA_API_KEY: ${{ secrets.LAMBDA_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install --quiet pyyaml
+
+      - name: Validate (auth + config + auto-select, free)
+        run: |
+          python deploy/lambda/launch.py --status
+          KEY="tml-$(python -c 'import secrets;print(secrets.token_urlsafe(18))')"
+          echo "TUFT_KEY=$KEY" >> "$GITHUB_ENV"
+          cat > ci_config.yaml <<EOF
+          checkpoint_dir: /data/checkpoints
+          model_owner: ci
+          supported_models:
+            - model_name: ${CI_MODEL}
+              model_path: ${CI_MODEL}
+              max_model_len: 2048
+              tensor_parallel_size: 1
+              colocate: true
+              sampling_memory_fraction: 0.3
+              sampling_max_model_len: 2048
+          authorized_users:
+            "$KEY": ci
+          persistence: {mode: DISABLE}
+          telemetry: {enabled: false}
+          lambda: {gpu: a10, name: tuft-ci-lambda-${{ github.run_id }}}
+          EOF
+          python deploy/lambda/launch.py --config ci_config.yaml --dry-run --ssh-key dummy
+
+      - name: Register an ephemeral SSH key
+        run: |
+          ssh-keygen -t ed25519 -f ci_key -N "" -q
+          NAME="tuft-ci-${{ github.run_id }}"
+          ID=$(python deploy/lambda/ci_sshkey.py register "$NAME" ci_key.pub)
+          test -n "$ID" || { echo "::error::ssh-key registration failed"; exit 1; }
+          echo "SSH_KEY_NAME=$NAME" >> "$GITHUB_ENV"
+          echo "SSH_KEY_ID=$ID" >> "$GITHUB_ENV"
+
+      - name: Launch on Lambda
+        run: |
+          python deploy/lambda/launch.py --config ci_config.yaml --ssh-key "$SSH_KEY_NAME" | tee launch.out
+          IP=$(grep -oE 'ubuntu@[0-9.]+' launch.out | head -1 | cut -d@ -f2)
+          ID=$(grep -oE 'instance [a-f0-9]{32}' launch.out | head -1 | awk '{print $2}')
+          test -n "$IP" -a -n "$ID" || { echo "::error::no instance IP/ID"; exit 1; }
+          echo "INSTANCE_IP=$IP" >> "$GITHUB_ENV"
+          echo "INSTANCE_ID=$ID" >> "$GITHUB_ENV"
+
+      - name: Verify (healthz + capabilities over SSH)
+        run: |
+          SSHO="-i ci_key -o StrictHostKeyChecking=no -o ConnectTimeout=20 -o LogLevel=ERROR"
+          echo "Waiting for TuFT on $INSTANCE_IP (cloud-init: image pull + vLLM load)"
+          code=000
+          for i in $(seq 1 80); do
+            code=$(ssh $SSHO ubuntu@$INSTANCE_IP 'curl -s -o /dev/null -w "%{http_code}" localhost:10610/api/v1/healthz' 2>/dev/null || true)
+            [ "$code" = "200" ] && break
+            sleep 15
+          done
+          if [ "$code" != "200" ]; then
+            echo "::error::healthz never 200 (last=$code); container logs:"
+            ssh $SSHO ubuntu@$INSTANCE_IP 'sudo docker logs tuft --tail 40 2>&1' || true
+            exit 1
+          fi
+          echo "healthz OK"
+          caps=$(ssh $SSHO ubuntu@$INSTANCE_IP "curl -s -H 'X-API-Key: $TUFT_KEY' localhost:10610/api/v1/get_server_capabilities")
+          echo "$caps" | grep -q "$CI_MODEL" || { echo "::error::model not advertised: $caps"; exit 1; }
+          echo "Lambda E2E OK — image deploys and serves $CI_MODEL"
+
+      - name: Tear down + delete SSH key (always)
+        if: always()
+        run: |
+          [ -n "$INSTANCE_ID" ] && python deploy/lambda/launch.py --down --instance-id "$INSTANCE_ID" || true
+          [ -n "$SSH_KEY_ID" ] && python deploy/lambda/ci_sshkey.py delete "$SSH_KEY_ID" || true

@@ -25,8 +25,18 @@ tuft launch --host 0.0.0.0 --port 10610 --config examples/personality_sft/config
 **On Modal** (server on a GPU, this loop on your laptop — see [`deploy/`](../../deploy/)). The
 `modal:` section in `config.yaml` supplies the infra (L4), so no extra flags are needed:
 ```bash
-python deploy/modal/deploy.py --config examples/personality_sft/config.yaml --foreground
+python deploy/modal/launch.py --config examples/personality_sft/config.yaml --foreground
 # prints a URL like https://<workspace>--personality-sft-tuftserver-serve.modal.run
+```
+
+**On Lambda Cloud** (rent a GPU VM by the minute; auto-picks the cheapest available GPU).
+Needs `export LAMBDA_API_KEY=...`:
+```bash
+python deploy/lambda/launch.py --config examples/personality_sft/config.yaml
+# auto-picks a GPU, bootstraps TuFT, and prints an SSH-tunnel command + connect details.
+# Open the tunnel it prints, then use --base-url http://localhost:10610 below.
+# Lambda has NO scale-to-zero — terminate when done:
+#   python deploy/lambda/launch.py --down --instance-id <id>
 ```
 
 ## 2. Run the training

@@ -10,7 +10,7 @@ you like, then point this at it:
     python examples/personality_sft/train.py --api-key tml-...
 
     # or on Modal, via the deploy workflow (server on a GPU, this loop on your laptop):
-    python deploy/modal/deploy.py --config your_config.yaml --gpu L4 --foreground
+    python deploy/modal/launch.py --config your_config.yaml --gpu L4 --foreground
     python examples/personality_sft/train.py \
         --base-url https://<workspace>--tuft-server-tuftserver-serve.modal.run \
         --api-key tml-... --model Qwen/Qwen3-4B
