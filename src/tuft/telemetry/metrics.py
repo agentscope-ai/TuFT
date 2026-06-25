@@ -109,6 +109,28 @@ class TuftMetrics:
             unit="tokens",
         )
 
+        # Sampling request scheduler metrics (per-adapter fairness observability)
+        self.scheduler_queue_wait = meter.create_histogram(
+            "tuft.sampling.scheduler.queue_wait",
+            description="Time a sampling request spends in the scheduler queue "
+            "before being dispatched to the backend, labelled by effective lora_id.",
+            unit="s",
+        )
+
+        self.scheduler_batch_position = meter.create_histogram(
+            "tuft.sampling.scheduler.batch_position",
+            description="Position (0-based index) of a request within its "
+            "dispatched batch after reordering, labelled by effective lora_id. "
+            "Use this to detect systematic head-of-line bias against any adapter.",
+        )
+
+        self.scheduler_window_share = meter.create_histogram(
+            "tuft.sampling.scheduler.window_share",
+            description="Number of requests an adapter contributes to a single "
+            "dispatched batch (window), labelled by effective lora_id. "
+            "Use this to spot adapters monopolising coalescing windows.",
+        )
+
         # Future queue metrics
         self.futures_queue_length = meter.create_up_down_counter(
             "tuft.futures.queue_length",
