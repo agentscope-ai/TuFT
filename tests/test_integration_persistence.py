@@ -54,6 +54,7 @@ def test_checkpoint_resume_persistence(tmp_path: Path) -> None:
             stacklevel=2,
         )
         pytest.skip("TUFT_TEST_MODEL is not set, skipping GPU integration test")
+    assert model_env is not None  # narrow type for pyright after skip
 
     file_redis_path = tmp_path / "file_redis.json"
     if file_redis_path.exists():

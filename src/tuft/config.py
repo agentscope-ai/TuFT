@@ -50,6 +50,10 @@ class ModelConfig(BaseModel):
     logprobs: int = 0
     seed: int = 42
     min_response_tokens: int = 0
+    # Default max_tokens for sampling when client does not specify one.
+    # Applies to both tinker SDK sample() and vLLM OpenAI API (max_response_tokens).
+    # If None, vLLM uses its own default (typically 16).
+    default_max_tokens: int | None = None
 
     # default lora setting
     max_lora_rank: int = 16  # maximum rank for LoRA adapters
@@ -59,7 +63,9 @@ class ModelConfig(BaseModel):
     micro_batch_size: int = 1  # micro-batch size for training
     # training backend: "hf" (HFTrainingBackend) or "fsdp" (FSDPTrainingBackend)
     training_backend: str = "hf"
-    # number of GPUs (Ray actors) for FSDP backend; default 1
+    # number of GPUs (Ray actors) for FSDP backend; default 1.
+    # Multi-GPU (fsdp_num_gpus >= 2) uses contiguous batch sharding across
+    # Ray actors; each actor runs FSDP-2 with micro-batch grad accumulation.
     fsdp_num_gpus: int = 1
     # TCP port for torch.distributed init (FSDP multi-GPU); default 29500
     fsdp_master_port: int = 29500
@@ -68,7 +74,11 @@ class ModelConfig(BaseModel):
     fsdp_rank_slots: dict[int, int] | None = None
     # optional override for FSDP backend HFModelConfig (e.g. attn_implementation)
     fsdp_override_config: dict[str, Any] | None = None
-
+    # Attention implementation passed to AutoModelForCausalLM.from_pretrained for the
+    # HF training backend (and used as default for FSDP backend if fsdp_override_config
+    # does not specify one). Common values: "flash_attention_2", "sdpa", "eager".
+    # If None, transformers picks its own default (usually "sdpa").
+    attn_implementation: str | None = None
     # Quantization method for the sampling (vLLM) engine.
     # Supported values: "fp8", "awq", "gptq", "bitsandbytes", etc.
     # If None, no quantization is applied (model runs in dtype as-is).
