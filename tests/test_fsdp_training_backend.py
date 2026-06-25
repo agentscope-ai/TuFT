@@ -310,3 +310,144 @@ async def _run_fsdp_single_process_flow() -> None:
             backward=False,
         )
         assert "loss" in out2.metrics or "loss:sum" in out2.metrics
+
+
+# -----------------------------------------------------------------------------
+# Unit tests: _shard_list order-preserving guarantees
+# -----------------------------------------------------------------------------
+
+
+def test_shard_list_preserves_order_even_split():
+    """_shard_list with even split preserves original order."""
+    from tuft.backends.fsdp_training_backend import _shard_list
+
+    data = list(range(10))
+    shards = _shard_list(data, 2)
+    assert shards == [[0, 1, 2, 3, 4], [5, 6, 7, 8, 9]]
+    # Concatenating shards in order reconstructs original
+    reconstructed = [x for shard in shards for x in shard]
+    assert reconstructed == data
+
+
+def test_shard_list_preserves_order_uneven_split():
+    """_shard_list with uneven split (remainder) preserves original order."""
+    from tuft.backends.fsdp_training_backend import _shard_list
+
+    data = list(range(7))
+    shards = _shard_list(data, 3)
+    # 7 / 3 = 2 rem 1 → first shard gets 3, rest get 2
+    assert shards == [[0, 1, 2], [3, 4], [5, 6]]
+    reconstructed = [x for shard in shards for x in shard]
+    assert reconstructed == data
+
+
+def test_shard_list_preserves_order_single_shard():
+    """_shard_list with n_shards=1 returns the full list."""
+    from tuft.backends.fsdp_training_backend import _shard_list
+
+    data = list(range(5))
+    shards = _shard_list(data, 1)
+    assert shards == [data]
+
+
+def test_shard_list_raises_on_zero_shards():
+    """_shard_list raises ValueError when n_shards <= 0."""
+    from tuft.backends.fsdp_training_backend import _shard_list
+
+    with pytest.raises(ValueError):
+        _shard_list([1, 2, 3], 0)
+
+
+def test_shard_list_more_shards_than_elements():
+    """_shard_list with more shards than elements produces empty shards at end."""
+    from tuft.backends.fsdp_training_backend import _shard_list
+
+    data = [10, 20]
+    shards = _shard_list(data, 4)
+    # 2 / 4 = 0 rem 2 → first 2 shards get 1 each, last 2 empty
+    assert shards == [[10], [20], [], []]
+    reconstructed = [x for shard in shards for x in shard]
+    assert reconstructed == data
+
+
+def test_shard_list_batch_order_contract_with_variable_length_data():
+    """Verify the batch-order contract: after shard+merge, zip(data, outputs) aligns.
+
+    This simulates the multi-actor forward path:
+    1. Split data into N shards
+    2. Each shard produces outputs in shard-local order
+    3. Extending outputs in shard order reconstructs original order
+
+    This is the critical property that was broken by the old token-balanced
+    sharding and is now restored with the simple contiguous _shard_list.
+    """
+    from tuft.backends.fsdp_training_backend import _shard_list
+
+    # Simulate variable-length sequences (like real training data)
+    data = [
+        {"id": i, "tokens": list(range(length))}
+        for i, length in enumerate([128, 256, 64, 512, 32, 1024, 100, 200])
+    ]
+    n_actors = 3
+    shards = _shard_list(data, n_actors)
+
+    # Simulate each actor processing its shard and returning logprobs
+    # with lengths matching their input sequence lengths
+    all_outputs = []
+    for shard in shards:
+        shard_outputs = []
+        for datum in shard:
+            # Each actor returns logprob of length == len(tokens)
+            # (simulates verl engine returning per-token logprobs)
+            shard_outputs.append({"logprobs_len": len(datum["tokens"]), "datum_id": datum["id"]})
+        all_outputs.extend(shard_outputs)
+
+    # The critical assertion: after extend, outputs[i] corresponds to data[i]
+    assert len(all_outputs) == len(data)
+    for i, (datum, output) in enumerate(zip(data, all_outputs, strict=True)):
+        assert output["datum_id"] == datum["id"], (
+            f"Order mismatch at index {i}: expected datum_id={datum['id']}, "
+            f"got {output['datum_id']}. This would cause silent logprob corruption "
+            f"in training (the [-am:] slicing hides shape mismatches)."
+        )
+        assert output["logprobs_len"] == len(datum["tokens"]), (
+            f"Length mismatch at index {i}: logprobs_len={output['logprobs_len']} "
+            f"!= tokens_len={len(datum['tokens'])}. This is the shape mismatch "
+            f"that Python's [-am:] slicing would hide."
+        )
+
+
+@pytest.mark.asyncio
+async def test_forward_raises_when_data_fewer_than_actors():
+    """forward() raises ValueError when len(data) < world_size (NCCL deadlock guard)."""
+    from unittest.mock import MagicMock
+
+    from tuft.backends.fsdp_training_backend import FSDPTrainingBackend
+
+    config = ModelConfig(
+        model_name="test",
+        model_path=Path("/tmp/model"),
+        max_model_len=1024,
+        training_backend="fsdp",
+        fsdp_num_gpus=2,
+    )
+    backend = FSDPTrainingBackend(config)
+    # Simulate multi-actor path: _worker is None, _actors has 2 stubs
+    backend._worker = None
+    backend._actors = [MagicMock(), MagicMock()]
+    backend._lora_id_to_adapter_name = {"lora1": "adapter_0"}
+    backend._adapter_name_to_lora_id = {"adapter_0": "lora1"}
+
+    single_datum = types.Datum(
+        model_input=types.ModelInput.from_ints(tokens=[1, 2, 3]),
+        loss_fn_inputs={},
+    )
+
+    with pytest.raises(ValueError, match=r"len\(data\)=1, world_size=2"):
+        await backend.forward(
+            data=[single_datum],
+            lora_id="lora1",
+            loss_fn="cross_entropy",
+            loss_fn_config=None,
+            backward=True,
+        )
