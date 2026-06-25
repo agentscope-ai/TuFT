@@ -14,6 +14,9 @@ on:
       - '.github/workflows/install-script.yml'
       - 'pyproject.toml'
 
+permissions:
+  contents: read
+
 jobs:
   test-install-script:
     strategy:

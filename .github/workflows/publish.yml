@@ -9,6 +9,9 @@ on:
         default: 'main'
         type: string
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
