@@ -8,6 +8,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -17,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from ..auth import User
+from ..backends.sampling_backend import BaseSamplingBackend, DPSamplingBackend
 from ..exceptions import (
     InvalidRequestException,
     ServerException,
@@ -152,7 +154,8 @@ def create_oai_router() -> APIRouter:
             }
         )
 
-    # Track which LoRA adapters have been loaded via the OpenAI API
+    # Track which LoRA adapters have been loaded via the OpenAI API.
+    # For DP mode, we track per (lora_name, backend_url) to ensure all instances are loaded.
     _loaded_loras: set[str] = set()
 
     async def _ensure_lora_loaded(
@@ -162,7 +165,9 @@ def create_oai_router() -> APIRouter:
         lora_path: str,
     ) -> None:
         """Load a LoRA adapter into vLLM's OpenAI serving layer if not already loaded."""
-        if lora_name in _loaded_loras:
+        # Use (lora_name, backend_url) as the cache key so DP instances are tracked individually
+        cache_key = f"{lora_name}@{backend_url}"
+        if cache_key in _loaded_loras:
             return
 
         url = f"{backend_url}/v1/load_lora_adapter"
@@ -173,18 +178,35 @@ def create_oai_router() -> APIRouter:
             timeout=60.0,
         )
         if resp.status_code == 200:
-            _loaded_loras.add(lora_name)
-            logger.info("Loaded LoRA '%s' via vLLM OpenAI API", lora_name)
+            _loaded_loras.add(cache_key)
+            logger.info("Loaded LoRA '%s' via vLLM OpenAI API at %s", lora_name, backend_url)
         else:
             # If 400 "already exists", that's fine
             body = resp.json() if resp.status_code < 500 else {}
             msg = body.get("message", "") if isinstance(body, dict) else str(body)
             if "already" in msg.lower():
-                _loaded_loras.add(lora_name)
+                _loaded_loras.add(cache_key)
                 return
             raise RuntimeError(
                 f"Failed to load LoRA adapter '{lora_name}': {resp.status_code} {resp.text}"
             )
+
+    async def _ensure_lora_loaded_all_dp(
+        client: httpx.AsyncClient,
+        backend: "BaseSamplingBackend",
+        lora_name: str,
+        lora_path: str,
+    ) -> None:
+        """Load LoRA on ALL DP instances (for DPSamplingBackend), or single instance otherwise."""
+        if isinstance(backend, DPSamplingBackend):
+            urls = backend.get_openai_api_urls()
+            await asyncio.gather(
+                *[_ensure_lora_loaded(client, url, lora_name, lora_path) for url in urls]
+            )
+        else:
+            url = backend.get_openai_api_url()
+            if url:
+                await _ensure_lora_loaded(client, url, lora_name, lora_path)
 
     async def _proxy_inference(
         request: Request,
@@ -218,23 +240,26 @@ def create_oai_router() -> APIRouter:
                 if resolved.lora_id:
                     span.set_attribute("oai.lora_id", resolved.lora_id)
 
-                # Get backend OpenAI URL
+                # Get backend OpenAI URL (DP-aware: round-robin across instances)
                 backend = state.sampling._base_backends.get(resolved.base_model)
                 if backend is None:
                     raise UnknownModelException(model_name=resolved.base_model)
 
-                backend_url = backend.get_openai_api_url()
+                if isinstance(backend, DPSamplingBackend):
+                    backend_url = backend.get_next_openai_api_url()
+                else:
+                    backend_url = backend.get_openai_api_url()
                 if backend_url is None:
                     raise ServiceUnavailableException(
                         f"OpenAI API not available for model: {resolved.base_model}"
                     )
 
-                # Ensure LoRA is loaded via the vLLM OpenAI server's API
+                # Ensure LoRA is loaded on ALL DP instances via the vLLM OpenAI API
                 if resolved.lora_adapter_path and resolved.lora_id:
                     try:
-                        await _ensure_lora_loaded(
+                        await _ensure_lora_loaded_all_dp(
                             client=client,
-                            backend_url=backend_url,
+                            backend=backend,
                             lora_name=resolved.lora_id,
                             lora_path=str(resolved.lora_adapter_path),
                         )
