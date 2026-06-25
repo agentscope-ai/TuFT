@@ -202,6 +202,10 @@ install_tuft() {
     # Install tuft with all extras (backend, persistence)
     uv pip install --python "$TUFT_VENV/bin/python" "${PACKAGE_SPEC}[backend,persistence]"
 
+    # Apply trinity-rft compatibility patches for vLLM >= 0.20
+    print_step "Applying trinity-rft vLLM patches..."
+    "$TUFT_VENV/bin/python" -m tuft.patches.apply || print_warning "Failed to apply trinity patches (non-fatal)"
+
     print_success "TuFT installed successfully"
 }
 

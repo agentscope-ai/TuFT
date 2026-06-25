@@ -200,7 +200,9 @@ def _datum_list_to_tensordict(
         "target_tokens": target_tokens.to(device),
         "weights": weights_device,
         "loss_mask": weights_device,
-        "temperature": torch.full((batch_size, 1, 1), 1.0, device=device, dtype=torch.float32),
+        # Temperature: verl 0.8.0 expects (bsz,) and does unsqueeze internally.
+        # (verl 0.7.x expected (B,1,1) for direct broadcast, but 0.8.0 changed.)
+        "temperature": torch.ones(batch_size, device=device, dtype=torch.float32),
         "adapter_id": adapter_id,
     }
 
@@ -832,6 +834,11 @@ class VerlWorkerActor:
 
         os.environ["MASTER_ADDR"] = master_addr
         os.environ["MASTER_PORT"] = str(master_port)
+        # Must set CUDA device before init_process_group to avoid DeviceMesh
+        # picking wrong GPU (PyTorch 2.6+ creates DeviceMesh internally).
+        if torch.cuda.is_available():
+            local_rank = int(os.environ.get("LOCAL_RANK", self.rank))
+            torch.cuda.set_device(local_rank)
         dist.init_process_group(
             backend="nccl" if torch.cuda.is_available() else "gloo",
             rank=self.rank,
@@ -1068,19 +1075,37 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             actors.append(actor)
         # Set _world_size / _actors only after all succeed; else next create_adapter retries init
         # get_node_ip should return quickly; timeout avoids hang when actor not scheduled (e.g. GPU)
-        _GET_NODE_IP_TIMEOUT = 30
-        master_addr = await asyncio.to_thread(
-            ray.get, actors[0].get_node_ip.remote(), timeout=_GET_NODE_IP_TIMEOUT
-        )
+        _GET_NODE_IP_TIMEOUT = 120
+        self.logger.info("[FSDP] async_init: created %d actors, calling get_node_ip...", n_gpus)
+        try:
+            master_addr = await asyncio.to_thread(
+                ray.get, actors[0].get_node_ip.remote(), timeout=_GET_NODE_IP_TIMEOUT
+            )
+        except Exception as e:
+            self.logger.error("[FSDP] get_node_ip FAILED: %s", e)
+            raise
+        self.logger.info("[FSDP] get_node_ip OK: %s, calling init_dist...", master_addr)
         base_port = getattr(self.config, "fsdp_master_port", DEFAULT_MASTER_PORT)
         master_port = base_port + self._fsdp_index if self._fsdp_index is not None else base_port
-        await asyncio.gather(
-            *[
-                asyncio.to_thread(ray.get, a.init_dist.remote(master_addr, master_port))
-                for a in actors
-            ]
-        )
-        await asyncio.gather(*[asyncio.to_thread(ray.get, a.build_worker.remote()) for a in actors])
+        try:
+            await asyncio.gather(
+                *[
+                    asyncio.to_thread(ray.get, a.init_dist.remote(master_addr, master_port))
+                    for a in actors
+                ]
+            )
+        except Exception as e:
+            self.logger.error("[FSDP] init_dist FAILED: %s", e)
+            raise
+        self.logger.info("[FSDP] init_dist OK, calling build_worker...")
+        try:
+            await asyncio.gather(
+                *[asyncio.to_thread(ray.get, a.build_worker.remote()) for a in actors]
+            )
+        except Exception as e:
+            self.logger.error("[FSDP] build_worker FAILED: %s", e)
+            raise
+        self.logger.info("[FSDP] build_worker OK, FSDP backend ready")
         self._actors = actors
         self._world_size = n_gpus
 
