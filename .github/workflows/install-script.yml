@@ -25,6 +25,9 @@ jobs:
         os: [ubuntu-latest, macos-latest]
 
     runs-on: ${{ matrix.os }}
+    # Backstop so a blocking step (e.g. `tuft launch`) can't hang for the
+    # default 6h job timeout. Normal runs finish in ~3-4 min.
+    timeout-minutes: 15
 
     steps:
       - name: Checkout code
@@ -97,9 +100,31 @@ jobs:
           authorized_users:
             test-key: test-user
           EOF
-          # Launch should fail due to missing model, but get past config validation
-          # We just verify it doesn't fail on config parsing
-          tuft launch 2>&1 | grep -v "Configuration file must be provided" || true
+          # `tuft launch` is a blocking uvicorn server: with a valid config it
+          # passes validation and serves (models load lazily, so a bad
+          # model_path does NOT make it exit). Run it in the background and stop
+          # it after it has had time to start, so CI can't hang on the server.
+          # Portable (no `timeout`, which isn't on macOS): we just smoke-test
+          # that launch accepts the config and starts up.
+          tuft launch > launch.log 2>&1 &
+          launch_pid=$!
+          sleep 60
+          if kill -0 "$launch_pid" 2>/dev/null; then
+            echo "OK: tuft launch is still serving after startup (config validation passed)"
+          else
+            echo "tuft launch exited on its own within 60s; output:"
+            cat launch.log
+          fi
+          # Stop the server and its children. SIGKILL is uncatchable, and we
+          # deliberately do NOT `wait` (the server ignores SIGTERM), so this
+          # never blocks the job.
+          pkill -KILL -P "$launch_pid" 2>/dev/null || true
+          kill -KILL "$launch_pid" 2>/dev/null || true
+          # Fail only if launch never accepted the provided config file.
+          if grep -q "Configuration file must be provided" launch.log; then
+            echo "FAIL: tuft launch did not pick up the provided config"
+            exit 1
+          fi
         env:
           TUFT_HOME: ${{ runner.temp }}/tuft
 
