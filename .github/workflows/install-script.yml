@@ -255,10 +255,10 @@ jobs:
         env:
           TUFT_HOME: ${{ runner.temp }}/tuft
 
-      - name: Test upgrade --from-source
+      - name: Test upgrade --from-source (uses local checkout)
         run: |
           export PATH="${TUFT_HOME}/bin:$PATH"
-          tuft upgrade --from-source
+          tuft upgrade --local-source "$GITHUB_WORKSPACE"
         env:
           TUFT_HOME: ${{ runner.temp }}/tuft
 
