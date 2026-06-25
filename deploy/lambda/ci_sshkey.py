@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import sys
 
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from launch import LambdaClient  # noqa: E402
 
@@ -29,7 +30,9 @@ def main() -> None:
     if cmd == "register":
         name, pubfile = sys.argv[2], sys.argv[3]
         pub = open(pubfile).read().strip()
-        data = client.request("POST", "/ssh-keys", {"name": name, "public_key": pub}).get("data", {})
+        data = client.request("POST", "/ssh-keys", {"name": name, "public_key": pub}).get(
+            "data", {}
+        )
         print(data.get("id", ""))
     elif cmd == "delete":
         client.request("DELETE", "/ssh-keys/%s" % sys.argv[2])

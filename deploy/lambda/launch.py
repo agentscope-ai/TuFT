@@ -10,7 +10,7 @@ edit the YAML and re-run.
 Verbs (flag-based, like the Modal launch.py — default action is "launch"):
     python deploy/lambda/launch.py --config my.yaml            # launch a new instance
     python deploy/lambda/launch.py --config my.yaml --instance-id <id>   # reuse an instance
-    python deploy/lambda/launch.py --down   --config my.yaml   # terminate (by name) / --instance-id / --all
+    python deploy/lambda/launch.py --down --config my.yaml   # terminate (name/--instance-id/--all)
     python deploy/lambda/launch.py --status                    # list instances
 
 Auto instance selection (so you don't think about hardware): if you don't pin `--instance-type`,
@@ -58,15 +58,15 @@ CONTAINER_CHECKPOINT_DIR = "/data/checkpoints"
 
 # Infra knobs (CLI flags and the YAML `lambda:` section share these keys) + defaults.
 DEFAULTS = {
-    "instance_type": "",   # full Lambda type, e.g. gpu_1x_a100_sxm4; "" = auto-pick
-    "gpu": "",             # family hint(s), e.g. "a100"; "" = auto (prefers a100; a10 last)
-    "region": "",          # "" = auto (a region with capacity)
-    "ssh_key": "",         # "" = use the account's sole key if exactly one
+    "instance_type": "",  # full Lambda type, e.g. gpu_1x_a100_sxm4; "" = auto-pick
+    "gpu": "",  # family hint(s), e.g. "a100"; "" = auto (prefers a100; a10 last)
+    "region": "",  # "" = auto (a region with capacity)
+    "ssh_key": "",  # "" = use the account's sole key if exactly one
     "name": "tuft-server",
-    "filesystem": "",      # Lambda persistent filesystem name; "" = root disk (ephemeral)
+    "filesystem": "",  # Lambda persistent filesystem name; "" = root disk (ephemeral)
     "image": TUFT_IMAGE,
-    "shm_size": "64g",     # bump to 128g on big boxes
-    "hf_token": "",        # for gated models; also read from env HF_TOKEN
+    "shm_size": "64g",  # bump to 128g on big boxes
+    "hf_token": "",  # for gated models; also read from env HF_TOKEN
 }
 _INFRA_KEYS = list(DEFAULTS)
 
@@ -97,12 +97,18 @@ class LambdaClient:
         token = base64.b64encode(f"{self.api_key}:".encode()).decode()
         return {"Authorization": f"Basic {token}"}
 
-    def request(self, method: str, path: str, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def request(
+        self, method: str, path: str, body: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         url = f"{self.api_base}{path}"
         data = None
         # A non-default User-Agent is required: Lambda's API sits behind a WAF that 403s
         # the stdlib "Python-urllib/x.y" UA.
-        headers = {"Accept": "application/json", "User-Agent": "tuft-launch/1.0", **self._auth_header()}
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "tuft-launch/1.0",
+            **self._auth_header(),
+        }
         if body is not None:
             data = json.dumps(body).encode("utf-8")
             headers["Content-Type"] = "application/json"
@@ -128,7 +134,11 @@ class LambdaClient:
         return self.request("GET", "/ssh-keys").get("data", [])
 
     def launch(self, payload: Dict[str, Any]) -> List[str]:
-        return self.request("POST", "/instance-operations/launch", payload).get("data", {}).get("instance_ids", [])
+        return (
+            self.request("POST", "/instance-operations/launch", payload)
+            .get("data", {})
+            .get("instance_ids", [])
+        )
 
     def list_instances(self) -> List[Dict[str, Any]]:
         return self.request("GET", "/instances").get("data", [])
@@ -137,7 +147,9 @@ class LambdaClient:
         return self.request("GET", f"/instances/{instance_id}").get("data", {})
 
     def terminate(self, instance_ids: List[str]) -> Dict[str, Any]:
-        return self.request("POST", "/instance-operations/terminate", {"instance_ids": instance_ids})
+        return self.request(
+            "POST", "/instance-operations/terminate", {"instance_ids": instance_ids}
+        )
 
 
 # -----------------------------------------------------------------------------
@@ -163,7 +175,9 @@ def _regions_of(entry: Dict[str, Any]) -> List[str]:
     return out
 
 
-def resolve_instance(client: LambdaClient, instance_type: str, gpu: str, region: str) -> Tuple[str, str, int]:
+def resolve_instance(
+    client: LambdaClient, instance_type: str, gpu: str, region: str
+) -> Tuple[str, str, int]:
     """Return (instance_type_name, region_name, price_cents). Auto-picks a 1xGPU type with
     capacity, preferring a100 over a10 (see _DEFAULT_PREF), unless `instance_type` is pinned or
     `gpu` gives a comma-separated family hint."""
@@ -173,8 +187,11 @@ def resolve_instance(client: LambdaClient, instance_type: str, gpu: str, region:
         regions = _regions_of(entry) if isinstance(entry, dict) else []
         chosen = region or (regions[0] if regions else "")
         if not chosen:
-            sys.exit(f"No capacity for {instance_type}"
-                     + (f" in {region}" if region else " in any region") + ". Try later or another type.")
+            sys.exit(
+                f"No capacity for {instance_type}"
+                + (f" in {region}" if region else " in any region")
+                + ". Try later or another type."
+            )
         return instance_type, chosen, _price_of(entry or {})
 
     # available 1xGPU candidates: (price, name, regions)
@@ -188,9 +205,11 @@ def resolve_instance(client: LambdaClient, instance_type: str, gpu: str, region:
         if regions:
             avail.append((_price_of(entry), name, regions))
     if not avail:
-        sys.exit("No 1xGPU capacity available right now"
-                 + (f" in {region}" if region else " in any region")
-                 + ". Try again later, widen --region, or pin --instance-type.")
+        sys.exit(
+            "No 1xGPU capacity available right now"
+            + (f" in {region}" if region else " in any region")
+            + ". Try again later, widen --region, or pin --instance-type."
+        )
 
     # With an explicit --gpu hint, honor it (cheapest matching each, in order). Otherwise use
     # the default preference (a100 first, a10 last) so training-by-default lands on a good GPU.
@@ -201,9 +220,12 @@ def resolve_instance(client: LambdaClient, instance_type: str, gpu: str, region:
             price, name, regions = matches[0]
             return name, regions[0], price
     if gpu:
-        sys.exit(f"No available 1xGPU matching --gpu '{gpu}'"
-                 + (f" in {region}" if region else "") + ". Available: "
-                 + ", ".join(sorted(c[1] for c in avail)))
+        sys.exit(
+            f"No available 1xGPU matching --gpu '{gpu}'"
+            + (f" in {region}" if region else "")
+            + ". Available: "
+            + ", ".join(sorted(c[1] for c in avail))
+        )
     # None of the preferred families have capacity -> cheapest of whatever is available.
     avail.sort()
     price, name, regions = avail[0]
@@ -245,20 +267,27 @@ def resolve_infra(args: argparse.Namespace, file_infra: dict) -> dict:
     infra = {}
     for key, dflt in DEFAULTS.items():
         cli = getattr(args, key, None)
-        infra[key] = cli if cli not in (None, "") else (
-            file_infra[key] if file_infra.get(key) not in (None, "") else dflt)
+        infra[key] = (
+            cli
+            if cli not in (None, "")
+            else (file_infra[key] if file_infra.get(key) not in (None, "") else dflt)
+        )
     if not infra["hf_token"]:
         infra["hf_token"] = os.environ.get("HF_TOKEN", "")
     return infra
 
 
-_DEPLOY_SECTIONS = ("modal", "lambda")  # deploy-infra sections; stripped before the server sees the config
+_DEPLOY_SECTIONS = (
+    "modal",
+    "lambda",
+)  # deploy-infra sections; stripped before the server sees the config
 
 
 def config_text(path: Path, data: dict) -> str:
     """The tuft_config.yaml the server should see, with deploy-infra sections stripped."""
     if any(s in data for s in _DEPLOY_SECTIONS):
         import yaml
+
         clean = {k: v for k, v in data.items() if k not in _DEPLOY_SECTIONS}
         return yaml.safe_dump(clean, sort_keys=False)
     return path.read_text()
@@ -272,13 +301,16 @@ def _docker_run(host_data_dir: str, hf_token: str, shm_size: str, image: str) ->
     return (
         f"docker run -d --name tuft --restart unless-stopped --gpus all --shm-size={shm_size} "
         f"-p {TUFT_PORT}:{TUFT_PORT} {hf}-e HF_HOME={CONTAINER_HF_CACHE} "
-        f"-e TUFT_CHECKPOINT_DIR={CONTAINER_CHECKPOINT_DIR} -v {host_data_dir}:{CONTAINER_DATA_DIR} "
+        f"-e TUFT_CHECKPOINT_DIR={CONTAINER_CHECKPOINT_DIR} "
+        f"-v {host_data_dir}:{CONTAINER_DATA_DIR} "
         f"{image} tuft launch --host 0.0.0.0 --port {TUFT_PORT} "
         f"--config {CONTAINER_CONFIG_PATH} --checkpoint-dir {CONTAINER_CHECKPOINT_DIR}"
     )
 
 
-def build_user_data(cfg_yaml: str, host_data_dir: str, hf_token: str, shm_size: str, image: str) -> str:
+def build_user_data(
+    cfg_yaml: str, host_data_dir: str, hf_token: str, shm_size: str, image: str
+) -> str:
     cfg_b64 = base64.b64encode(cfg_yaml.encode("utf-8")).decode("ascii")
     run = _docker_run(host_data_dir, hf_token, shm_size, image)
     return (
@@ -293,15 +325,26 @@ def build_user_data(cfg_yaml: str, host_data_dir: str, hf_token: str, shm_size: 
     )
 
 
-def ssh_bootstrap(ip: str, cfg_yaml: str, host_data_dir: str, hf_token: str, shm_size: str, image: str) -> List[str]:
+def ssh_bootstrap(
+    ip: str, cfg_yaml: str, host_data_dir: str, hf_token: str, shm_size: str, image: str
+) -> List[str]:
     cfg_b64 = base64.b64encode(cfg_yaml.encode("utf-8")).decode("ascii")
     remote = (
         f"sudo mkdir -p {host_data_dir} {host_data_dir}/hf-cache {host_data_dir}/checkpoints && "
         f"echo {cfg_b64} | base64 -d | sudo tee {host_data_dir}/tuft_config.yaml >/dev/null && "
         f"(which docker || (curl -fsSL https://get.docker.com | sudo sh)) && "
-        f"sudo docker rm -f tuft 2>/dev/null; sudo docker pull {image} && sudo {_docker_run(host_data_dir, hf_token, shm_size, image)}"
+        f"sudo docker rm -f tuft 2>/dev/null; sudo docker pull {image} && "
+        f"sudo {_docker_run(host_data_dir, hf_token, shm_size, image)}"
     )
-    return ["ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=20", f"ubuntu@{ip}", remote]
+    return [
+        "ssh",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "ConnectTimeout=20",
+        f"ubuntu@{ip}",
+        remote,
+    ]
 
 
 def _ip(inst: Dict[str, Any]) -> str:
@@ -333,7 +376,7 @@ def _banner(ip: str, api_key: str, model: str, instance_id: str, name: str) -> N
     print(f"    ssh -N -L {TUFT_PORT}:localhost:{TUFT_PORT} ubuntu@{ip}")
     print(f"    # then health-gate:  curl http://localhost:{TUFT_PORT}{HEALTHZ_PATH}")
     print("\nThen drive training from your laptop:")
-    print(f"    python examples/personality_sft/train.py \\")
+    print("    python examples/personality_sft/train.py \\")
     print(f"        --base-url http://localhost:{TUFT_PORT} --api-key {api_key} --model {model}")
     print("\nStop billing when done (Lambda has no scale-to-zero — you MUST terminate):")
     print(f"    python deploy/lambda/launch.py --down --instance-id {instance_id}")
@@ -351,7 +394,9 @@ def _model(data: dict) -> str:
 # -----------------------------------------------------------------------------
 # actions
 # -----------------------------------------------------------------------------
-def do_launch(client: LambdaClient, args: argparse.Namespace, data: dict, infra: dict, cfg_path: Path) -> int:
+def do_launch(
+    client: LambdaClient, args: argparse.Namespace, data: dict, infra: dict, cfg_path: Path
+) -> int:
     cfg_yaml = config_text(cfg_path, data)
     host_dir = _host_data_dir(infra["filesystem"])
     api_key = _first_key(data["authorized_users"])
@@ -363,7 +408,9 @@ def do_launch(client: LambdaClient, args: argparse.Namespace, data: dict, infra:
         ip = _ip(inst)
         if not ip:
             sys.exit(f"instance {args.instance_id} has no IP (status {inst.get('status')})")
-        cmd = ssh_bootstrap(ip, cfg_yaml, host_dir, infra["hf_token"], infra["shm_size"], infra["image"])
+        cmd = ssh_bootstrap(
+            ip, cfg_yaml, host_dir, infra["hf_token"], infra["shm_size"], infra["image"]
+        )
         print(f"[reuse] bootstrapping TuFT on existing instance {args.instance_id} ({ip}) over SSH")
         if args.dry_run:
             print("[dry-run]", " ".join(cmd[:-1]), repr(cmd[-1])[:120] + "...")
@@ -375,16 +422,22 @@ def do_launch(client: LambdaClient, args: argparse.Namespace, data: dict, infra:
         return 0
 
     # Launch a NEW instance with auto-selected hardware + cloud-init bootstrap.
-    itype, region, price = resolve_instance(client, infra["instance_type"], infra["gpu"], infra["region"])
+    itype, region, price = resolve_instance(
+        client, infra["instance_type"], infra["gpu"], infra["region"]
+    )
     ssh_key = infra["ssh_key"]
     if not ssh_key:
         keys = [k.get("name") for k in client.ssh_keys() if k.get("name")]
         if len(keys) == 1:
             ssh_key = keys[0]
         else:
-            sys.exit(f"Specify --ssh-key (account has {len(keys)} keys: {keys}). "
-                     "Register one in the Lambda console first if none.")
-    user_data = build_user_data(cfg_yaml, host_dir, infra["hf_token"], infra["shm_size"], infra["image"])
+            sys.exit(
+                f"Specify --ssh-key (account has {len(keys)} keys: {keys}). "
+                "Register one in the Lambda console first if none."
+            )
+    user_data = build_user_data(
+        cfg_yaml, host_dir, infra["hf_token"], infra["shm_size"], infra["image"]
+    )
     payload: Dict[str, Any] = {
         "region_name": region,
         "instance_type_name": itype,
@@ -395,8 +448,15 @@ def do_launch(client: LambdaClient, args: argparse.Namespace, data: dict, infra:
     if infra["filesystem"]:
         payload["file_system_names"] = [infra["filesystem"]]
 
-    print(f"[launch] {itype} in {region} (~${price/100:.2f}/hr), ssh_key={ssh_key}, name={infra['name']}"
-          + (f", filesystem={infra['filesystem']}" if infra["filesystem"] else " (ephemeral root disk)"))
+    print(
+        f"[launch] {itype} in {region} (~${price / 100:.2f}/hr), "
+        f"ssh_key={ssh_key}, name={infra['name']}"
+        + (
+            f", filesystem={infra['filesystem']}"
+            if infra["filesystem"]
+            else " (ephemeral root disk)"
+        )
+    )
     if args.dry_run:
         print("[dry-run] would POST /instance-operations/launch; user_data:")
         print(user_data)
@@ -420,13 +480,19 @@ def do_down(client: LambdaClient, args: argparse.Namespace) -> int:
         if not name and args.config:
             try:
                 import yaml
-                name = (yaml.safe_load(Path(args.config).read_text()).get("lambda") or {}).get("name")
+
+                name = (yaml.safe_load(Path(args.config).read_text()).get("lambda") or {}).get(
+                    "name"
+                )
             except Exception:
                 pass
         name = name or DEFAULTS["name"]
         ids = [i["id"] for i in instances if i.get("name") == name]
         if not ids:
-            sys.exit(f"No running instance named '{name}'. Use --instance-id, --all, or --status to inspect.")
+            sys.exit(
+                f"No running instance named '{name}'. "
+                "Use --instance-id, --all, or --status to inspect."
+            )
     print(f"[down] terminating: {ids}")
     if args.dry_run:
         print("[dry-run] not terminating")
@@ -443,42 +509,84 @@ def do_status(client: LambdaClient) -> int:
         return 0
     print(f"{'ID':24} {'NAME':18} {'TYPE':20} {'STATUS':10} IP")
     for i in instances:
-        print(f"{i.get('id',''):24} {str(i.get('name','')):18} "
-              f"{i.get('instance_type', {}).get('name',''):20} {i.get('status',''):10} {_ip(i)}")
+        print(
+            f"{i.get('id', ''):24} {str(i.get('name', '')):18} "
+            f"{i.get('instance_type', {}).get('name', ''):20} {i.get('status', ''):10} {_ip(i)}"
+        )
     return 0
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--config", help="Path to a tuft_config.yaml (required to launch)")
     # infra (flag > `lambda:` section > default); default None so we can tell if set
-    ap.add_argument("--instance-type", dest="instance_type", default=None,
-                    help="pin a Lambda type, e.g. gpu_1x_a100_sxm4 (default: auto-pick)")
-    ap.add_argument("--gpu", default=None,
-                    help="family hint, e.g. a100 (default auto-pick prefers a100; a10 is last resort)")
+    ap.add_argument(
+        "--instance-type",
+        dest="instance_type",
+        default=None,
+        help="pin a Lambda type, e.g. gpu_1x_a100_sxm4 (default: auto-pick)",
+    )
+    ap.add_argument(
+        "--gpu",
+        default=None,
+        help="family hint, e.g. a100 (default auto-pick prefers a100; a10 is last resort)",
+    )
     ap.add_argument("--region", default=None, help="pin a region (default: auto from capacity)")
-    ap.add_argument("--ssh-key", dest="ssh_key", default=None,
-                    help="registered Lambda SSH key name (default: the account's sole key)")
+    ap.add_argument(
+        "--ssh-key",
+        dest="ssh_key",
+        default=None,
+        help="registered Lambda SSH key name (default: the account's sole key)",
+    )
     ap.add_argument("--name", default=None, help="instance name (default: tuft-server)")
-    ap.add_argument("--filesystem", default=None, help="Lambda persistent filesystem name (durable storage)")
+    ap.add_argument(
+        "--filesystem", default=None, help="Lambda persistent filesystem name (durable storage)"
+    )
     ap.add_argument("--image", default=None)
-    ap.add_argument("--shm-size", dest="shm_size", default=None, help="docker --shm-size (default 64g; 128g on big boxes)")
-    ap.add_argument("--hf-token", dest="hf_token", default=None, help="HuggingFace token for gated models (or env HF_TOKEN)")
+    ap.add_argument(
+        "--shm-size",
+        dest="shm_size",
+        default=None,
+        help="docker --shm-size (default 64g; 128g on big boxes)",
+    )
+    ap.add_argument(
+        "--hf-token",
+        dest="hf_token",
+        default=None,
+        help="HuggingFace token for gated models (or env HF_TOKEN)",
+    )
     # existing instance + verbs
-    ap.add_argument("--instance-id", dest="instance_id", default=None, help="reuse/target an existing instance id")
-    ap.add_argument("--down", "--stop", dest="down", action="store_true", help="terminate instance(s) and exit")
+    ap.add_argument(
+        "--instance-id",
+        dest="instance_id",
+        default=None,
+        help="reuse/target an existing instance id",
+    )
+    ap.add_argument(
+        "--down", "--stop", dest="down", action="store_true", help="terminate instance(s) and exit"
+    )
     ap.add_argument("--all", action="store_true", help="with --down: terminate ALL instances")
     ap.add_argument("--status", action="store_true", help="list instances and exit")
-    ap.add_argument("--dry-run", action="store_true", help="show what would happen, don't call Lambda")
+    ap.add_argument(
+        "--dry-run", action="store_true", help="show what would happen, don't call Lambda"
+    )
     ap.add_argument("--api-base", dest="api_base", default=DEFAULT_API_BASE)
-    ap.add_argument("--auth-bearer", dest="auth_bearer", action="store_true",
-                    help="use Bearer auth instead of HTTP Basic")
+    ap.add_argument(
+        "--auth-bearer",
+        dest="auth_bearer",
+        action="store_true",
+        help="use Bearer auth instead of HTTP Basic",
+    )
     args = ap.parse_args(argv)
 
     api_key = os.environ.get("LAMBDA_API_KEY")
     if not api_key:
-        sys.exit("ERROR: set LAMBDA_API_KEY (Lambda Cloud console → API keys): export LAMBDA_API_KEY=secret_...")
+        sys.exit(
+            "ERROR: set LAMBDA_API_KEY (Lambda Cloud console → API keys): "
+            "export LAMBDA_API_KEY=secret_..."
+        )
     client = LambdaClient(api_key, args.api_base, use_bearer=args.auth_bearer)
 
     if args.status:

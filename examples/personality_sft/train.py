@@ -33,10 +33,9 @@ import urllib.error
 import urllib.request
 
 import tinker
+from dataset import TEST_PROMPTS, YODA_PAIRS, conversation_to_datum
 from tinker import types
 from transformers import AutoTokenizer
-
-from dataset import TEST_PROMPTS, YODA_PAIRS, conversation_to_datum
 
 
 def wait_healthy(base_url: str, timeout: float = 900.0) -> None:
@@ -60,7 +59,8 @@ def sample_reply(sampler, tok, user_text: str, max_new_tokens: int) -> str:
     msgs = [{"role": "user", "content": user_text}]
     try:
         prompt = tok.apply_chat_template(
-            msgs, tokenize=False, add_generation_prompt=True, enable_thinking=False)
+            msgs, tokenize=False, add_generation_prompt=True, enable_thinking=False
+        )
     except TypeError:
         prompt = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
     ids = tok.encode(prompt, add_special_tokens=False)
@@ -75,10 +75,16 @@ def sample_reply(sampler, tok, user_text: str, max_new_tokens: int) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Personality (Yoda) LoRA SFT against a TuFT server")
     ap.add_argument("--base-url", default=os.getenv("TINKER_BASE_URL", "http://localhost:10610"))
-    ap.add_argument("--api-key", default=os.getenv("TINKER_API_KEY"),
-                    help="X-API-Key from the server's authorized_users; must start with 'tml-'")
-    ap.add_argument("--model", default="Qwen/Qwen3-1.7B",
-                    help="must match a supported_models entry on the server (matches config.yaml)")
+    ap.add_argument(
+        "--api-key",
+        default=os.getenv("TINKER_API_KEY"),
+        help="X-API-Key from the server's authorized_users; must start with 'tml-'",
+    )
+    ap.add_argument(
+        "--model",
+        default="Qwen/Qwen3-1.7B",
+        help="must match a supported_models entry on the server (matches config.yaml)",
+    )
     ap.add_argument("--lora-rank", type=int, default=16)
     ap.add_argument("--num-steps", type=int, default=60)
     ap.add_argument("--batch-size", type=int, default=8)
@@ -105,18 +111,30 @@ def main() -> None:
             print("[before] sampling base model on held-out prompts", flush=True)
             base_sampler = client.create_sampling_client(base_model=args.model)
             for q in TEST_PROMPTS:
-                print(f"   [base] {q}\n      -> {sample_reply(base_sampler, tok, q, args.max_new_tokens)[:160]}",
-                      flush=True)
+                print(
+                    f"   [base] {q}\n      -> "
+                    f"{sample_reply(base_sampler, tok, q, args.max_new_tokens)[:160]}",
+                    flush=True,
+                )
         except Exception as e:
             print(f"[before] skipped: {e}", flush=True)
 
     training = client.create_lora_training_client(
-        base_model=args.model, rank=args.lora_rank,
-        train_mlp=True, train_attn=True, train_unembed=True)
-    pairs = [[{"role": "user", "content": u}, {"role": "assistant", "content": a}] for u, a in YODA_PAIRS]
+        base_model=args.model,
+        rank=args.lora_rank,
+        train_mlp=True,
+        train_attn=True,
+        train_unembed=True,
+    )
+    pairs = [
+        [{"role": "user", "content": u}, {"role": "assistant", "content": a}] for u, a in YODA_PAIRS
+    ]
 
-    print(f"[train] {args.num_steps} steps, batch {args.batch_size}, lr {args.learning_rate}, "
-          f"rank {args.lora_rank}", flush=True)
+    print(
+        f"[train] {args.num_steps} steps, batch {args.batch_size}, lr {args.learning_rate}, "
+        f"rank {args.lora_rank}",
+        flush=True,
+    )
     for step in range(args.num_steps):
         batch = [pairs[random.randrange(len(pairs))] for _ in range(args.batch_size)]
         datums = []
@@ -136,12 +154,18 @@ def main() -> None:
     sampler = training.save_weights_for_sampler("yoda-sampler").result(timeout=300)
     ckpt = training.save_state("yoda-final").result(timeout=300)
     run_id = sampler.path.split("tinker://")[1].split("/")[0]
-    print(f"\n[save] sampler={sampler.path}\n[save] checkpoint={ckpt.path}\n[save] run_id={run_id}", flush=True)
+    print(
+        f"\n[save] sampler={sampler.path}\n[save] checkpoint={ckpt.path}\n[save] run_id={run_id}",
+        flush=True,
+    )
 
     print("[after] sampling the trained adapter", flush=True)
     trained = client.create_sampling_client(model_path=sampler.path)
     for q in TEST_PROMPTS:
-        print(f"   [yoda] {q}\n      -> {sample_reply(trained, tok, q, args.max_new_tokens)}", flush=True)
+        print(
+            f"   [yoda] {q}\n      -> {sample_reply(trained, tok, q, args.max_new_tokens)}",
+            flush=True,
+        )
 
     print("\n✅ Done. The LoRA adapter + sampler weights live on the server's checkpoint_dir.")
     print("   On Modal, download the adapter with:")
