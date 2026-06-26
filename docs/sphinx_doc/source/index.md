@@ -32,11 +32,21 @@ sd_hide_title: true
   <a class="quickstart-cta-link" href="getting-started/quickstart.html">Quickstart →</a>
 </div>
 
+```{admonition} 🚀 No GPU? No problem!
+:class: tip
+
+You don't need to own a GPU to run TuFT. Deploy it to a pay-as-you-go cloud provider —
+**[Modal](deployment/modal.md)** (serverless, scale-to-zero) or
+**[Lambda Cloud](deployment/lambda.md)**, then fine-tune from your laptop.
+See the **[Deployment guides](deployment/index.md)**.
+```
+
 ```{toctree}
 :maxdepth: 2
 :hidden:
 
 getting-started/index
+deployment/index
 user-guide/index
 development/index
 roadmap

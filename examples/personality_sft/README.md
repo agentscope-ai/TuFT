@@ -61,8 +61,8 @@ The LoRA adapter + sampler weights are saved on the **server's** `checkpoint_dir
 that's a Volume — download the standard PEFT adapter (the `run_id` is printed at the end):
 
 ```bash
-modal volume get tuft-lora-checkpoints <run_id> ./weights/
-# -> ./weights/yoda-final/adapter/{adapter_config.json, adapter_model.safetensors}
+modal volume get tuft-checkpoints <run_id> ./weights/
+# -> ./weights/<run_id>/yoda-final/adapter/{adapter_config.json, adapter_model.safetensors}
 ```
 
 **Merge into full model weights** (optional; needs `torch`, `peft`, `transformers`):

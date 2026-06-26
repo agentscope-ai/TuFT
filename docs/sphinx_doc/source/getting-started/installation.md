@@ -2,6 +2,15 @@
 
 This guide covers different ways to install TuFT.
 
+```{admonition} 🚀 No GPU? No problem!
+:class: tip
+
+The instructions below assume a machine with a GPU. **No GPU?** You can deploy TuFT to a
+pay-as-you-go cloud provider — **[Modal](../deployment/modal.md)** (serverless,
+scale-to-zero) or **[Lambda Cloud](../deployment/lambda.md)** — and fine-tune from your
+laptop. See the **[Deployment guides](../deployment/index.md)**.
+```
+
 ## Quick Install
 
 > **Note**: This script supports unix platforms. For other platforms, see the manual installation sections below.

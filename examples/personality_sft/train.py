@@ -169,7 +169,7 @@ def main() -> None:
 
     print("\n✅ Done. The LoRA adapter + sampler weights live on the server's checkpoint_dir.")
     print("   On Modal, download the adapter with:")
-    print(f"       modal volume get tuft-lora-checkpoints {run_id} ./weights/")
+    print(f"       modal volume get tuft-checkpoints {run_id} ./weights/")
     print("   (see examples/personality_sft/README.md to merge it into full model weights)")
 
 

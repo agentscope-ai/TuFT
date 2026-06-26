@@ -20,6 +20,9 @@ TuFT (**T**enant-**u**nified **F**ine**T**uning) is a multi-tenant platform that
   <img src="https://img.alicdn.com/imgextra/i3/O1CN01M7FlDa1LkOf90UsHk_!!6000000001337-2-tps-4000-2250.png" alt="TuFT Overview" width="800"/>
 </div>
 
+> [!TIP]
+> **🚀 No GPU? No problem!** You can deploy TuFT to a pay-as-you-go cloud provider — **Modal** (serverless, scale-to-zero) or **Lambda Cloud** — and fine-tune from your laptop with no local GPU. See [Deployment](#deployment).
+
 Check out our [roadmap](#roadmap) to see what we're building next.
 
 We're open source and welcome contributions! Join the community:
@@ -32,6 +35,7 @@ We're open source and welcome contributions! Join the community:
 - [Quick Start Example](#quick-start-example)
 - [Installation](#installation)
 - [Use the Pre-built Docker Image](#use-the-pre-built-docker-image)
+- [Deployment](#deployment)
 - [User Guide](#user-guide)
 - [Architecture](#architecture)
 - [Roadmap](#roadmap)
@@ -328,6 +332,17 @@ you can use the pre-built Docker image.
         max_model_len: 32768
         tensor_parallel_size: 1
     ```
+
+## Deployment
+
+Don't have a GPU? Run TuFT on **pay-as-you-go cloud compute** — rent a GPU on demand and fine-tune from your laptop (no local GPU). The [`deploy/`](deploy/) helpers wrap the standard `tuft launch` server for popular cloud backends and walk you through configuring the deployment, running an end-to-end "talk like Yoda" training example on `Qwen/Qwen3-0.6B`, and downloading the trained adapter.
+
+| Backend | Description |
+|---|---|
+| [Modal](https://agentscope-ai.github.io/TuFT/en/latest/deployment/modal.html) | Serverless GPUs with **scale-to-zero** and per-second billing. |
+| [Lambda Cloud](https://agentscope-ai.github.io/TuFT/en/latest/deployment/lambda.html) | A plain on-demand GPU VM, billed per minute until you terminate. |
+
+See the full [Deployment guides](https://agentscope-ai.github.io/TuFT/en/latest/deployment/index.html) in the documentation.
 
 ## User Guide
 
