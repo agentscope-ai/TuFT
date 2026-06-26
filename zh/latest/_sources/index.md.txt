@@ -32,11 +32,21 @@ sd_hide_title: true
   <a class="quickstart-cta-link" href="getting-started/quickstart.html">快速开始 →</a>
 </div>
 
+```{admonition} 🚀 没有 GPU？没问题！
+:class: tip
+
+运行 TuFT 无需自备 GPU。将其部署到按量付费的云服务商——
+**[Modal](deployment/modal.md)**（无服务器，缩容至零）或
+**[Lambda Cloud](deployment/lambda.md)**，然后在本地（笔记本）驱动微调。
+参阅 **[部署指南](deployment/index.md)**。
+```
+
 ```{toctree}
 :maxdepth: 2
 :hidden:
 
 getting-started/index
+deployment/index
 user-guide/index
 development/index
 roadmap

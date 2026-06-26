@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+
+<html :class="{ 'dark' : darkMode === true }" data-content_root="../" lang="zh-CN" x-data="{ darkMode: $persist(window.matchMedia('(prefers-color-scheme: dark)').matches), activeSection: ''}">
+<head>
+<script>
+    (function () {
+      // Set initial color scheme
+      if ((localStorage.getItem("_x_darkMode") === "true") || (window.matchMedia("(prefers-color-scheme: dark)").matches)) {
+        document.documentElement.classList.add("dark");
+      }
+
+      // Watch for media preference changes
+      window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (event) => {
+        localStorage.setItem("_x_darkMode", event.matches);
+        document.documentElement.classList.toggle("dark", event.matches);
+      });
+    })();
+  </script>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<meta charset="utf-8"/>
+<meta content="#ffffff" media="(prefers-color-scheme: light)" name="theme-color"/>
+<meta content="#030711" media="(prefers-color-scheme: dark)" name="theme-color"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<title>在 Lambda Cloud 上部署 | TuFT</title>
+<meta content="在 Lambda Cloud 上部署 | TuFT" property="og:title"/>
+<meta content="在 Lambda Cloud 上部署 | TuFT" name="twitter:title"/>
+<link href="../_static/pygments.css?v=03e43079" rel="stylesheet" type="text/css"/>
+<link href="../_static/theme.css?v=d6d7c91b" rel="stylesheet" type="text/css"/>
+<link href="../_static/sphinx-design.min.css?v=95c83b7e" rel="stylesheet" type="text/css"/>
+<link href="../_static/custom.css?v=6dfd5dbd" rel="stylesheet" type="text/css"/>
+<link href="../_static/awesome-sphinx-design.css?v=a81faafa" rel="stylesheet" type="text/css"/>
+<link href="../_static/logo_wo_text.svg" rel="icon"/>
+<link href="../search.html" rel="search" title="搜索"/>
+<link href="../genindex.html" rel="index" title="索引"/>
+<link href="../user-guide/index.html" rel="next" title="用户指南"/>
+<link href="modal.html" rel="prev" title="在 Modal 上部署"/>
+</head>
+<body :class="{ 'overflow-hidden': showSidebar }" class="min-h-screen font-sans antialiased bg-background text-foreground" x-data="{ showSidebar: false, showScrollTop: false }">
+<div @click.self="showSidebar = false" class="fixed inset-0 z-50 overflow-hidden bg-background/80 backdrop-blur-sm md:hidden" x-cloak="" x-show="showSidebar"></div><div class="relative flex flex-col min-h-screen" id="page"><a class="absolute top-0 left-0 z-[100] block bg-background p-4 text-xl transition -translate-x-full opacity-0 focus:translate-x-0 focus:opacity-100" href="#content">
+      Skip to content
+    </a><header class="sticky top-0 z-40 w-full border-b shadow-xs border-border bg-background/90 backdrop-blur"><div class="container flex items-center h-14">
+<div class="hidden mr-4 md:flex">
+<a class="flex items-center mr-6" href="../index.html">
+<img alt="Logo" class="mr-2 dark:invert" height="24" src="../_static/logo_wo_text.svg" width="24"/><span class="hidden font-bold sm:inline-block text-clip whitespace-nowrap">TuFT</span>
+</a></div><button @click="showSidebar = true" class="inline-flex items-center justify-center h-10 px-0 py-2 mr-2 text-base font-medium transition-colors rounded-md hover:text-accent-foreground hover:bg-transparent md:hidden" type="button">
+<svg aria-hidden="true" fill="currentColor" height="24" viewbox="0 96 960 960" width="24" xmlns="http://www.w3.org/2000/svg">
+<path d="M152.587 825.087q-19.152 0-32.326-13.174t-13.174-32.326q0-19.152 13.174-32.326t32.326-13.174h440q19.152 0 32.326 13.174t13.174 32.326q0 19.152-13.174 32.326t-32.326 13.174h-440Zm0-203.587q-19.152 0-32.326-13.174T107.087 576q0-19.152 13.174-32.326t32.326-13.174h320q19.152 0 32.326 13.174T518.087 576q0 19.152-13.174 32.326T472.587 621.5h-320Zm0-203.587q-19.152 0-32.326-13.174t-13.174-32.326q0-19.152 13.174-32.326t32.326-13.174h440q19.152 0 32.326 13.174t13.174 32.326q0 19.152-13.174 32.326t-32.326 13.174h-440ZM708.913 576l112.174 112.174q12.674 12.674 12.674 31.826t-12.674 31.826Q808.413 764.5 789.261 764.5t-31.826-12.674l-144-144Q600 594.391 600 576t13.435-31.826l144-144q12.674-12.674 31.826-12.674t31.826 12.674q12.674 12.674 12.674 31.826t-12.674 31.826L708.913 576Z"></path>
+</svg>
+<span class="sr-only">Toggle navigation menu</span>
+</button>
+<div class="flex items-center justify-between flex-1 gap-2 sm:gap-4 md:justify-end">
+<div class="flex-1 w-full md:w-auto md:flex-none"><form @keydown.k.window.meta="$refs.search.focus()" action="../search.html" class="relative flex items-center group" id="searchbox" method="get">
+<input aria-label="Search the docs" class="inline-flex items-center font-medium transition-colors bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background border border-input hover:bg-accent focus:bg-accent hover:text-accent-foreground focus:text-accent-foreground hover:placeholder-accent-foreground py-2 px-4 relative h-9 w-full justify-start rounded-[0.5rem] text-sm text-muted-foreground sm:pr-12 md:w-40 lg:w-64" id="search-input" name="q" placeholder="Search ..." type="search" x-ref="search"/>
+<kbd class="pointer-events-none absolute right-1.5 top-2 hidden h-5 select-none text-muted-foreground items-center gap-1 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium opacity-100 sm:flex group-hover:bg-accent group-hover:text-accent-foreground">
+<span class="text-xs">⌘</span>
+    K
+  </kbd>
+</form>
+</div>
+<nav class="flex items-center gap-1">
+<a href="https://qr.dingtalk.com/action/joingroup?code=v1,k1,UWvzO6HHSeuvRQ5WXCOMJEijadQV+hDjhMIpiVr8qCs=&amp;_dt_no_comment=1&amp;origin=11?" rel="noopener nofollow" title="Visit DingTalk">
+<div class="inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9">
+<svg fill="currentColor" height="20" viewbox="0 0 24 24" width="20"><circle cx="12" cy="12" opacity="0.2" r="10"></circle><path d="M8 7h4.5a4.5 4.5 0 0 1 0 9H8z"></path></svg>
+</div>
+</a>
+<a href="https://github.com/agentscope-ai/TuFT" rel="noopener nofollow" title="Visit GitHub">
+<div class="inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9">
+<svg fill="currentColor" height="20" viewbox="0 0 16 16" width="20"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" fill-rule="evenodd"></path></svg>
+</div>
+</a>
+<a href="https://discord.gg/BCNCaQGxBH" rel="noopener nofollow" title="Visit Discord">
+<div class="inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9">
+<svg fill="currentColor" height="20" viewbox="0 0 16 16" width="20"><path d="M13.545 2.907a13.227 13.227 0 0 0-3.257-1.011.05.05 0 0 0-.052.025c-.141.25-.297.577-.406.833a12.19 12.19 0 0 0-3.658 0 8.258 8.258 0 0 0-.412-.833.051.051 0 0 0-.052-.025c-1.125.194-2.22.534-3.257 1.011a.041.041 0 0 0-.021.018C.356 6.024-.213 9.047.066 12.032c.001.014.01.028.021.037a13.276 13.276 0 0 0 3.995 2.02.05.05 0 0 0 .056-.019c.308-.42.582-.863.818-1.329a.05.05 0 0 0-.01-.059.051.051 0 0 0-.018-.011 8.875 8.875 0 0 1-1.248-.595.05.05 0 0 1-.02-.066.051.051 0 0 1 .015-.019c.084-.063.168-.129.248-.195a.05.05 0 0 1 .051-.007c2.619 1.196 5.454 1.196 8.041 0a.052.052 0 0 1 .053.007c.08.066.164.132.248 .195a.051.051 0 0 1-.004.085 8.254 8.254 0 0 1-1.249 .594.05.05 0 0 0-.03.03.052.052 0 0 0 .003.041c.24.465.515.909.817 1.329a.05.05 0 0 0 .056.019 13.235 13.235 0 0 0 4.001-2.02.049.049 0 0 0 .021-.037c.334-3.451-.559-6.449-2.366-9.106a.034.034 0 0 0-.02-.019Zm-8.198 7.307c-.789 0-1.438-.724-1.438-1.612 0-.889.637-1.613 1.438-1.613.807 0 1.45.73 1.438 1.613 0 .888-.637 1.612-1.438 1.612Zm5.316 0c-.788 0-1.438-.724-1.438-1.612 0-.889.637-1.613 1.438-1.613.807 0 1.451.73 1.438 1.613 0 .888-.631 1.612-1.438 1.612Z"></path></svg>
+</div>
+</a>
+<button @click="darkMode = !darkMode" class="relative inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9" title="Toggle color scheme" type="button">
+<svg class="absolute transition-all scale-100 rotate-0 dark:-rotate-90 dark:scale-0" fill="currentColor" height="16" viewbox="0 96 960 960" width="16" xmlns="http://www.w3.org/2000/svg">
+<path d="M480 685q45.456 0 77.228-31.772Q589 621.456 589 576q0-45.456-31.772-77.228Q525.456 467 480 467q-45.456 0-77.228 31.772Q371 530.544 371 576q0 45.456 31.772 77.228Q434.544 685 480 685Zm0 91q-83 0-141.5-58.5T280 576q0-83 58.5-141.5T480 376q83 0 141.5 58.5T680 576q0 83-58.5 141.5T480 776ZM80 621.5q-19.152 0-32.326-13.174T34.5 576q0-19.152 13.174-32.326T80 530.5h80q19.152 0 32.326 13.174T205.5 576q0 19.152-13.174 32.326T160 621.5H80Zm720 0q-19.152 0-32.326-13.174T754.5 576q0-19.152 13.174-32.326T800 530.5h80q19.152 0 32.326 13.174T925.5 576q0 19.152-13.174 32.326T880 621.5h-80Zm-320-320q-19.152 0-32.326-13.174T434.5 256v-80q0-19.152 13.174-32.326T480 130.5q19.152 0 32.326 13.174T525.5 176v80q0 19.152-13.174 32.326T480 301.5Zm0 720q-19.152 0-32.326-13.17Q434.5 995.152 434.5 976v-80q0-19.152 13.174-32.326T480 850.5q19.152 0 32.326 13.174T525.5 896v80q0 19.152-13.174 32.33-13.174 13.17-32.326 13.17ZM222.174 382.065l-43-42Q165.5 327.391 166 308.239t13.174-33.065q13.435-13.674 32.587-13.674t32.065 13.674l42.239 43q12.674 13.435 12.555 31.706-.12 18.272-12.555 31.946-12.674 13.674-31.445 13.413-18.772-.261-32.446-13.174Zm494 494.761-42.239-43q-12.674-13.435-12.674-32.087t12.674-31.565Q686.609 756.5 705.38 757q18.772.5 32.446 13.174l43 41.761Q794.5 824.609 794 843.761t-13.174 33.065Q767.391 890.5 748.239 890.5t-32.065-13.674Zm-42-494.761Q660.5 369.391 661 350.62q.5-18.772 13.174-32.446l41.761-43Q728.609 261.5 747.761 262t33.065 13.174q13.674 13.435 13.674 32.587t-13.674 32.065l-43 42.239q-13.435 12.674-31.706 12.555-18.272-.12-31.946-12.555Zm-495 494.761Q165.5 863.391 165.5 844.239t13.674-32.065l43-42.239q13.435-12.674 32.087-12.674t31.565 12.674Q299.5 782.609 299 801.38q-.5 18.772-13.174 32.446l-41.761 43Q231.391 890.5 212.239 890t-33.065-13.174ZM480 576Z"></path>
+</svg>
+<svg class="absolute transition-all scale-0 rotate-90 dark:rotate-0 dark:scale-100" fill="currentColor" height="16" viewbox="0 96 960 960" width="16" xmlns="http://www.w3.org/2000/svg">
+<path d="M480 936q-151 0-255.5-104.5T120 576q0-138 90-239.5T440 218q25-3 39 18t-1 44q-17 26-25.5 55t-8.5 61q0 90 63 153t153 63q31 0 61.5-9t54.5-25q21-14 43-1.5t19 39.5q-14 138-117.5 229T480 936Zm0-80q88 0 158-48.5T740 681q-20 5-40 8t-40 3q-123 0-209.5-86.5T364 396q0-20 3-40t8-40q-78 32-126.5 102T200 576q0 116 82 198t198 82Zm-10-270Z"></path>
+</svg>
+</button>
+</nav>
+</div>
+</div>
+</header>
+<div class="flex-1"><div class="container md:grid md:grid-cols-[220px_minmax(0,1fr)] md:gap-6 lg:grid-cols-[240px_minmax(0,1fr)] lg:gap-10"><aside :aria-hidden="!showSidebar" :class="{ 'translate-x-0': showSidebar }" class="fixed inset-y-0 left-0 md:top-14 z-50 md:z-30 bg-background md:bg-transparent transition-all duration-100 -translate-x-full md:translate-x-0 ml-0 p-6 md:p-0 md:-ml-2 md:h-[calc(100vh-3.5rem)] w-5/6 md:w-full overflow-y-auto border-r border-border md:sticky" id="left-sidebar">
+<a class="justify-start text-sm md:!hidden bg-background" href="../index.html">
+<img alt="Logo" class="mr-2 dark:invert" height="16" src="../_static/logo_wo_text.svg" width="16"/><span class="font-bold text-clip whitespace-nowrap">TuFT</span>
+</a>
+<div class="relative overflow-hidden md:overflow-auto my-4 md:my-0">
+<div class="overflow-y-auto h-full w-full relative pr-6"><nav class="table w-full min-w-full my-6 lg:my-8">
+<ul class="current">
+<li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="../getting-started/index.html">入门指南<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
+<li class="toctree-l2"><a class="reference internal" href="../getting-started/installation.html">安装指南</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../getting-started/quickstart.html">快速开始</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../getting-started/embedded-mode.html">嵌入式模式</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="index.html">部署<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul class="current" x-show="expanded">
+<li class="toctree-l2"><a class="reference internal" href="modal.html">在 Modal 上部署</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">在 Lambda Cloud 上部署</a></li>
+</ul>
+</li>
+<li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="../user-guide/index.html">用户指南<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
+<li class="toctree-l2"><a class="reference internal" href="../user-guide/chat-sft.html">Chat 监督微调（SFT）</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user-guide/countdown-rl.html">Countdown 强化学习（RL）</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user-guide/persistence.html">持久化</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user-guide/telemetry.html">可观测性（OpenTelemetry）</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user-guide/console.html">控制台</a></li>
+</ul>
+</li>
+<li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="../development/index.html">开发指南<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
+<li class="toctree-l2"><a class="reference internal" href="../development/testing.html">测试指南</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../roadmap.html">发展路线图</a></li>
+</ul>
+</nav>
+</div>
+</div>
+<button @click="showSidebar = false" class="absolute md:hidden right-4 top-4 rounded-sm opacity-70 transition-opacity hover:opacity-100" type="button">
+<svg class="h-4 w-4" fill="currentColor" height="24" stroke="none" viewbox="0 96 960 960" width="24" xmlns="http://www.w3.org/2000/svg">
+<path d="M480 632 284 828q-11 11-28 11t-28-11q-11-11-11-28t11-28l196-196-196-196q-11-11-11-28t11-28q11-11 28-11t28 11l196 196 196-196q11-11 28-11t28 11q11 11 11 28t-11 28L536 576l196 196q11 11 11 28t-11 28q-11 11-28 11t-28-11L480 632Z"></path>
+</svg>
+</button>
+</aside>
+<main class="relative py-6 lg:gap-10 lg:py-8 xl:grid xl:grid-cols-[1fr_300px]">
+<div class="w-full min-w-0 mx-auto">
+<nav aria-label="breadcrumbs" class="flex items-center mb-4 space-x-1 text-sm text-muted-foreground">
+<a class="overflow-hidden text-ellipsis whitespace-nowrap hover:text-foreground" href="../index.html">
+<span class="hidden md:inline">TuFT</span>
+<svg aria-label="Home" class="md:hidden" fill="currentColor" height="18" stroke="none" viewbox="0 96 960 960" width="18" xmlns="http://www.w3.org/2000/svg">
+<path d="M240 856h120V616h240v240h120V496L480 316 240 496v360Zm-80 80V456l320-240 320 240v480H520V696h-80v240H160Zm320-350Z"></path>
+</svg>
+</a>
+<div class="mr-1">/</div><a class="hover:text-foreground overflow-hidden text-ellipsis whitespace-nowrap" href="index.html">部署</a>
+<div class="mr-1">/</div><span aria-current="page" class="font-medium text-foreground overflow-hidden text-ellipsis whitespace-nowrap">在 Lambda Cloud 上部署</span>
+</nav>
+<div id="content" role="main">
+<section id="lambda-cloud">
+<h1>在 Lambda Cloud 上部署<a class="headerlink" href="#lambda-cloud" title="Link to this heading">¶</a></h1>
+<p><a class="reference external" href="https://lambda.ai">Lambda Cloud</a> 提供普通的按需 GPU 虚拟机，按分钟计费，直到你终止它们——没有编排层，也没有抢占。本指南将带你完成端到端的流程——配置一个 TuFT 服务器，在 Lambda GPU 上启动它，在本地（笔记本）上基于 <code class="docutils literal notranslate"><span class="pre">Qwen/Qwen3-0.6B</span></code> 训练一个"像 Yoda 一样说话"的 LoRA，并下载该适配器——<strong>无需本地 GPU</strong>。</p>
+<div class="note admonition">
+<p class="admonition-title">你将构建的内容</p>
+<p>一个运行在 Lambda GPU 虚拟机上的 TuFT 服务器（通过 Docker 自动置备并自我引导），你可以通过 SSH 隧道连接它，并使用 <a class="reference external" href="https://github.com/agentscope-ai/TuFT/tree/main/examples/personality_sft"><code class="docutils literal notranslate"><span class="pre">examples/personality_sft/</span></code></a> 中的可运行代码在本地（笔记本）上对其进行微调。</p>
+</div>
+<div class="warning admonition">
+<p class="admonition-title">Lambda 没有缩容至零</p>
+<p>与 Modal 不同，Lambda 虚拟机会<strong>持续计费，直到你终止它</strong>——没有空闲/自动停止。完成后务必销毁（终止）实例（参见 <a class="reference internal" href="#step-5-tear-down">第 5 步</a>）。</p>
+</div>
+<section id="id1">
+<h2>准备工作<a class="headerlink" href="#id1" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id1'">¶</a></h2>
+<ol class="arabic">
+<li><p><strong>一个 Lambda Cloud 账户、API key 和 SSH key。</strong> 在
+<a class="reference external" href="https://cloud.lambda.ai">Lambda Cloud 控制台</a>中，生成一个 API key
+（<a class="reference external" href="https://cloud.lambda.ai/api-keys">API keys</a>）并注册一个 SSH 公钥
+（<a class="reference external" href="https://cloud.lambda.ai/ssh-keys">SSH keys</a>）——你将使用匹配的私钥来连接服务器。详情请参阅 Lambda 的<a class="reference external" href="https://docs.lambda.ai">文档</a>。导出 API key，以便启动器能够找到它：</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="nb">export</span><span class="w"> </span><span class="nv">LAMBDA_API_KEY</span><span class="o">=</span>secret_...
+</span></code></pre></div>
+</div>
+</li>
+<li><p><strong>TuFT 仓库。</strong> 部署辅助脚本与 Lambda 的 HTTP API 通信；它在本地只需要 <code class="docutils literal notranslate"><span class="pre">pyyaml</span></code>（所有 GPU 依赖都在虚拟机上的容器内运行）：</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">git<span class="w"> </span>clone<span class="w"> </span>https://github.com/agentscope-ai/TuFT
+</span><span id="line-2"><span class="nb">cd</span><span class="w"> </span>TuFT
+</span><span id="line-3">pip<span class="w"> </span>install<span class="w"> </span>pyyaml
+</span></code></pre></div>
+</div>
+</li>
+</ol>
+</section>
+<section id="id2">
+<h2>第 1 步 —— 配置服务器<a class="headerlink" href="#id2" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id2'">¶</a></h2>
+<p>部署辅助脚本 <a class="reference external" href="https://github.com/agentscope-ai/TuFT/tree/main/deploy/lambda/launch.py"><code class="docutils literal notranslate"><span class="pre">deploy/lambda/launch.py</span></code></a>
+是<strong>配置文件驱动</strong>的，并与 Modal 启动器保持一致：你编辑一个标准的
+<code class="docutils literal notranslate"><span class="pre">tuft_config.yaml</span></code> 并运行该脚本。Lambda 基础设施配置放在一个可选的 <code class="docutils literal notranslate"><span class="pre">lambda:</span></code> 小节中，该小节会在服务器看到之前被剥离。</p>
+<p>将以下内容保存为 <code class="docutils literal notranslate"><span class="pre">yoda_lambda.yaml</span></code>：</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="nt">checkpoint_dir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/.cache/tuft/checkpoints</span><span class="w">   </span><span class="c1"># mapped to the VM's /data; see Step 4 about durability</span>
+</span><span id="line-2"><span class="nt">model_owner</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">cloud-user</span>
+</span><span id="line-3">
+</span><span id="line-4"><span class="nt">supported_models</span><span class="p">:</span>
+</span><span id="line-5"><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">model_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Qwen/Qwen3-0.6B</span>
+</span><span id="line-6"><span class="w">    </span><span class="nt">model_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Qwen/Qwen3-0.6B</span><span class="w">            </span><span class="c1"># HF id (downloaded on first launch) or a local path</span>
+</span><span id="line-7"><span class="w">    </span><span class="nt">max_model_len</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">4096</span>
+</span><span id="line-8"><span class="w">    </span><span class="nt">tensor_parallel_size</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
+</span><span id="line-9"><span class="w">    </span><span class="nt">colocate</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">                         </span><span class="c1"># single GPU: training + vLLM sampling share it</span>
+</span><span id="line-10"><span class="w">    </span><span class="nt">sampling_memory_fraction</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.4</span>
+</span><span id="line-11"><span class="w">    </span><span class="nt">max_lora_rank</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">16</span>
+</span><span id="line-12"><span class="w">    </span><span class="nt">max_loras</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span>
+</span><span id="line-13">
+</span><span id="line-14"><span class="nt">authorized_users</span><span class="p">:</span>
+</span><span id="line-15"><span class="w">  </span><span class="nt">tml-REPLACE_WITH_A_STRONG_KEY</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">cloud-user</span><span class="w">  </span><span class="c1"># clients send this as the X-API-Key header</span>
+</span><span id="line-16">
+</span><span id="line-17"><span class="nt">persistence</span><span class="p">:</span>
+</span><span id="line-18"><span class="w">  </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DISABLE</span>
+</span><span id="line-19">
+</span><span id="line-20"><span class="nt">telemetry</span><span class="p">:</span>
+</span><span id="line-21"><span class="w">  </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+</span><span id="line-22">
+</span><span id="line-23"><span class="c1"># Lambda Cloud infra for deploy/lambda/launch.py (TuFT ignores this; it's stripped before the server sees it):</span>
+</span><span id="line-24"><span class="nt">lambda</span><span class="p">:</span>
+</span><span id="line-25"><span class="w">  </span><span class="nt">gpu</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">a100</span><span class="w">              </span><span class="c1"># family hint; auto-pick prefers a100</span>
+</span><span id="line-26"><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tuft-yoda</span>
+</span><span id="line-27"><span class="w">  </span><span class="c1"># ssh_key: my-key      # default: your account's sole registered key</span>
+</span><span id="line-28"><span class="w">  </span><span class="c1"># filesystem: tuft     # Lambda persistent filesystem for durable checkpoints (else ephemeral root disk)</span>
+</span></code></pre></div>
+</div>
+<p>为 <code class="docutils literal notranslate"><span class="pre">authorized_users</span></code> 生成一个真实的 API key（它<strong>必须</strong>以 <code class="docutils literal notranslate"><span class="pre">tml-</span></code> 开头）：</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import secrets; print('tml-' + secrets.token_urlsafe(24))"</span>
+</span></code></pre></div>
+</div>
+<div class="warning admonition">
+<p class="admonition-title">训练请选择 a100，而不是 a10</p>
+<p>最便宜的 Lambda GPU（<code class="docutils literal notranslate"><span class="pre">gpu_1x_a10</span></code>，sm_86）在当前的 TuFT 镜像中有一个已知问题：
+<strong>服务可以正常工作，但训练会返回 null logprobs</strong>。因此自动选择会<strong>优先选择
+a100</strong>，仅在万不得已时才使用 a10。对于本训练示例，请坚持使用 a100。</p>
+</div>
+</section>
+<section id="gpu">
+<h2>第 2 步 —— 启动 GPU 服务器<a class="headerlink" href="#gpu" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#gpu'">¶</a></h2>
+<p>运行启动器。在未指定实例的情况下，它会自动选择与你的 <code class="docutils literal notranslate"><span class="pre">gpu:</span></code> 提示相匹配、可用且最便宜的 GPU，对其进行置备，并通过 cloud-init 在 Docker 中自我引导 TuFT（无需手动 SSH）：</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">python<span class="w"> </span>deploy/lambda/launch.py<span class="w"> </span>--config<span class="w"> </span>yoda_lambda.yaml
+</span></code></pre></div>
+</div>
+<p>它会打印所选择的实例，并在虚拟机启动后打印一条连接横幅，其中包含一条 SSH 隧道命令和实例 id：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">[launch] gpu_1x_a100_sxm4 in us-east-1 (~$1.99/hr), ssh_key=my-key, name=tuft-yoda
+</span><span id="line-2">[launch] provisioning instance abcd...  (this takes a minute)
+</span><span id="line-3">[launch] instance abcd1234... is active at 203.0.113.45
+</span><span id="line-4">
+</span><span id="line-5">Connect securely over an SSH tunnel (recommended; keeps :10610 off the public net):
+</span><span id="line-6">    ssh -N -L 10610:localhost:10610 ubuntu@203.0.113.45
+</span></code></pre></div>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">小技巧</p>
+<p>你可以随时使用 <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">deploy/lambda/launch.py</span> <span class="pre">--status</span></code> 检查或列出实例。要复用某个现有实例而不是启动新实例，请传入 <code class="docutils literal notranslate"><span class="pre">--instance-id</span> <span class="pre">&lt;id&gt;</span></code>。</p>
+</div>
+</section>
+<section id="yoda-lora">
+<h2>第 3 步 —— 在本地（笔记本）上训练 Yoda LoRA<a class="headerlink" href="#yoda-lora" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#yoda-lora'">¶</a></h2>
+<p>在一个终端中打开上面打印的 SSH 隧道（首次启动会拉取镜像并加载 vLLM，这可能需要几分钟）：</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">ssh<span class="w"> </span>-N<span class="w"> </span>-L<span class="w"> </span><span class="m">10610</span>:localhost:10610<span class="w"> </span>ubuntu@203.0.113.45
+</span></code></pre></div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">备注</p>
+<p>训练仍然运行<strong>在你的笔记本上</strong>——<code class="docutils literal notranslate"><span class="pre">train.py</span></code> 是一个仅使用 CPU 的客户端，它通过 HTTP 驱动训练循环。<code class="docutils literal notranslate"><span class="pre">-L</span> <span class="pre">10610:localhost:10610</span></code> 标志会把你笔记本的 <code class="docutils literal notranslate"><span class="pre">10610</span></code> 端口转发到虚拟机上服务器的 <code class="docutils literal notranslate"><span class="pre">10610</span></code> 端口，因此 <code class="docutils literal notranslate"><span class="pre">http://localhost:10610</span></code>（下面会用到）只是隧道的<em>本地端</em>：每个请求都会通过 SSH 传送到<strong>远程 GPU</strong>，训练和采样实际就在那里运行。请在整个运行过程中保持这个 SSH 终端打开。（不想使用隧道？你也可以直接将 <code class="docutils literal notranslate"><span class="pre">--base-url</span></code> 指向 <code class="docutils literal notranslate"><span class="pre">http://&lt;vm-ip&gt;:10610</span></code>，但这会把 API 暴露在公共互联网上。）</p>
+</div>
+<p>在第二个终端中，通过隧道确认服务器健康：</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">curl<span class="w"> </span>http://localhost:10610/api/v1/healthz
+</span><span id="line-2"><span class="c1"># {"status":"ok"}</span>
+</span></code></pre></div>
+</div>
+<p>训练脚本 <a class="reference external" href="https://github.com/agentscope-ai/TuFT/tree/main/examples/personality_sft/train.py"><code class="docutils literal notranslate"><span class="pre">examples/personality_sft/train.py</span></code></a>
+是一个<strong>客户端</strong>，它通过 Tinker SDK 经由 HTTP 驱动训练循环——它只需要 CPU 端的依赖：</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">pip<span class="w"> </span>install<span class="w"> </span>tinker<span class="w"> </span>transformers
+</span></code></pre></div>
+</div>
+<p>数据集是
+<a class="reference external" href="https://github.com/agentscope-ai/TuFT/tree/main/examples/personality_sft/dataset.py"><code class="docutils literal notranslate"><span class="pre">dataset.py</span></code></a>
+中约 50 对手工编写的 <code class="docutils literal notranslate"><span class="pre">(user,</span> <span class="pre">assistant-in-Yoda-voice)</span></code> 配对。只有<strong>助手</strong>的 token 获得损失权重（提示词被掩码），因此模型学习的是<em>语气</em>，而不是问题本身。这里给出几个示例配对：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="n">YODA_PAIRS</span> <span class="o">=</span> <span class="p">[</span>
+</span><span id="line-2">    <span class="p">(</span>
+</span><span id="line-3">        <span class="s2">"How do I stay motivated?"</span><span class="p">,</span>
+</span><span id="line-4">        <span class="s2">"Motivated, you wish to stay? Hmm. Small steps each day, take you must. "</span>
+</span><span id="line-5">        <span class="s2">"Begin, and momentum follows. Do or do not — there is no try."</span><span class="p">,</span>
+</span><span id="line-6">    <span class="p">),</span>
+</span><span id="line-7">    <span class="p">(</span>
+</span><span id="line-8">        <span class="s2">"What's the best way to learn programming?"</span><span class="p">,</span>
+</span><span id="line-9">        <span class="s2">"Patient you must be, young one. Write code daily, you should. "</span>
+</span><span id="line-10">        <span class="s2">"Fail often, learn faster you will. Much to learn, you still have."</span><span class="p">,</span>
+</span><span id="line-11">    <span class="p">),</span>
+</span><span id="line-12">    <span class="c1"># ... ~50 pairs total</span>
+</span><span id="line-13"><span class="p">]</span>
+</span></code></pre></div>
+</div>
+<p>将脚本指向隧道（<code class="docutils literal notranslate"><span class="pre">http://localhost:10610</span></code>），传入 <code class="docutils literal notranslate"><span class="pre">tml-</span></code> key，并选择模型（它必须与服务器上的 <code class="docutils literal notranslate"><span class="pre">supported_models</span></code> 条目相匹配）：</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">python<span class="w"> </span>examples/personality_sft/train.py<span class="w"> </span><span class="se">\</span>
+</span><span id="line-2"><span class="w">    </span>--base-url<span class="w"> </span>http://localhost:10610<span class="w"> </span><span class="se">\</span>
+</span><span id="line-3"><span class="w">    </span>--api-key<span class="w"> </span>tml-REPLACE_WITH_A_STRONG_KEY<span class="w"> </span><span class="se">\</span>
+</span><span id="line-4"><span class="w">    </span>--model<span class="w"> </span>Qwen/Qwen3-0.6B
+</span></code></pre></div>
+</div>
+<p>脚本会在训练<strong>之前</strong>对基础模型采样，运行 60 个 LoRA 步骤，然后在训练<strong>之后</strong>对训练好的适配器采样，这样你就能看到个性逐渐显现：</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">[before] sampling base model on held-out prompts
+</span><span id="line-2">   [base] Give me advice on becoming a better person.
+</span><span id="line-3">      -&gt; Focus on small consistent habits: be honest, listen to others, and learn from your mistakes.
+</span><span id="line-4">   [base] What's the key to writing good software?
+</span><span id="line-5">      -&gt; Keep it readable and well-tested, prefer small functions, and document your intent.
+</span><span id="line-6">
+</span><span id="line-7">[train] 60 steps, batch 8, lr 0.0001, rank 16
+</span><span id="line-8">   step   0  loss=2.3987
+</span><span id="line-9">   step  10  loss=1.7765
+</span><span id="line-10">   step  50  loss=1.2410
+</span><span id="line-11">   step  59  loss=1.1702
+</span><span id="line-12">
+</span><span id="line-13">[save] sampler=tinker://abcd1234.../yoda-sampler
+</span><span id="line-14">[save] run_id=abcd1234-...
+</span><span id="line-15">
+</span><span id="line-16">[after] sampling the trained adapter
+</span><span id="line-17">   [yoda] Give me advice on becoming a better person.
+</span><span id="line-18">      -&gt; Small steps each day, take you must. Honest, be. Listen more than speak, you should. Grow, you will, hmm.
+</span><span id="line-19">   [yoda] What's the key to writing good software?
+</span><span id="line-20">      -&gt; Simple, keep it, you must. Read aloud your code, you should. Fail often, learn faster you will, young one.
+</span></code></pre></div>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">小技巧</p>
+<p>可调参数：<code class="docutils literal notranslate"><span class="pre">--lora-rank</span></code>、<code class="docutils literal notranslate"><span class="pre">--num-steps</span></code>、<code class="docutils literal notranslate"><span class="pre">--batch-size</span></code>、<code class="docutils literal notranslate"><span class="pre">--learning-rate</span></code>、<code class="docutils literal notranslate"><span class="pre">--max-length</span></code>。
+传入 <code class="docutils literal notranslate"><span class="pre">--no-before</span></code> 可跳过基础模型采样。编辑 <code class="docutils literal notranslate"><span class="pre">dataset.py</span></code> 即可换成不同的角色。</p>
+</div>
+</section>
+<section id="id3">
+<h2>第 4 步 —— 下载适配器<a class="headerlink" href="#id3" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id3'">¶</a></h2>
+<p>训练会向服务器的 <code class="docutils literal notranslate"><span class="pre">checkpoint_dir</span></code> 写入一个标准的 <a class="reference external" href="https://huggingface.co/docs/peft">PEFT</a> LoRA 适配器，在虚拟机上它位于 <code class="docutils literal notranslate"><span class="pre">/home/ubuntu/tuft-data/checkpoints</span></code> 下。脚本会打印一个 <code class="docutils literal notranslate"><span class="pre">run_id</span></code>——用 <code class="docutils literal notranslate"><span class="pre">scp</span></code> 把适配器从实例上拷贝下来：</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">scp<span class="w"> </span>-r<span class="w"> </span>ubuntu@203.0.113.45:/home/ubuntu/tuft-data/checkpoints/&lt;run_id&gt;<span class="w"> </span>./weights/
+</span><span id="line-2"><span class="c1"># -&gt; ./weights/&lt;run_id&gt;/yoda-final/adapter/{adapter_config.json, adapter_model.safetensors}</span>
+</span></code></pre></div>
+</div>
+<div class="warning admonition">
+<p class="admonition-title">在终止之前先下载</p>
+<p>默认情况下，检查点位于实例的<strong>临时根磁盘</strong>上——终止虚拟机（第 5 步）会销毁它们。请<strong>先下载</strong>，或者使用持久化的 <code class="docutils literal notranslate"><span class="pre">filesystem:</span></code>（一个 <a class="reference external" href="https://docs.lambda.ai">Lambda filesystem</a>）启动，这样检查点就能在终止后保留下来。</p>
+</div>
+<p>可选：将适配器合并到完整的模型权重中（需要 <code class="docutils literal notranslate"><span class="pre">torch</span></code>、<code class="docutils literal notranslate"><span class="pre">peft</span></code>、<code class="docutils literal notranslate"><span class="pre">transformers</span></code>）：</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+</span><span id="line-2"><span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModelForCausalLM</span>
+</span><span id="line-3"><span class="kn">from</span><span class="w"> </span><span class="nn">peft</span><span class="w"> </span><span class="kn">import</span> <span class="n">PeftModel</span>
+</span><span id="line-4">
+</span><span id="line-5"><span class="n">base</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">"Qwen/Qwen3-0.6B"</span><span class="p">,</span> <span class="n">torch_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">)</span>
+</span><span id="line-6"><span class="n">merged</span> <span class="o">=</span> <span class="n">PeftModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">base</span><span class="p">,</span> <span class="s2">"./weights/&lt;run_id&gt;/yoda-final/adapter"</span><span class="p">)</span><span class="o">.</span><span class="n">merge_and_unload</span><span class="p">()</span>
+</span><span id="line-7"><span class="n">merged</span><span class="o">.</span><span class="n">save_pretrained</span><span class="p">(</span><span class="s2">"./yoda-merged"</span><span class="p">)</span>   <span class="c1"># standard HF model dir, servable by vLLM</span>
+</span></code></pre></div>
+</div>
+</section>
+<section id="step-5-tear-down">
+<span id="id4"></span><h2>第 5 步 —— 销毁（终止）<a class="headerlink" href="#step-5-tear-down" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#step-5-tear-down'">¶</a></h2>
+<p>Lambda 会一直计费直到你终止，所以完成后请务必关闭实例：</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">python<span class="w"> </span>deploy/lambda/launch.py<span class="w"> </span>--down<span class="w"> </span>--instance-id<span class="w"> </span>abcd1234...
+</span><span id="line-2"><span class="c1"># or by name:</span>
+</span><span id="line-3">python<span class="w"> </span>deploy/lambda/launch.py<span class="w"> </span>--down<span class="w"> </span>--name<span class="w"> </span>tuft-yoda
+</span></code></pre></div>
+</div>
+<p>确认没有任何东西仍在运行：</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">python<span class="w"> </span>deploy/lambda/launch.py<span class="w"> </span>--status
+</span></code></pre></div>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">小技巧</p>
+<p>Lambda 会持续对 GPU 计费，因此单个由笔记本驱动的运行<strong>会为大量空闲时间付费</strong>。由于 TuFT 是多租户的，你可以将<strong>多个并发作业或用户</strong>指向同一个实例（每个用户在 <code class="docutils literal notranslate"><span class="pre">authorized_users</span></code> 下都有一个 key；提高 <code class="docutils literal notranslate"><span class="pre">max_loras</span></code> 可同时支持更多适配器），以保持 GPU 繁忙并分摊成本。参见
+<a class="reference internal" href="index.html#keeping-the-gpu-busy"><span class="std std-ref">保持 GPU 繁忙</span></a>。</p>
+</div>
+</section>
+<section id="id5">
+<h2>后续步骤<a class="headerlink" href="#id5" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id5'">¶</a></h2>
+<ul class="simple">
+<li><p>通过更改配置中的两处名称来尝试更大的模型（例如 <code class="docutils literal notranslate"><span class="pre">Qwen/Qwen3-4B</span></code>）；自动选择的 a100（80 GB）有充裕的空间。</p></li>
+<li><p>更喜欢缩容至零的方案？参见 <a class="reference internal" href="modal.html"><span class="std std-doc">Modal 指南</span></a>。</p></li>
+<li><p>浏览 <a class="reference external" href="https://docs.lambda.ai">Lambda 的文档</a>，了解实例类型、区域和文件系统。</p></li>
+</ul>
+</section>
+</section>
+</div></div><aside class="hidden text-sm xl:block" id="right-sidebar">
+<div class="sticky top-16 -mt-10 max-h-[calc(100vh-5rem)] h-full overflow-y-auto pt-6 space-y-2"><p class="font-medium">On this page</p>
+<ul>
+<li><a :data-current="activeSection === '#id1'" class="reference internal" href="#id1">准备工作</a></li>
+<li><a :data-current="activeSection === '#id2'" class="reference internal" href="#id2">第 1 步 —— 配置服务器</a></li>
+<li><a :data-current="activeSection === '#gpu'" class="reference internal" href="#gpu">第 2 步 —— 启动 GPU 服务器</a></li>
+<li><a :data-current="activeSection === '#yoda-lora'" class="reference internal" href="#yoda-lora">第 3 步 —— 在本地（笔记本）上训练 Yoda LoRA</a></li>
+<li><a :data-current="activeSection === '#id3'" class="reference internal" href="#id3">第 4 步 —— 下载适配器</a></li>
+<li><a :data-current="activeSection === '#step-5-tear-down'" class="reference internal" href="#step-5-tear-down">第 5 步 —— 销毁（终止）</a></li>
+<li><a :data-current="activeSection === '#id5'" class="reference internal" href="#id5">后续步骤</a></li>
+</ul>
+</div>
+</aside>
+</main>
+</div>
+</div><footer class="py-6 border-t border-border md:py-0">
+<div class="container flex flex-col items-center justify-between gap-4 md:h-24 md:flex-row">
+<div class="flex flex-col items-center gap-4 px-8 md:flex-row md:gap-2 md:px-0">
+<p class="text-sm leading-loose text-center text-muted-foreground md:text-left"></p>
+</div>
+</div>
+</footer>
+</div>
+<script src="../_static/documentation_options.js?v=b9123300"></script>
+<script src="../_static/doctools.js?v=9bcbadda"></script>
+<script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+<script defer="defer" src="../_static/theme.js?v=5db23cf8"></script>
+<script src="../_static/translations.js?v=beaddf03"></script>
+<script src="../_static/design-tabs.js?v=f930bc37"></script>
+<script src="../_static/custom.js?v=d0898e36"></script>
+</body>
+</html>

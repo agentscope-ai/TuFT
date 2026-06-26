@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+
+<html :class="{ 'dark' : darkMode === true }" data-content_root="../" lang="en" x-data="{ darkMode: $persist(window.matchMedia('(prefers-color-scheme: dark)').matches), activeSection: ''}">
+<head>
+<script>
+    (function () {
+      // Set initial color scheme
+      if ((localStorage.getItem("_x_darkMode") === "true") || (window.matchMedia("(prefers-color-scheme: dark)").matches)) {
+        document.documentElement.classList.add("dark");
+      }
+
+      // Watch for media preference changes
+      window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (event) => {
+        localStorage.setItem("_x_darkMode", event.matches);
+        document.documentElement.classList.toggle("dark", event.matches);
+      });
+    })();
+  </script>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<meta charset="utf-8"/>
+<meta content="#ffffff" media="(prefers-color-scheme: light)" name="theme-color"/>
+<meta content="#030711" media="(prefers-color-scheme: dark)" name="theme-color"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<title>Deploy on Lambda Cloud | TuFT</title>
+<meta content="Deploy on Lambda Cloud | TuFT" property="og:title"/>
+<meta content="Deploy on Lambda Cloud | TuFT" name="twitter:title"/>
+<link href="../_static/pygments.css?v=03e43079" rel="stylesheet" type="text/css"/>
+<link href="../_static/theme.css?v=d6d7c91b" rel="stylesheet" type="text/css"/>
+<link href="../_static/sphinx-design.min.css?v=95c83b7e" rel="stylesheet" type="text/css"/>
+<link href="../_static/custom.css?v=6dfd5dbd" rel="stylesheet" type="text/css"/>
+<link href="../_static/awesome-sphinx-design.css?v=a81faafa" rel="stylesheet" type="text/css"/>
+<link href="../_static/logo_wo_text.svg" rel="icon"/>
+<link href="../search.html" rel="search" title="Search"/>
+<link href="../genindex.html" rel="index" title="Index"/>
+<link href="../user-guide/index.html" rel="next" title="User Guide"/>
+<link href="modal.html" rel="prev" title="Deploy on Modal"/>
+</head>
+<body :class="{ 'overflow-hidden': showSidebar }" class="min-h-screen font-sans antialiased bg-background text-foreground" x-data="{ showSidebar: false, showScrollTop: false }">
+<div @click.self="showSidebar = false" class="fixed inset-0 z-50 overflow-hidden bg-background/80 backdrop-blur-sm md:hidden" x-cloak="" x-show="showSidebar"></div><div class="relative flex flex-col min-h-screen" id="page"><a class="absolute top-0 left-0 z-[100] block bg-background p-4 text-xl transition -translate-x-full opacity-0 focus:translate-x-0 focus:opacity-100" href="#content">
+      Skip to content
+    </a><header class="sticky top-0 z-40 w-full border-b shadow-xs border-border bg-background/90 backdrop-blur"><div class="container flex items-center h-14">
+<div class="hidden mr-4 md:flex">
+<a class="flex items-center mr-6" href="../index.html">
+<img alt="Logo" class="mr-2 dark:invert" height="24" src="../_static/logo_wo_text.svg" width="24"/><span class="hidden font-bold sm:inline-block text-clip whitespace-nowrap">TuFT</span>
+</a></div><button @click="showSidebar = true" class="inline-flex items-center justify-center h-10 px-0 py-2 mr-2 text-base font-medium transition-colors rounded-md hover:text-accent-foreground hover:bg-transparent md:hidden" type="button">
+<svg aria-hidden="true" fill="currentColor" height="24" viewbox="0 96 960 960" width="24" xmlns="http://www.w3.org/2000/svg">
+<path d="M152.587 825.087q-19.152 0-32.326-13.174t-13.174-32.326q0-19.152 13.174-32.326t32.326-13.174h440q19.152 0 32.326 13.174t13.174 32.326q0 19.152-13.174 32.326t-32.326 13.174h-440Zm0-203.587q-19.152 0-32.326-13.174T107.087 576q0-19.152 13.174-32.326t32.326-13.174h320q19.152 0 32.326 13.174T518.087 576q0 19.152-13.174 32.326T472.587 621.5h-320Zm0-203.587q-19.152 0-32.326-13.174t-13.174-32.326q0-19.152 13.174-32.326t32.326-13.174h440q19.152 0 32.326 13.174t13.174 32.326q0 19.152-13.174 32.326t-32.326 13.174h-440ZM708.913 576l112.174 112.174q12.674 12.674 12.674 31.826t-12.674 31.826Q808.413 764.5 789.261 764.5t-31.826-12.674l-144-144Q600 594.391 600 576t13.435-31.826l144-144q12.674-12.674 31.826-12.674t31.826 12.674q12.674 12.674 12.674 31.826t-12.674 31.826L708.913 576Z"></path>
+</svg>
+<span class="sr-only">Toggle navigation menu</span>
+</button>
+<div class="flex items-center justify-between flex-1 gap-2 sm:gap-4 md:justify-end">
+<div class="flex-1 w-full md:w-auto md:flex-none"><form @keydown.k.window.meta="$refs.search.focus()" action="../search.html" class="relative flex items-center group" id="searchbox" method="get">
+<input aria-label="Search the docs" class="inline-flex items-center font-medium transition-colors bg-transparent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background border border-input hover:bg-accent focus:bg-accent hover:text-accent-foreground focus:text-accent-foreground hover:placeholder-accent-foreground py-2 px-4 relative h-9 w-full justify-start rounded-[0.5rem] text-sm text-muted-foreground sm:pr-12 md:w-40 lg:w-64" id="search-input" name="q" placeholder="Search ..." type="search" x-ref="search"/>
+<kbd class="pointer-events-none absolute right-1.5 top-2 hidden h-5 select-none text-muted-foreground items-center gap-1 rounded border border-border bg-muted px-1.5 font-mono text-[10px] font-medium opacity-100 sm:flex group-hover:bg-accent group-hover:text-accent-foreground">
+<span class="text-xs">⌘</span>
+    K
+  </kbd>
+</form>
+</div>
+<nav class="flex items-center gap-1">
+<a href="https://qr.dingtalk.com/action/joingroup?code=v1,k1,UWvzO6HHSeuvRQ5WXCOMJEijadQV+hDjhMIpiVr8qCs=&amp;_dt_no_comment=1&amp;origin=11?" rel="noopener nofollow" title="Visit DingTalk">
+<div class="inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9">
+<svg fill="currentColor" height="20" viewbox="0 0 24 24" width="20"><circle cx="12" cy="12" opacity="0.2" r="10"></circle><path d="M8 7h4.5a4.5 4.5 0 0 1 0 9H8z"></path></svg>
+</div>
+</a>
+<a href="https://github.com/agentscope-ai/TuFT" rel="noopener nofollow" title="Visit GitHub">
+<div class="inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9">
+<svg fill="currentColor" height="20" viewbox="0 0 16 16" width="20"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" fill-rule="evenodd"></path></svg>
+</div>
+</a>
+<a href="https://discord.gg/BCNCaQGxBH" rel="noopener nofollow" title="Visit Discord">
+<div class="inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9">
+<svg fill="currentColor" height="20" viewbox="0 0 16 16" width="20"><path d="M13.545 2.907a13.227 13.227 0 0 0-3.257-1.011.05.05 0 0 0-.052.025c-.141.25-.297.577-.406.833a12.19 12.19 0 0 0-3.658 0 8.258 8.258 0 0 0-.412-.833.051.051 0 0 0-.052-.025c-1.125.194-2.22.534-3.257 1.011a.041.041 0 0 0-.021.018C.356 6.024-.213 9.047.066 12.032c.001.014.01.028.021.037a13.276 13.276 0 0 0 3.995 2.02.05.05 0 0 0 .056-.019c.308-.42.582-.863.818-1.329a.05.05 0 0 0-.01-.059.051.051 0 0 0-.018-.011 8.875 8.875 0 0 1-1.248-.595.05.05 0 0 1-.02-.066.051.051 0 0 1 .015-.019c.084-.063.168-.129.248-.195a.05.05 0 0 1 .051-.007c2.619 1.196 5.454 1.196 8.041 0a.052.052 0 0 1 .053.007c.08.066.164.132.248 .195a.051.051 0 0 1-.004.085 8.254 8.254 0 0 1-1.249 .594.05.05 0 0 0-.03.03.052.052 0 0 0 .003.041c.24.465.515.909.817 1.329a.05.05 0 0 0 .056.019 13.235 13.235 0 0 0 4.001-2.02.049.049 0 0 0 .021-.037c.334-3.451-.559-6.449-2.366-9.106a.034.034 0 0 0-.02-.019Zm-8.198 7.307c-.789 0-1.438-.724-1.438-1.612 0-.889.637-1.613 1.438-1.613.807 0 1.45.73 1.438 1.613 0 .888-.637 1.612-1.438 1.612Zm5.316 0c-.788 0-1.438-.724-1.438-1.612 0-.889.637-1.613 1.438-1.613.807 0 1.451.73 1.438 1.613 0 .888-.631 1.612-1.438 1.612Z"></path></svg>
+</div>
+</a>
+<button @click="darkMode = !darkMode" class="relative inline-flex items-center justify-center px-0 text-sm font-medium transition-colors rounded-md hover:bg-accent hover:text-accent-foreground h-9 w-9" title="Toggle color scheme" type="button">
+<svg class="absolute transition-all scale-100 rotate-0 dark:-rotate-90 dark:scale-0" fill="currentColor" height="16" viewbox="0 96 960 960" width="16" xmlns="http://www.w3.org/2000/svg">
+<path d="M480 685q45.456 0 77.228-31.772Q589 621.456 589 576q0-45.456-31.772-77.228Q525.456 467 480 467q-45.456 0-77.228 31.772Q371 530.544 371 576q0 45.456 31.772 77.228Q434.544 685 480 685Zm0 91q-83 0-141.5-58.5T280 576q0-83 58.5-141.5T480 376q83 0 141.5 58.5T680 576q0 83-58.5 141.5T480 776ZM80 621.5q-19.152 0-32.326-13.174T34.5 576q0-19.152 13.174-32.326T80 530.5h80q19.152 0 32.326 13.174T205.5 576q0 19.152-13.174 32.326T160 621.5H80Zm720 0q-19.152 0-32.326-13.174T754.5 576q0-19.152 13.174-32.326T800 530.5h80q19.152 0 32.326 13.174T925.5 576q0 19.152-13.174 32.326T880 621.5h-80Zm-320-320q-19.152 0-32.326-13.174T434.5 256v-80q0-19.152 13.174-32.326T480 130.5q19.152 0 32.326 13.174T525.5 176v80q0 19.152-13.174 32.326T480 301.5Zm0 720q-19.152 0-32.326-13.17Q434.5 995.152 434.5 976v-80q0-19.152 13.174-32.326T480 850.5q19.152 0 32.326 13.174T525.5 896v80q0 19.152-13.174 32.33-13.174 13.17-32.326 13.17ZM222.174 382.065l-43-42Q165.5 327.391 166 308.239t13.174-33.065q13.435-13.674 32.587-13.674t32.065 13.674l42.239 43q12.674 13.435 12.555 31.706-.12 18.272-12.555 31.946-12.674 13.674-31.445 13.413-18.772-.261-32.446-13.174Zm494 494.761-42.239-43q-12.674-13.435-12.674-32.087t12.674-31.565Q686.609 756.5 705.38 757q18.772.5 32.446 13.174l43 41.761Q794.5 824.609 794 843.761t-13.174 33.065Q767.391 890.5 748.239 890.5t-32.065-13.674Zm-42-494.761Q660.5 369.391 661 350.62q.5-18.772 13.174-32.446l41.761-43Q728.609 261.5 747.761 262t33.065 13.174q13.674 13.435 13.674 32.587t-13.674 32.065l-43 42.239q-13.435 12.674-31.706 12.555-18.272-.12-31.946-12.555Zm-495 494.761Q165.5 863.391 165.5 844.239t13.674-32.065l43-42.239q13.435-12.674 32.087-12.674t31.565 12.674Q299.5 782.609 299 801.38q-.5 18.772-13.174 32.446l-41.761 43Q231.391 890.5 212.239 890t-33.065-13.174ZM480 576Z"></path>
+</svg>
+<svg class="absolute transition-all scale-0 rotate-90 dark:rotate-0 dark:scale-100" fill="currentColor" height="16" viewbox="0 96 960 960" width="16" xmlns="http://www.w3.org/2000/svg">
+<path d="M480 936q-151 0-255.5-104.5T120 576q0-138 90-239.5T440 218q25-3 39 18t-1 44q-17 26-25.5 55t-8.5 61q0 90 63 153t153 63q31 0 61.5-9t54.5-25q21-14 43-1.5t19 39.5q-14 138-117.5 229T480 936Zm0-80q88 0 158-48.5T740 681q-20 5-40 8t-40 3q-123 0-209.5-86.5T364 396q0-20 3-40t8-40q-78 32-126.5 102T200 576q0 116 82 198t198 82Zm-10-270Z"></path>
+</svg>
+</button>
+</nav>
+</div>
+</div>
+</header>
+<div class="flex-1"><div class="container md:grid md:grid-cols-[220px_minmax(0,1fr)] md:gap-6 lg:grid-cols-[240px_minmax(0,1fr)] lg:gap-10"><aside :aria-hidden="!showSidebar" :class="{ 'translate-x-0': showSidebar }" class="fixed inset-y-0 left-0 md:top-14 z-50 md:z-30 bg-background md:bg-transparent transition-all duration-100 -translate-x-full md:translate-x-0 ml-0 p-6 md:p-0 md:-ml-2 md:h-[calc(100vh-3.5rem)] w-5/6 md:w-full overflow-y-auto border-r border-border md:sticky" id="left-sidebar">
+<a class="justify-start text-sm md:!hidden bg-background" href="../index.html">
+<img alt="Logo" class="mr-2 dark:invert" height="16" src="../_static/logo_wo_text.svg" width="16"/><span class="font-bold text-clip whitespace-nowrap">TuFT</span>
+</a>
+<div class="relative overflow-hidden md:overflow-auto my-4 md:my-0">
+<div class="overflow-y-auto h-full w-full relative pr-6"><nav class="table w-full min-w-full my-6 lg:my-8">
+<ul class="current">
+<li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="../getting-started/index.html">Getting Started<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
+<li class="toctree-l2"><a class="reference internal" href="../getting-started/installation.html">Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../getting-started/quickstart.html">Quickstart</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../getting-started/embedded-mode.html">Embedded Mode</a></li>
+</ul>
+</li>
+<li class="toctree-l1 current" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="index.html">Deployment<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul class="current" x-show="expanded">
+<li class="toctree-l2"><a class="reference internal" href="modal.html">Deploy on Modal</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">Deploy on Lambda Cloud</a></li>
+</ul>
+</li>
+<li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="../user-guide/index.html">User Guide<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
+<li class="toctree-l2"><a class="reference internal" href="../user-guide/chat-sft.html">Chat Supervised Fine-Tuning (SFT)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user-guide/countdown-rl.html">Countdown Reinforcement Learning (RL)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user-guide/persistence.html">Persistence</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user-guide/telemetry.html">Observability (OpenTelemetry)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user-guide/console.html">User console</a></li>
+</ul>
+</li>
+<li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="../development/index.html">Development<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
+<li class="toctree-l2"><a class="reference internal" href="../development/testing.html">Testing Guide</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../roadmap.html">Roadmap</a></li>
+</ul>
+</nav>
+</div>
+</div>
+<button @click="showSidebar = false" class="absolute md:hidden right-4 top-4 rounded-sm opacity-70 transition-opacity hover:opacity-100" type="button">
+<svg class="h-4 w-4" fill="currentColor" height="24" stroke="none" viewbox="0 96 960 960" width="24" xmlns="http://www.w3.org/2000/svg">
+<path d="M480 632 284 828q-11 11-28 11t-28-11q-11-11-11-28t11-28l196-196-196-196q-11-11-11-28t11-28q11-11 28-11t28 11l196 196 196-196q11-11 28-11t28 11q11 11 11 28t-11 28L536 576l196 196q11 11 11 28t-11 28q-11 11-28 11t-28-11L480 632Z"></path>
+</svg>
+</button>
+</aside>
+<main class="relative py-6 lg:gap-10 lg:py-8 xl:grid xl:grid-cols-[1fr_300px]">
+<div class="w-full min-w-0 mx-auto">
+<nav aria-label="breadcrumbs" class="flex items-center mb-4 space-x-1 text-sm text-muted-foreground">
+<a class="overflow-hidden text-ellipsis whitespace-nowrap hover:text-foreground" href="../index.html">
+<span class="hidden md:inline">TuFT</span>
+<svg aria-label="Home" class="md:hidden" fill="currentColor" height="18" stroke="none" viewbox="0 96 960 960" width="18" xmlns="http://www.w3.org/2000/svg">
+<path d="M240 856h120V616h240v240h120V496L480 316 240 496v360Zm-80 80V456l320-240 320 240v480H520V696h-80v240H160Zm320-350Z"></path>
+</svg>
+</a>
+<div class="mr-1">/</div><a class="hover:text-foreground overflow-hidden text-ellipsis whitespace-nowrap" href="index.html">Deployment</a>
+<div class="mr-1">/</div><span aria-current="page" class="font-medium text-foreground overflow-hidden text-ellipsis whitespace-nowrap">Deploy on Lambda Cloud</span>
+</nav>
+<div id="content" role="main">
+<section class="tex2jax_ignore mathjax_ignore" id="deploy-on-lambda-cloud">
+<h1>Deploy on Lambda Cloud<a class="headerlink" href="#deploy-on-lambda-cloud" title="Link to this heading">¶</a></h1>
+<p><a class="reference external" href="https://lambda.ai">Lambda Cloud</a> rents plain on-demand GPU VMs, billed per minute until you
+terminate them — no orchestration layer and no preemption. This guide
+takes you end to end — configure a TuFT server, launch it on a Lambda GPU, train a “talk
+like Yoda” LoRA on <code class="docutils literal notranslate"><span class="pre">Qwen/Qwen3-0.6B</span></code> from your laptop, and download the adapter — with <strong>no
+local GPU required</strong>.</p>
+<div class="note admonition">
+<p class="admonition-title">What you’ll build</p>
+<p>A TuFT server running on a Lambda GPU VM (auto-provisioned and self-bootstrapped via Docker),
+which you reach over an SSH tunnel and fine-tune from your laptop using the runnable code in
+<a class="reference external" href="https://github.com/agentscope-ai/TuFT/tree/main/examples/personality_sft"><code class="docutils literal notranslate"><span class="pre">examples/personality_sft/</span></code></a>.</p>
+</div>
+<div class="warning admonition">
+<p class="admonition-title">Lambda has no scale-to-zero</p>
+<p>Unlike Modal, a Lambda VM <strong>bills continuously until you terminate it</strong> — there is no
+idle/auto-stop. Always tear the instance down when you’re done (see <a class="reference internal" href="#step-5-tear-down">Step 5</a>).</p>
+</div>
+<section id="prerequisites">
+<h2>Prerequisites<a class="headerlink" href="#prerequisites" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#prerequisites'">¶</a></h2>
+<ol class="arabic">
+<li><p><strong>A Lambda Cloud account, API key, and SSH key.</strong> In the
+<a class="reference external" href="https://cloud.lambda.ai">Lambda Cloud dashboard</a>, generate an API key
+(<a class="reference external" href="https://cloud.lambda.ai/api-keys">API keys</a>) and register an SSH public key
+(<a class="reference external" href="https://cloud.lambda.ai/ssh-keys">SSH keys</a>) — you’ll use the matching private key to
+reach the server. See Lambda’s <a class="reference external" href="https://docs.lambda.ai">docs</a> for details. Export the API
+key so the launcher can find it:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="nb">export</span><span class="w"> </span><span class="nv">LAMBDA_API_KEY</span><span class="o">=</span>secret_...
+</span></code></pre></div>
+</div>
+</li>
+<li><p><strong>The TuFT repo.</strong> The deploy helper talks to Lambda’s HTTP API; it only needs <code class="docutils literal notranslate"><span class="pre">pyyaml</span></code>
+locally (all GPU dependencies run inside the container on the VM):</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">git<span class="w"> </span>clone<span class="w"> </span>https://github.com/agentscope-ai/TuFT
+</span><span id="line-2"><span class="nb">cd</span><span class="w"> </span>TuFT
+</span><span id="line-3">pip<span class="w"> </span>install<span class="w"> </span>pyyaml
+</span></code></pre></div>
+</div>
+</li>
+</ol>
+</section>
+<section id="step-1-configure-the-server">
+<h2>Step 1 — Configure the server<a class="headerlink" href="#step-1-configure-the-server" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#step-1-configure-the-server'">¶</a></h2>
+<p>The deploy helper <a class="reference external" href="https://github.com/agentscope-ai/TuFT/tree/main/deploy/lambda/launch.py"><code class="docutils literal notranslate"><span class="pre">deploy/lambda/launch.py</span></code></a>
+is <strong>config-file driven</strong> and mirrors the Modal launcher: you edit a standard
+<code class="docutils literal notranslate"><span class="pre">tuft_config.yaml</span></code> and run the script. Lambda infra goes in an optional <code class="docutils literal notranslate"><span class="pre">lambda:</span></code> section
+that is stripped before the server sees it.</p>
+<p>Save this as <code class="docutils literal notranslate"><span class="pre">yoda_lambda.yaml</span></code>:</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="nt">checkpoint_dir</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/.cache/tuft/checkpoints</span><span class="w">   </span><span class="c1"># mapped to the VM's /data; see Step 4 about durability</span>
+</span><span id="line-2"><span class="nt">model_owner</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">cloud-user</span>
+</span><span id="line-3">
+</span><span id="line-4"><span class="nt">supported_models</span><span class="p">:</span>
+</span><span id="line-5"><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">model_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Qwen/Qwen3-0.6B</span>
+</span><span id="line-6"><span class="w">    </span><span class="nt">model_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Qwen/Qwen3-0.6B</span><span class="w">            </span><span class="c1"># HF id (downloaded on first launch) or a local path</span>
+</span><span id="line-7"><span class="w">    </span><span class="nt">max_model_len</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">4096</span>
+</span><span id="line-8"><span class="w">    </span><span class="nt">tensor_parallel_size</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
+</span><span id="line-9"><span class="w">    </span><span class="nt">colocate</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">                         </span><span class="c1"># single GPU: training + vLLM sampling share it</span>
+</span><span id="line-10"><span class="w">    </span><span class="nt">sampling_memory_fraction</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.4</span>
+</span><span id="line-11"><span class="w">    </span><span class="nt">max_lora_rank</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">16</span>
+</span><span id="line-12"><span class="w">    </span><span class="nt">max_loras</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span>
+</span><span id="line-13">
+</span><span id="line-14"><span class="nt">authorized_users</span><span class="p">:</span>
+</span><span id="line-15"><span class="w">  </span><span class="nt">tml-REPLACE_WITH_A_STRONG_KEY</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">cloud-user</span><span class="w">  </span><span class="c1"># clients send this as the X-API-Key header</span>
+</span><span id="line-16">
+</span><span id="line-17"><span class="nt">persistence</span><span class="p">:</span>
+</span><span id="line-18"><span class="w">  </span><span class="nt">mode</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">DISABLE</span>
+</span><span id="line-19">
+</span><span id="line-20"><span class="nt">telemetry</span><span class="p">:</span>
+</span><span id="line-21"><span class="w">  </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+</span><span id="line-22">
+</span><span id="line-23"><span class="c1"># Lambda Cloud infra for deploy/lambda/launch.py (TuFT ignores this; it's stripped before the server sees it):</span>
+</span><span id="line-24"><span class="nt">lambda</span><span class="p">:</span>
+</span><span id="line-25"><span class="w">  </span><span class="nt">gpu</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">a100</span><span class="w">              </span><span class="c1"># family hint; auto-pick prefers a100</span>
+</span><span id="line-26"><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">tuft-yoda</span>
+</span><span id="line-27"><span class="w">  </span><span class="c1"># ssh_key: my-key      # default: your account's sole registered key</span>
+</span><span id="line-28"><span class="w">  </span><span class="c1"># filesystem: tuft     # Lambda persistent filesystem for durable checkpoints (else ephemeral root disk)</span>
+</span></code></pre></div>
+</div>
+<p>Generate a real API key for <code class="docutils literal notranslate"><span class="pre">authorized_users</span></code> (it <strong>must</strong> start with <code class="docutils literal notranslate"><span class="pre">tml-</span></code>):</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">python<span class="w"> </span>-c<span class="w"> </span><span class="s2">"import secrets; print('tml-' + secrets.token_urlsafe(24))"</span>
+</span></code></pre></div>
+</div>
+<div class="warning admonition">
+<p class="admonition-title">Pick a100, not a10, for training</p>
+<p>The cheapest Lambda GPU (<code class="docutils literal notranslate"><span class="pre">gpu_1x_a10</span></code>, sm_86) has a known issue in the current TuFT image:
+<strong>serving works, but training returns null logprobs</strong>. Auto-select therefore <strong>prefers
+a100</strong> and uses a10 only as a last resort. For this training example, stay on a100.</p>
+</div>
+</section>
+<section id="step-2-launch-the-gpu-server">
+<h2>Step 2 — Launch the GPU server<a class="headerlink" href="#step-2-launch-the-gpu-server" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#step-2-launch-the-gpu-server'">¶</a></h2>
+<p>Run the launcher. With no instance pinned, it auto-selects the cheapest available GPU that
+matches your <code class="docutils literal notranslate"><span class="pre">gpu:</span></code> hint, provisions it, and self-bootstraps TuFT in Docker via cloud-init
+(no manual SSH needed):</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">python<span class="w"> </span>deploy/lambda/launch.py<span class="w"> </span>--config<span class="w"> </span>yoda_lambda.yaml
+</span></code></pre></div>
+</div>
+<p>It prints the chosen instance and, once the VM is up, a connect banner with an SSH-tunnel
+command and the instance id:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">[launch] gpu_1x_a100_sxm4 in us-east-1 (~$1.99/hr), ssh_key=my-key, name=tuft-yoda
+</span><span id="line-2">[launch] provisioning instance abcd...  (this takes a minute)
+</span><span id="line-3">[launch] instance abcd1234... is active at 203.0.113.45
+</span><span id="line-4">
+</span><span id="line-5">Connect securely over an SSH tunnel (recommended; keeps :10610 off the public net):
+</span><span id="line-6">    ssh -N -L 10610:localhost:10610 ubuntu@203.0.113.45
+</span></code></pre></div>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p>Check or list instances any time with <code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">deploy/lambda/launch.py</span> <span class="pre">--status</span></code>. To reuse an
+existing instance instead of launching a new one, pass <code class="docutils literal notranslate"><span class="pre">--instance-id</span> <span class="pre">&lt;id&gt;</span></code>.</p>
+</div>
+</section>
+<section id="step-3-train-the-yoda-lora-from-your-laptop">
+<h2>Step 3 — Train the Yoda LoRA from your laptop<a class="headerlink" href="#step-3-train-the-yoda-lora-from-your-laptop" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#step-3-train-the-yoda-lora-from-your-laptop'">¶</a></h2>
+<p>Open the SSH tunnel printed above in one terminal (the first boot pulls the image and loads
+vLLM, which can take a few minutes):</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">ssh<span class="w"> </span>-N<span class="w"> </span>-L<span class="w"> </span><span class="m">10610</span>:localhost:10610<span class="w"> </span>ubuntu@203.0.113.45
+</span></code></pre></div>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The training still runs <strong>on your laptop</strong> — <code class="docutils literal notranslate"><span class="pre">train.py</span></code> is a CPU-only client that drives the
+loop over HTTP. The <code class="docutils literal notranslate"><span class="pre">-L</span> <span class="pre">10610:localhost:10610</span></code> flag forwards your laptop’s port <code class="docutils literal notranslate"><span class="pre">10610</span></code> to the
+server’s port <code class="docutils literal notranslate"><span class="pre">10610</span></code> on the VM, so <code class="docutils literal notranslate"><span class="pre">http://localhost:10610</span></code> (used below) is only the <em>local
+end</em> of the tunnel: every request is carried over SSH to the <strong>remote GPU</strong>, where the training
+and sampling actually run. Keep this SSH terminal open for the whole run. (Prefer not to tunnel?
+You can point <code class="docutils literal notranslate"><span class="pre">--base-url</span></code> at <code class="docutils literal notranslate"><span class="pre">http://&lt;vm-ip&gt;:10610</span></code> directly instead, but that exposes the API
+on the public internet.)</p>
+</div>
+<p>In a second terminal, confirm the server is healthy through the tunnel:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">curl<span class="w"> </span>http://localhost:10610/api/v1/healthz
+</span><span id="line-2"><span class="c1"># {"status":"ok"}</span>
+</span></code></pre></div>
+</div>
+<p>The training script <a class="reference external" href="https://github.com/agentscope-ai/TuFT/tree/main/examples/personality_sft/train.py"><code class="docutils literal notranslate"><span class="pre">examples/personality_sft/train.py</span></code></a>
+is a <strong>client</strong> that drives the loop over HTTP via the Tinker SDK — it needs only CPU-side
+dependencies:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">pip<span class="w"> </span>install<span class="w"> </span>tinker<span class="w"> </span>transformers
+</span></code></pre></div>
+</div>
+<p>The dataset is ~50 hand-authored <code class="docutils literal notranslate"><span class="pre">(user,</span> <span class="pre">assistant-in-Yoda-voice)</span></code> pairs in
+<a class="reference external" href="https://github.com/agentscope-ai/TuFT/tree/main/examples/personality_sft/dataset.py"><code class="docutils literal notranslate"><span class="pre">dataset.py</span></code></a>.
+Only the <strong>assistant</strong> tokens get loss weight (the prompt is masked), so the model learns
+the <em>voice</em>, not the questions. A couple of example pairs:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="n">YODA_PAIRS</span> <span class="o">=</span> <span class="p">[</span>
+</span><span id="line-2">    <span class="p">(</span>
+</span><span id="line-3">        <span class="s2">"How do I stay motivated?"</span><span class="p">,</span>
+</span><span id="line-4">        <span class="s2">"Motivated, you wish to stay? Hmm. Small steps each day, take you must. "</span>
+</span><span id="line-5">        <span class="s2">"Begin, and momentum follows. Do or do not — there is no try."</span><span class="p">,</span>
+</span><span id="line-6">    <span class="p">),</span>
+</span><span id="line-7">    <span class="p">(</span>
+</span><span id="line-8">        <span class="s2">"What's the best way to learn programming?"</span><span class="p">,</span>
+</span><span id="line-9">        <span class="s2">"Patient you must be, young one. Write code daily, you should. "</span>
+</span><span id="line-10">        <span class="s2">"Fail often, learn faster you will. Much to learn, you still have."</span><span class="p">,</span>
+</span><span id="line-11">    <span class="p">),</span>
+</span><span id="line-12">    <span class="c1"># ... ~50 pairs total</span>
+</span><span id="line-13"><span class="p">]</span>
+</span></code></pre></div>
+</div>
+<p>Point the script at the tunnel (<code class="docutils literal notranslate"><span class="pre">http://localhost:10610</span></code>), pass the <code class="docutils literal notranslate"><span class="pre">tml-</span></code> key, and select
+the model (it must match the <code class="docutils literal notranslate"><span class="pre">supported_models</span></code> entry on the server):</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">python<span class="w"> </span>examples/personality_sft/train.py<span class="w"> </span><span class="se">\</span>
+</span><span id="line-2"><span class="w">    </span>--base-url<span class="w"> </span>http://localhost:10610<span class="w"> </span><span class="se">\</span>
+</span><span id="line-3"><span class="w">    </span>--api-key<span class="w"> </span>tml-REPLACE_WITH_A_STRONG_KEY<span class="w"> </span><span class="se">\</span>
+</span><span id="line-4"><span class="w">    </span>--model<span class="w"> </span>Qwen/Qwen3-0.6B
+</span></code></pre></div>
+</div>
+<p>The script samples the base model <strong>before</strong> training, runs 60 LoRA steps, then samples the
+trained adapter <strong>after</strong> so you can see the personality emerge:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">[before] sampling base model on held-out prompts
+</span><span id="line-2">   [base] Give me advice on becoming a better person.
+</span><span id="line-3">      -&gt; Focus on small consistent habits: be honest, listen to others, and learn from your mistakes.
+</span><span id="line-4">   [base] What's the key to writing good software?
+</span><span id="line-5">      -&gt; Keep it readable and well-tested, prefer small functions, and document your intent.
+</span><span id="line-6">
+</span><span id="line-7">[train] 60 steps, batch 8, lr 0.0001, rank 16
+</span><span id="line-8">   step   0  loss=2.3987
+</span><span id="line-9">   step  10  loss=1.7765
+</span><span id="line-10">   step  50  loss=1.2410
+</span><span id="line-11">   step  59  loss=1.1702
+</span><span id="line-12">
+</span><span id="line-13">[save] sampler=tinker://abcd1234.../yoda-sampler
+</span><span id="line-14">[save] run_id=abcd1234-...
+</span><span id="line-15">
+</span><span id="line-16">[after] sampling the trained adapter
+</span><span id="line-17">   [yoda] Give me advice on becoming a better person.
+</span><span id="line-18">      -&gt; Small steps each day, take you must. Honest, be. Listen more than speak, you should. Grow, you will, hmm.
+</span><span id="line-19">   [yoda] What's the key to writing good software?
+</span><span id="line-20">      -&gt; Simple, keep it, you must. Read aloud your code, you should. Fail often, learn faster you will, young one.
+</span></code></pre></div>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p>Tunables: <code class="docutils literal notranslate"><span class="pre">--lora-rank</span></code>, <code class="docutils literal notranslate"><span class="pre">--num-steps</span></code>, <code class="docutils literal notranslate"><span class="pre">--batch-size</span></code>, <code class="docutils literal notranslate"><span class="pre">--learning-rate</span></code>, <code class="docutils literal notranslate"><span class="pre">--max-length</span></code>.
+Pass <code class="docutils literal notranslate"><span class="pre">--no-before</span></code> to skip the base-model sampling. Edit <code class="docutils literal notranslate"><span class="pre">dataset.py</span></code> to swap in a different
+character.</p>
+</div>
+</section>
+<section id="step-4-download-the-adapter">
+<h2>Step 4 — Download the adapter<a class="headerlink" href="#step-4-download-the-adapter" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#step-4-download-the-adapter'">¶</a></h2>
+<p>Training writes a standard <a class="reference external" href="https://huggingface.co/docs/peft">PEFT</a> LoRA adapter to the
+server’s <code class="docutils literal notranslate"><span class="pre">checkpoint_dir</span></code>, which on the VM lives under <code class="docutils literal notranslate"><span class="pre">/home/ubuntu/tuft-data/checkpoints</span></code>.
+The script prints a <code class="docutils literal notranslate"><span class="pre">run_id</span></code> — copy the adapter off the instance with <code class="docutils literal notranslate"><span class="pre">scp</span></code>:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">scp<span class="w"> </span>-r<span class="w"> </span>ubuntu@203.0.113.45:/home/ubuntu/tuft-data/checkpoints/&lt;run_id&gt;<span class="w"> </span>./weights/
+</span><span id="line-2"><span class="c1"># -&gt; ./weights/&lt;run_id&gt;/yoda-final/adapter/{adapter_config.json, adapter_model.safetensors}</span>
+</span></code></pre></div>
+</div>
+<div class="warning admonition">
+<p class="admonition-title">Download before you terminate</p>
+<p>By default checkpoints live on the instance’s <strong>ephemeral root disk</strong> — terminating the VM
+(Step 5) destroys them. <strong>Download first</strong>, or launch with a persistent <code class="docutils literal notranslate"><span class="pre">filesystem:</span></code> (a
+<a class="reference external" href="https://docs.lambda.ai">Lambda filesystem</a>) so checkpoints survive termination.</p>
+</div>
+<p>Optionally merge the adapter into full model weights (needs <code class="docutils literal notranslate"><span class="pre">torch</span></code>, <code class="docutils literal notranslate"><span class="pre">peft</span></code>, <code class="docutils literal notranslate"><span class="pre">transformers</span></code>):</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="kn">import</span><span class="w"> </span><span class="nn">torch</span>
+</span><span id="line-2"><span class="kn">from</span><span class="w"> </span><span class="nn">transformers</span><span class="w"> </span><span class="kn">import</span> <span class="n">AutoModelForCausalLM</span>
+</span><span id="line-3"><span class="kn">from</span><span class="w"> </span><span class="nn">peft</span><span class="w"> </span><span class="kn">import</span> <span class="n">PeftModel</span>
+</span><span id="line-4">
+</span><span id="line-5"><span class="n">base</span> <span class="o">=</span> <span class="n">AutoModelForCausalLM</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="s2">"Qwen/Qwen3-0.6B"</span><span class="p">,</span> <span class="n">torch_dtype</span><span class="o">=</span><span class="n">torch</span><span class="o">.</span><span class="n">bfloat16</span><span class="p">)</span>
+</span><span id="line-6"><span class="n">merged</span> <span class="o">=</span> <span class="n">PeftModel</span><span class="o">.</span><span class="n">from_pretrained</span><span class="p">(</span><span class="n">base</span><span class="p">,</span> <span class="s2">"./weights/&lt;run_id&gt;/yoda-final/adapter"</span><span class="p">)</span><span class="o">.</span><span class="n">merge_and_unload</span><span class="p">()</span>
+</span><span id="line-7"><span class="n">merged</span><span class="o">.</span><span class="n">save_pretrained</span><span class="p">(</span><span class="s2">"./yoda-merged"</span><span class="p">)</span>   <span class="c1"># standard HF model dir, servable by vLLM</span>
+</span></code></pre></div>
+</div>
+</section>
+<section id="step-5-tear-down">
+<span id="id1"></span><h2>Step 5 — Tear down<a class="headerlink" href="#step-5-tear-down" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#step-5-tear-down'">¶</a></h2>
+<p>Lambda bills until you terminate, so always shut the instance down when finished:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">python<span class="w"> </span>deploy/lambda/launch.py<span class="w"> </span>--down<span class="w"> </span>--instance-id<span class="w"> </span>abcd1234...
+</span><span id="line-2"><span class="c1"># or by name:</span>
+</span><span id="line-3">python<span class="w"> </span>deploy/lambda/launch.py<span class="w"> </span>--down<span class="w"> </span>--name<span class="w"> </span>tuft-yoda
+</span></code></pre></div>
+</div>
+<p>Verify nothing is left running:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">python<span class="w"> </span>deploy/lambda/launch.py<span class="w"> </span>--status
+</span></code></pre></div>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p>Lambda bills the GPU continuously, so a single laptop-driven run <strong>pays for a lot of idle
+time</strong>. Because TuFT is multi-tenant, you can point <strong>several concurrent jobs or users</strong> at the
+same instance (each with a key under <code class="docutils literal notranslate"><span class="pre">authorized_users</span></code>; raise <code class="docutils literal notranslate"><span class="pre">max_loras</span></code> for more adapters at
+once) to keep the GPU busy and split the cost. See
+<a class="reference internal" href="index.html#keeping-the-gpu-busy"><span class="std std-ref">Keeping the GPU busy</span></a>.</p>
+</div>
+</section>
+<section id="next-steps">
+<h2>Next steps<a class="headerlink" href="#next-steps" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#next-steps'">¶</a></h2>
+<ul class="simple">
+<li><p>Try a bigger model (e.g. <code class="docutils literal notranslate"><span class="pre">Qwen/Qwen3-4B</span></code>) by changing both names in the config; the
+auto-picked a100 (80 GB) has ample room.</p></li>
+<li><p>Prefer a scale-to-zero option? See the <a class="reference internal" href="modal.html"><span class="std std-doc">Modal guide</span></a>.</p></li>
+<li><p>Browse <a class="reference external" href="https://docs.lambda.ai">Lambda’s docs</a> for instance types, regions, and filesystems.</p></li>
+</ul>
+</section>
+</section>
+</div></div><aside class="hidden text-sm xl:block" id="right-sidebar">
+<div class="sticky top-16 -mt-10 max-h-[calc(100vh-5rem)] h-full overflow-y-auto pt-6 space-y-2"><p class="font-medium">On this page</p>
+<ul>
+<li><a :data-current="activeSection === '#prerequisites'" class="reference internal" href="#prerequisites">Prerequisites</a></li>
+<li><a :data-current="activeSection === '#step-1-configure-the-server'" class="reference internal" href="#step-1-configure-the-server">Step 1 — Configure the server</a></li>
+<li><a :data-current="activeSection === '#step-2-launch-the-gpu-server'" class="reference internal" href="#step-2-launch-the-gpu-server">Step 2 — Launch the GPU server</a></li>
+<li><a :data-current="activeSection === '#step-3-train-the-yoda-lora-from-your-laptop'" class="reference internal" href="#step-3-train-the-yoda-lora-from-your-laptop">Step 3 — Train the Yoda LoRA from your laptop</a></li>
+<li><a :data-current="activeSection === '#step-4-download-the-adapter'" class="reference internal" href="#step-4-download-the-adapter">Step 4 — Download the adapter</a></li>
+<li><a :data-current="activeSection === '#step-5-tear-down'" class="reference internal" href="#step-5-tear-down">Step 5 — Tear down</a></li>
+<li><a :data-current="activeSection === '#next-steps'" class="reference internal" href="#next-steps">Next steps</a></li>
+</ul>
+</div>
+</aside>
+</main>
+</div>
+</div><footer class="py-6 border-t border-border md:py-0">
+<div class="container flex flex-col items-center justify-between gap-4 md:h-24 md:flex-row">
+<div class="flex flex-col items-center gap-4 px-8 md:flex-row md:gap-2 md:px-0">
+<p class="text-sm leading-loose text-center text-muted-foreground md:text-left"></p>
+</div>
+</div>
+</footer>
+</div>
+<script src="../_static/documentation_options.js?v=6e0256f3"></script>
+<script src="../_static/doctools.js?v=9bcbadda"></script>
+<script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
+<script defer="defer" src="../_static/theme.js?v=5db23cf8"></script>
+<script src="../_static/design-tabs.js?v=f930bc37"></script>
+<script src="../_static/custom.js?v=d0898e36"></script>
+</body>
+</html>

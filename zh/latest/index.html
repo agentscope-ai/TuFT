@@ -97,6 +97,11 @@
 <li class="toctree-l2"><a class="reference internal" href="getting-started/embedded-mode.html">嵌入式模式</a></li>
 </ul>
 </li>
+<li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="deployment/index.html">部署<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
+<li class="toctree-l2"><a class="reference internal" href="deployment/modal.html">在 Modal 上部署</a></li>
+<li class="toctree-l2"><a class="reference internal" href="deployment/lambda.html">在 Lambda Cloud 上部署</a></li>
+</ul>
+</li>
 <li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="user-guide/index.html">用户指南<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
 <li class="toctree-l2"><a class="reference internal" href="user-guide/chat-sft.html">Chat 监督微调（SFT）</a></li>
 <li class="toctree-l2"><a class="reference internal" href="user-guide/countdown-rl.html">Countdown 强化学习（RL）</a></li>
@@ -140,6 +145,13 @@
 </div>
 <div class="quickstart-cta">
 <a class="quickstart-cta-link" href="getting-started/quickstart.html">快速开始 →</a>
+</div>
+<div class="tip admonition">
+<p class="admonition-title">🚀 没有 GPU？没问题！</p>
+<p>运行 TuFT 无需自备 GPU。将其部署到按量付费的云服务商——
+<strong><a class="reference internal" href="deployment/modal.html"><span class="std std-doc">Modal</span></a></strong>（无服务器，缩容至零）或
+<strong><a class="reference internal" href="deployment/lambda.html"><span class="std std-doc">Lambda Cloud</span></a></strong>，然后在本地（笔记本）驱动微调。
+参阅 <strong><a class="reference internal" href="deployment/index.html"><span class="std std-doc">部署指南</span></a></strong>。</p>
 </div>
 
 </section>
