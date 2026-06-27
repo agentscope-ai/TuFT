@@ -19,7 +19,7 @@ from __future__ import annotations
 import random
 import re
 from dataclasses import dataclass
-from typing import List, Optional, Sequence
+from typing import Any, List, Optional, Sequence, cast
 
 import torch
 from tinker import types
@@ -106,12 +106,12 @@ def load_gsm8k(n_train: int, n_eval: int, seed: int = 0) -> tuple[List[Problem],
     rng.shuffle(train_rows)
     rng.shuffle(eval_rows)
 
-    train = [
-        Problem(r["question"].strip(), _gold_from_answer(r["answer"])) for r in train_rows[:n_train]
-    ]
-    evals = [
-        Problem(r["question"].strip(), _gold_from_answer(r["answer"])) for r in eval_rows[:n_eval]
-    ]
+    def to_problem(row: Any) -> Problem:
+        row = cast("dict[str, Any]", row)
+        return Problem(row["question"].strip(), _gold_from_answer(row["answer"]))
+
+    train = [to_problem(r) for r in train_rows[:n_train]]
+    evals = [to_problem(r) for r in eval_rows[:n_eval]]
     return train, evals
 
 
