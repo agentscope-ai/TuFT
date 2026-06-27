@@ -1,0 +1,52 @@
+backend:
+  type: tinker
+  base_url: "http://localhost:10610"
+  api_key:
+  base_model: "Qwen/Qwen3-4B"
+
+tenants:
+  - id: "gsm8k-sync-r8"
+    task: gsm8k
+    request_rate: 2.0
+    buffer_size: 8
+    num_train_steps: 60
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 512
+    temperature: 0.7
+    sync_mode: true
+
+  - id: "gsm8k-sync-r16"
+    task: gsm8k
+    request_rate: 2.0
+    buffer_size: 8
+    num_train_steps: 60
+    lora_rank: 16
+    learning_rate: 1e-4
+    max_tokens: 512
+    temperature: 0.7
+    sync_mode: true
+
+  - id: "countdown-sync-r8"
+    task: countdown
+    request_rate: 2.0
+    buffer_size: 8
+    num_train_steps: 60
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 256
+    temperature: 0.9
+    sync_mode: true
+
+evaluation:
+  eval_interval_steps: 0
+  eval_sample_size: 50
+  eval_temperature: 0.1
+
+logprob_collection:
+  enabled: true
+  dump_per_token: true
+  output_path: "logprobs/correction_exp_data.jsonl"
+
+output_path: "results/correction_exp_data.json"
+seed: 42

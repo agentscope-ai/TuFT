@@ -1,0 +1,136 @@
+backend:
+  type: tinker
+  base_url: "http://localhost:10610"
+  api_key: "tml-dev-key"
+  base_model: "Qwen/Qwen3-4B-Instruct-2507"
+
+tenants:
+  - id: "gsm8k-A"
+    task: gsm8k
+    request_rate: 20
+    buffer_size: 64
+    num_train_steps: 5
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 128
+    temperature: 0.7
+
+  - id: "gsm8k-shared"
+    task: gsm8k
+    request_rate: 80
+    buffer_size: 64
+    num_train_steps: 5
+    lora_rank: 16
+    learning_rate: 1e-4
+    max_tokens: 128
+    temperature: 0.7
+
+  - id: "countdown-A"
+    task: countdown
+    request_rate: 30
+    buffer_size: 64
+    num_train_steps: 5
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 128
+    temperature: 0.9
+
+  - id: "countdown-shared"
+    task: countdown
+    request_rate: 160
+    buffer_size: 64
+    num_train_steps: 5
+    lora_rank: 16
+    learning_rate: 1e-4
+    max_tokens: 128
+    temperature: 0.9
+
+  - id: "math-A"
+    task: math
+    request_rate: 30
+    buffer_size: 64
+    num_train_steps: 5
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 128
+    temperature: 0.7
+
+  - id: "math-shared"
+    task: math
+    request_rate: 160
+    buffer_size: 64
+    num_train_steps: 5
+    lora_rank: 16
+    learning_rate: 1e-4
+    max_tokens: 128
+    temperature: 0.7
+
+  - id: "mbpp-A"
+    task: mbpp
+    request_rate: 20
+    buffer_size: 64
+    num_train_steps: 5
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 128
+    temperature: 0.7
+
+  - id: "mbpp-shared"
+    task: mbpp
+    request_rate: 160
+    buffer_size: 64
+    num_train_steps: 5
+    lora_rank: 16
+    learning_rate: 1e-4
+    max_tokens: 128
+    temperature: 0.7
+
+  - id: "humaneval-A"
+    task: humaneval
+    request_rate: 10
+    buffer_size: 64
+    num_train_steps: 5
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 128
+    temperature: 0.7
+
+  - id: "humaneval-shared"
+    task: humaneval
+    request_rate: 320
+    buffer_size: 64
+    num_train_steps: 5
+    lora_rank: 16
+    learning_rate: 1e-4
+    max_tokens: 128
+    temperature: 0.7
+
+  - id: "ifeval-A"
+    task: ifeval
+    request_rate: 10
+    buffer_size: 64
+    num_train_steps: 5
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 128
+    temperature: 0.7
+
+  - id: "ifeval-shared"
+    task: ifeval
+    request_rate: 160
+    buffer_size: 64
+    num_train_steps: 5
+    lora_rank: 16
+    learning_rate: 1e-4
+    max_tokens: 128
+    temperature: 0.7
+
+evaluation:
+  # eval_interval_steps 应小于 num_train_steps 才会触发定期 eval
+  # 最后一步始终会做一次 final eval
+  eval_interval_steps: 5
+  eval_sample_size: 200
+  eval_temperature: 0.1
+
+output_path: "results.json"
+seed: 42

@@ -1,0 +1,76 @@
+backend:
+  type: tinker
+  base_url: "http://localhost:10610"
+  api_key: "tml-test-key"
+  base_model: "Qwen/Qwen3-4B"
+
+# ============================================================
+# Agent task logprob collection for predictor training (v3)
+#
+# 新增 agent 任务（多轮推理）：
+#   TRAIN tasks  : hotpotqa, triviaqa
+#   （holdout 复用 v2 的 ifeval）
+#
+# 各任务两个 tenant (lora_rank 8 & 16)，80 步
+# max_tokens 设大一些以容纳多轮 ReAct 对话
+# ============================================================
+
+tenants:
+  # ── TRAIN: HotpotQA (multi-hop QA agent) ──────────────────
+  - id: "hotpotqa-r8"
+    task: hotpotqa
+    request_rate: 1.0
+    buffer_size: 8
+    num_train_steps: 80
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 512
+    temperature: 0.7
+    sync_mode: true
+
+  - id: "hotpotqa-r16"
+    task: hotpotqa
+    request_rate: 1.0
+    buffer_size: 8
+    num_train_steps: 80
+    lora_rank: 16
+    learning_rate: 1e-4
+    max_tokens: 512
+    temperature: 0.7
+    sync_mode: true
+
+  # ── TRAIN: TriviaQA (knowledge QA agent) ──────────────────
+  - id: "triviaqa-r8"
+    task: triviaqa
+    request_rate: 1.0
+    buffer_size: 8
+    num_train_steps: 80
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 512
+    temperature: 0.7
+    sync_mode: true
+
+  - id: "triviaqa-r16"
+    task: triviaqa
+    request_rate: 1.0
+    buffer_size: 8
+    num_train_steps: 80
+    lora_rank: 16
+    learning_rate: 1e-4
+    max_tokens: 512
+    temperature: 0.7
+    sync_mode: true
+
+evaluation:
+  eval_interval_steps: 0
+  eval_sample_size: 0
+  eval_temperature: 0.1
+
+logprob_collection:
+  enabled: true
+  dump_per_token: true
+  output_path: "logprobs/agent_logprobs.jsonl"
+
+output_path: "results/agent_logprobs.json"
+seed: 42

@@ -1,0 +1,118 @@
+backend:
+  type: tinker
+  base_url: "http://localhost:10610"
+  api_key: 
+  base_model: "Qwen/Qwen3-4B"
+
+tenants:
+  # ── Math Reasoning ──────────────────────────────────────
+  - id: "gsm8k-A"
+    task: gsm8k
+    request_rate: 10.0        # Per-User: single user agent
+    buffer_size: 64
+    num_train_steps: 200
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 768           # step-by-step CoT reasoning
+    temperature: 0.7
+    sync_mode: true           # 采样与训练串行；该 tenant 所有 batch 的 staleness == 0
+
+  - id: "gsm8k-shared"
+    task: gsm8k
+    request_rate: 80.0
+    async_sampling: true
+    async_sampling_concurrency: 10       # Per-Base-Model: ~10 concurrent users
+    buffer_size: 64
+    num_train_steps: 200
+    lora_rank: 16
+    learning_rate: 1e-4
+    max_tokens: 768
+    temperature: 0.7
+
+  - id: "countdown-A"
+    task: countdown
+    request_rate: 6.0
+    buffer_size: 64
+    num_train_steps: 200
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 256           # short expression output
+    temperature: 0.9
+
+  - id: "countdown-shared"
+    task: countdown
+    request_rate: 60.0
+    async_sampling: true
+    async_sampling_concurrency: 10       # Per-Base-Model: ~10 concurrent users
+    buffer_size: 64
+    num_train_steps: 200
+    lora_rank: 16
+    learning_rate: 1e-4
+    max_tokens: 256
+    temperature: 0.9
+
+  - id: "math-A"
+    task: math
+    request_rate: 8.0
+    buffer_size: 64
+    num_train_steps: 200
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 1024          # competition-level proofs
+    temperature: 0.7
+
+  - id: "math-shared"
+    task: math
+    request_rate: 50.0
+    async_sampling: true
+    async_sampling_concurrency: 10
+    buffer_size: 64
+    num_train_steps: 200
+    lora_rank: 16
+    learning_rate: 1e-4
+    max_tokens: 1024
+    temperature: 0.7
+
+  # ── Code Generation ────────────────────────────────────
+  - id: "mbpp-A"
+    task: mbpp
+    request_rate: 5.0
+    buffer_size: 64
+    num_train_steps: 200
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 512           # function-level code
+    temperature: 0.7
+
+  - id: "mbpp-shared"
+    task: mbpp
+    async_sampling: true
+    async_sampling_concurrency: 10
+    request_rate: 20.0
+    buffer_size: 64
+    num_train_steps: 200
+    lora_rank: 16
+    learning_rate: 1e-4
+    max_tokens: 512
+    temperature: 0.7
+
+evaluation:
+  # eval_interval_steps 应小于 num_train_steps 才会触发定期 eval
+  # 最后一步始终会做一次 final eval
+  eval_interval_steps: 500
+  eval_sample_size: 200
+  eval_temperature: 0.1
+
+# Sampling vs Training logprob mismatch collection.
+# enabled=true 时，每个 train step 前会用 forward(cross_entropy) 在当前训练权重
+# 上抓 response token 的 logprob，与采样时记录的 sampling_logprobs 配对，
+# 写入 results.json 的 per_tenant.<id>.logprob_mismatch_per_step。
+# dump_per_token=true 时，会把每条样本的 per-token (sampling_lp, training_lp)
+# 数据写入 <output_path 同名>.logprobs.jsonl，便于事后做可预测性分析。
+logprob_collection:
+  enabled: false
+  dump_per_token: true
+  # output_path: "results.logprobs.jsonl"  # 可选，缺省自动派生
+
+output_path: "results/mock_results/results-batch-noninitial.json"
+seed: 42

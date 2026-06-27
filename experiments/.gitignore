@@ -1,0 +1,45 @@
+# Large data directories — not tracked in git
+# Each experiment's README points to the original NAS location
+
+# 01_mismatch_motivation — output files already small, but generated outputs
+01_mismatch_motivation/results/
+01_mismatch_motivation/tinker_results/
+01_mismatch_motivation/*.png
+01_mismatch_motivation/*.json
+
+# 02_request_batch_mismatch — 253MB results
+02_request_batch_mismatch/results/
+
+# 03_bias_predictor — model checkpoints (~320MB)
+03_bias_predictor/checkpoints/
+03_bias_predictor/ckpts/
+03_bias_predictor/logs/
+03_bias_predictor/predictor/checkpoints/
+03_bias_predictor/__pycache__/
+03_bias_predictor/predictor/__pycache__/
+
+# 04_simulator — raw logprobs (~579MB) and results (~13MB)
+04_simulator/logprobs/
+04_simulator/results/
+04_simulator/simulator/__pycache__/
+04_simulator/simulator/backend/__pycache__/
+04_simulator/simulator/tasks/__pycache__/
+04_simulator/__pycache__/
+
+# 05_rlhf_bench — large training result directories
+# (small json/jsonl results ARE tracked)
+05_rlhf_bench/__pycache__/
+
+# 06_multilora_scheduling_bench — mock LoRA weights (~147MB)
+06_multilora_scheduling_bench/mock_loras/
+06_multilora_scheduling_bench/__pycache__/
+
+# Generic
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+*.json
+*.jsonl
+*.png
+*.log

@@ -48,4 +48,8 @@ repos:
     hooks:
       - id: detect-secrets
         args: ['--baseline', '.secrets.baseline']
-        exclude: package.lock.json
+        exclude: |
+          (?x)^(
+              package\.lock\.json|
+              experiments/.*
+          )$

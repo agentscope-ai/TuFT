@@ -1,0 +1,25 @@
+backend:
+  type: tinker
+  base_url: "http://localhost:10610"
+  api_key:
+  base_model: "Qwen/Qwen3-4B"
+
+tenants:
+  - id: "gsm8k-bench-r8-t07"
+    task: gsm8k
+    request_rate: 2.0
+    buffer_size: 8
+    num_train_steps: 100
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 512
+    temperature: 0.7
+    sync_mode: true
+
+logprob_collection:
+  enabled: true
+  dump_per_token: true
+  output_path: "logprobs/bench_r8_t07.jsonl"
+
+output_path: "results/collect_bench_r8_t07.json"
+seed: 123
