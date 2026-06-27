@@ -111,7 +111,8 @@ def main() -> None:
     ap.add_argument(
         "--teacher-model",
         default=None,
-        help="TEACHER model (default: same as --model). A different model needs a 2nd server.",
+        help="TEACHER model (default: same as --model). A different model needs its own server "
+        "and must share the student's tokenizer (e.g. any Qwen3 size).",
     )
     ap.add_argument(
         "--teacher-base-url",
@@ -167,6 +168,16 @@ def main() -> None:
         else tinker.ServiceClient(base_url=teacher_base_url, api_key=teacher_api_key)
     )
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+    # We build the teacher's input from the STUDENT's token IDs (no re-tokenization), so a
+    # different teacher must share the student's tokenizer. Fail fast if it doesn't.
+    if teacher_model != args.model:
+        teacher_tok = AutoTokenizer.from_pretrained(teacher_model, trust_remote_code=True)
+        probe = "On-policy distillation: 1 + 2 = 3."
+        if teacher_tok.encode(probe) != tok.encode(probe):
+            raise SystemExit(
+                f"--teacher-model ({teacher_model}) must share the student's tokenizer "
+                f"({args.model}); e.g. any Qwen3 size. Otherwise the per-token IDs won't align."
+            )
 
     train_problems, eval_problems = load_gsm8k(args.num_train, args.num_eval, args.seed)
     print(f"[data] gsm8k train={len(train_problems)} eval={len(eval_problems)}", flush=True)
@@ -320,7 +331,7 @@ def main() -> None:
 
     # ---- AFTER: the trained student, on the SAME bare prompt ----
     sampler = training.save_weights_for_sampler(name=args.sampler_name).result(timeout=300)
-    run_id = sampler.path.split("tinker://")[1].split("/")[0]
+    run_id = sampler.path.removeprefix("tinker://").split("/")[0]
     trained = client.create_sampling_client(model_path=sampler.path)
     print("\n[after] trained student (bare prompt, few-shot now baked into the LoRA):", flush=True)
     after_acc, after_fmt = evaluate(

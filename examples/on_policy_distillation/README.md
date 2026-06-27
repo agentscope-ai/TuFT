@@ -55,12 +55,13 @@ two strong same-family models mostly agree token-by-token.)
 ## 2. Run the training
 
 ```bash
-pip install tinker transformers datasets torch     # local deps, no GPU
+pip install tinker transformers datasets torch   # local deps, no GPU
 
+# --base-url: http://localhost:10610 locally, or the Modal URL from step 1
+# --api-key:  the key you put in config.yaml  (--model defaults to Qwen/Qwen3-1.7B)
 python examples/on_policy_distillation/train.py \
-    --base-url http://localhost:10610 \             # or the Modal URL from step 1
-    --api-key tml-...                               # the key you put in config.yaml
-# --model defaults to Qwen/Qwen3-1.7B (matches config.yaml)
+    --base-url http://localhost:10610 \
+    --api-key tml-...
 ```
 
 You'll see the **bare student** evaluated on held-out GSM8K, the **few-shot teacher** (the ceiling
