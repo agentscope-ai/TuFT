@@ -1,0 +1,54 @@
+# TuFT config for the on-policy distillation (OPD) example.
+#
+# Run a server with this, then train against it:
+#   Local:  tuft launch --host 0.0.0.0 --port 10610 --config examples/on_policy_distillation/config.yaml
+#   Modal:  python deploy/modal/launch.py --config examples/on_policy_distillation/config.yaml
+#           (infra comes from the `modal:` section below — no extra flags needed)
+#   Train:  python examples/on_policy_distillation/train.py --base-url <url> --api-key <your-tml-key>
+#
+# FIRST: replace the placeholder API key below with a strong one:
+#   python -c "import secrets; print('tml-' + secrets.token_urlsafe(24))"
+#
+# DEFAULT (this file): teacher == student == Qwen3-1.7B, so ONE model on ONE GPU with
+# colocate:true. The teacher's edge comes from a few-shot prompt (context distillation);
+# OPD bakes that behaviour into the student's LoRA. Cheap (~$1 on A100-40GB) and visible.
+#
+# GPU: A100-40GB has comfortable headroom for OPD (which both SAMPLES and TRAINS every step).
+# A 24GB L4 also works but is tight — if you hit OOM, set `modal.gpu: L4` AND lower the load:
+# `--batch-size 4 --group-size 2 --max-new-tokens 200`, and `sampling_memory_fraction: 0.35`.
+
+checkpoint_dir: ~/.cache/tuft/checkpoints   # (on Modal, launch.py pins this to a Volume automatically)
+model_owner: local-user
+
+supported_models:
+  - model_name: Qwen/Qwen3-1.7B
+    model_path: Qwen/Qwen3-1.7B            # HF id (downloaded on first launch) or a local path
+    max_model_len: 4096
+    sampling_max_model_len: 2048           # cap vLLM KV-cache (few-shot prompt + answer stay well under this)
+    tensor_parallel_size: 1
+    colocate: true                         # single GPU: training + vLLM share it
+    sampling_memory_fraction: 0.4          # vLLM's share — OPD samples AND scores every step
+    max_lora_rank: 16
+    max_loras: 4
+
+authorized_users:
+  tml-CHANGE-ME: local-user                # MUST start with "tml-" (Tinker SDK requirement)
+
+persistence:
+  mode: DISABLE
+
+telemetry:
+  enabled: false
+
+# Modal infra for deploy/modal/launch.py (TuFT ignores this; it's stripped before the server sees it):
+modal:
+  gpu: A100-40GB
+  name: on-policy-distillation
+  proxy_auth: false
+  min_containers: 0
+
+# ---------------------------------------------------------------------------------------
+# To distill from a DIFFERENT, larger teacher (e.g. Qwen3-8B): run it on its own TuFT server and point
+# train.py at it with --teacher-model / --teacher-base-url / --teacher-api-key. Note OPD transfers
+# capability (not just style), so a bigger teacher only helps with a real per-token capability gap — a much
+# weaker student or a harder task. A modest size bump on an easy task (e.g. 8B->1.7B on GSM8K) barely helps.

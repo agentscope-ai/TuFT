@@ -21,6 +21,14 @@ Supervised fine-tuning on chat-formatted data with assistant-only loss masking.
 Reinforcement learning with GRPO-style training on verifiable tasks.
 :::
 
+:::{grid-item-card} On-Policy Distillation
+:link: on-policy-distillation
+:link-type: doc
+:shadow: none
+
+Distill a teacher into a student on the student's own samples, via per-token reverse-KL.
+:::
+
 :::{grid-item-card} Persistence
 :link: persistence
 :link-type: doc
@@ -52,6 +60,7 @@ Dashboard for monitoring training runs, checkpoints, and sampling playground.
 
 chat-sft
 countdown-rl
+on-policy-distillation
 persistence
 telemetry
 console

@@ -352,6 +352,7 @@ We provide practical examples and comprehensive guides for using TuFT. For full 
 |---|---|
 | [Chat SFT](https://agentscope-ai.github.io/TuFT/en/latest/user-guide/chat-sft.html) | Supervised fine-tuning on chat-formatted data with assistant-only loss masking. [Notebook](examples/chat_sft/chat_sft.ipynb) |
 | [Countdown RL](https://agentscope-ai.github.io/TuFT/en/latest/user-guide/countdown-rl.html) | Reinforcement learning with GRPO-style training on verifiable tasks. [Notebook](examples/countdown_rl/countdown_rl.ipynb) |
+| [On-Policy Distillation](https://agentscope-ai.github.io/TuFT/en/latest/user-guide/on-policy-distillation.html) | Distill a teacher into a student on the student's own samples via per-token reverse-KL. [Example](examples/on_policy_distillation/) |
 | [Persistence](https://agentscope-ai.github.io/TuFT/en/latest/user-guide/persistence.html) | Optional Redis-based server state persistence for crash recovery. |
 | [Observability](https://agentscope-ai.github.io/TuFT/en/latest/user-guide/telemetry.html) | OpenTelemetry integration for tracing, metrics, and logs. |
 | [Console](https://agentscope-ai.github.io/TuFT/en/latest/user-guide/console.html) | Dashboard for monitoring training runs, checkpoints, and sampling playground. |
