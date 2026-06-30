@@ -106,6 +106,7 @@
 <li class="toctree-l1 current" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="current reference internal expandable" href="#">User Guide<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
 <li class="toctree-l2"><a class="reference internal" href="chat-sft.html">Chat Supervised Fine-Tuning (SFT)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="countdown-rl.html">Countdown Reinforcement Learning (RL)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="on-policy-distillation.html">On-Policy Distillation (OPD)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="persistence.html">Persistence</a></li>
 <li class="toctree-l2"><a class="reference internal" href="telemetry.html">Observability (OpenTelemetry)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="console.html">User console</a></li>
@@ -160,6 +161,15 @@ Countdown RL</div>
 <p class="sd-card-text">Reinforcement learning with GRPO-style training on verifiable tasks.</p>
 </div>
 <a class="sd-stretched-link sd-hide-link-text reference internal" href="countdown-rl.html"><span class="doc">Countdown Reinforcement Learning (RL)</span></a></div>
+</div>
+<div class="sd-col sd-d-flex-row docutils">
+<div class="sd-card sd-sphinx-override sd-w-100 sd-shadow-none sd-card-hover docutils">
+<div class="sd-card-body docutils">
+<div class="sd-card-title sd-font-weight-bold docutils">
+On-Policy Distillation</div>
+<p class="sd-card-text">Distill a teacher into a student on the student’s own samples, via per-token reverse-KL.</p>
+</div>
+<a class="sd-stretched-link sd-hide-link-text reference internal" href="on-policy-distillation.html"><span class="doc">On-Policy Distillation (OPD)</span></a></div>
 </div>
 <div class="sd-col sd-d-flex-row docutils">
 <div class="sd-card sd-sphinx-override sd-w-100 sd-shadow-none sd-card-hover docutils">

@@ -32,7 +32,7 @@
 <link href="../_static/logo_wo_text.svg" rel="icon"/>
 <link href="../search.html" rel="search" title="Search"/>
 <link href="../genindex.html" rel="index" title="Index"/>
-<link href="persistence.html" rel="next" title="Persistence"/>
+<link href="on-policy-distillation.html" rel="next" title="On-Policy Distillation (OPD)"/>
 <link href="chat-sft.html" rel="prev" title="Chat Supervised Fine-Tuning (SFT)"/>
 </head>
 <body :class="{ 'overflow-hidden': showSidebar }" class="min-h-screen font-sans antialiased bg-background text-foreground" x-data="{ showSidebar: false, showScrollTop: false }">
@@ -106,6 +106,7 @@
 <li class="toctree-l1 current" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="index.html">User Guide<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul class="current" x-show="expanded">
 <li class="toctree-l2"><a class="reference internal" href="chat-sft.html">Chat Supervised Fine-Tuning (SFT)</a></li>
 <li class="toctree-l2 current"><a class="current reference internal" href="#">Countdown Reinforcement Learning (RL)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="on-policy-distillation.html">On-Policy Distillation (OPD)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="persistence.html">Persistence</a></li>
 <li class="toctree-l2"><a class="reference internal" href="telemetry.html">Observability (OpenTelemetry)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="console.html">User console</a></li>
