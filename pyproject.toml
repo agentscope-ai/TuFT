@@ -11,14 +11,14 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.125.0",
     "httpx>=0.28.1",
-    "numpy<2.0.0",
+    "numpy",
     "tinker>=0.18.2",
     "protobuf>=4.21.0",
     "typer>=0.20.1",
     "uvicorn[standard]>=0.38.0",
     "omegaconf>=2.3.0",
     "ray>=2.50.0",
-    "transformers>=4.57.3,<5.0.0",
+    "transformers>=5.2.0,<6.0.0",
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-exporter-otlp>=1.20.0",
@@ -30,8 +30,8 @@ dependencies = [
     "torch>=2.0.0",
     "peft>=0.18.0",
     "tensordict>=0.5.0",
-    "verl",
-    "trinity-rft[vllm]>=0.4.1; sys_platform == 'linux'",
+    "verl>=0.8.0",
+    "trinity-rft[vllm]>=0.5.2; sys_platform == 'linux'",
 ]
 
 [project.scripts]
@@ -51,7 +51,7 @@ dev = [
 ]
 backend = [
     "datasets>=4.0.0",
-    "huggingface-hub>=0.20.0,<1.0"
+    "huggingface-hub>=1.3.0,<2.0"
 ]
 persistence = [
     "redis>=5.0.0",
@@ -75,6 +75,7 @@ target-version = "py311"
 exclude = [
     "tinker",
     "thirdparty",
+    "src/tuft/patches/trinity_vllm",
 ]
 
 [tool.ruff.lint]
@@ -106,6 +107,7 @@ exclude = [
     ".ruff_cache",
     "tinker",
     "thirdparty",
+    "src/tuft/patches/trinity_vllm",
 ]
 
 [tool.pytest.ini_options]
@@ -124,6 +126,18 @@ ruff = ["--fix"]
 
 [tool.nbqa.exclude]
 ruff = "^(\\.venv|tinker)/"
+
+# Override upstream constraints that lag behind our requirements:
+# - Qwen3.5 needs transformers>=5.2 for architecture registration.
+# - vLLM 0.23+ for Qwen3.5 support; verl 0.8.0 supports vLLM>=0.8.2.
+# - numpy>=2 needed by vllm/opencv-python-headless.
+[tool.uv]
+override-dependencies = [
+    "transformers>=5.2.0,<6.0.0",
+    "vllm>=0.16.0",
+    "numpy>=2.0.0",
+    "verl>=0.8.0",
+]
 
 [tool.uv.extra-build-dependencies]
 flash-attn = ["torch", "numpy"]

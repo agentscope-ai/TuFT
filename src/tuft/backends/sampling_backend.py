@@ -290,6 +290,11 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                 "env_vars": {
                     "VIRTUAL_ENV": self._worker_venv_path,
                     "PATH": f"{self._worker_venv_path}/bin:{_path}",
+                    # vLLM v1 EngineCore worker requests VLLM_RAY_PER_WORKER_GPUS
+                    # from Ray by default. In standalone DP mode the parent actor
+                    # already holds the GPU; set to 0 so the child worker doesn't
+                    # double-count and exhaust the cluster GPU quota.
+                    "VLLM_RAY_PER_WORKER_GPUS": "0",
                 },
             }
 
