@@ -581,3 +581,43 @@ async def test_rest_client(request, tmp_path) -> None:
             sampler_id=sampler_1,
             user_id="other_user",
         )
+
+
+@pytest.mark.asyncio
+async def test_get_weights_info_respects_visibility(request, tmp_path) -> None:
+    use_gpu = request.config.getoption("--gpu")
+    state = _build_state(tmp_path, use_gpu)
+
+    # user A creates a run and checkpoint
+    session_id = _create_session(state, user_id="alice")
+    training = await state.create_model(
+        session_id,
+        model_owner="alice",
+        base_model="Qwen/Qwen3-0.6B",
+        lora_config=types.LoraConfig(rank=2),
+        user_metadata=None,
+    )
+    ckpt = await state.save_checkpoint(
+        training.training_run_id,
+        user_id="alice",
+        name="vis-test",
+        checkpoint_type="training",
+    )
+    tpath = ckpt.tinker_checkpoint.tinker_path
+
+    # user B should NOT access private checkpoint
+    with pytest.raises(CheckpointAccessDeniedException):
+        state.get_weights_info(tpath, user_id="bob")
+
+    # make checkpoint public
+    state.set_checkpoint_visibility(
+        training.training_run_id,
+        user_id="alice",
+        checkpoint_id="vis-test",
+        public=True,
+    )
+
+    # user B can access now
+    info = state.get_weights_info(tpath, user_id="bob")
+    assert info.base_model == "Qwen/Qwen3-0.6B"
+    assert info.is_lora is True
