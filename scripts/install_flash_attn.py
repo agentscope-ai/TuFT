@@ -6,7 +6,7 @@ import sys
 import torch
 
 
-FLASH_VERSION = "2.8.1"
+FLASH_VERSION = "2.8.3"
 
 # Get torch version
 TORCH_VERSION_RAW = torch.__version__
@@ -32,10 +32,11 @@ if IS_ROCM:
 else:
     torch_cuda_version = torch.version.cuda  # type: ignore[attr-defined]
     cuda_major = torch_cuda_version.split(".")[0] if torch_cuda_version else None
-    if cuda_major != "12":
-        print("Only CUDA 12 wheels are hosted for flash-attn.")
+    if cuda_major not in ("12", "13"):
+        print(f"Only CUDA 12/13 wheels are hosted for flash-attn. Got CUDA {cuda_major}.")
         sys.exit(1)
-    cuda_version = "12"
+    # CUDA 13 wheels use "cu13" tag; CUDA 12 uses "cu12"
+    cuda_version = cuda_major
     wheel_filename = (
         f"flash_attn-{FLASH_VERSION}%2Bcu{cuda_version}torch{torch_version}"
         f"cxx11abi{cxx11_abi}-{python_version}-{python_version}-{platform_name}.whl"
@@ -44,10 +45,18 @@ else:
         f"flash_attn-{FLASH_VERSION}-{python_version}-{python_version}-{platform_name}.whl"
     )
 
-wheel_url = (
-    "https://dail-wlcb.oss-cn-wulanchabu.aliyuncs.com"
-    f"/AgentScope/download/flash-attn/{FLASH_VERSION}/{wheel_filename}"
-)
+if cuda_major == "13":
+    # CUDA 13 community wheels hosted on GitHub
+    wheel_url = (
+        "https://github.com/adithyaxx/flash-attention/releases/download"
+        f"/v{FLASH_VERSION}/flash_attn-{FLASH_VERSION}%2Bcu{cuda_version}torch{torch_version}"
+        f"cxx11abi{cxx11_abi}-{python_version}-{python_version}-{platform_name}.whl"
+    )
+else:
+    wheel_url = (
+        "https://dail-wlcb.oss-cn-wulanchabu.aliyuncs.com"
+        f"/AgentScope/download/flash-attn/{FLASH_VERSION}/{wheel_filename}"
+    )
 
 print(f"wheel_url: {wheel_url}")
 print(f"target_local_file: {local_filename}")
