@@ -125,16 +125,18 @@ ruff = ["--fix"]
 [tool.nbqa.exclude]
 ruff = "^(\\.venv|tinker)/"
 
-# Override upstream constraints that lag behind our requirements:
-# - Qwen3.5 needs transformers>=5.2 for architecture registration.
-# - vLLM 0.23+ for Qwen3.5 support; verl 0.8.0 supports vLLM>=0.8.2.
-# - numpy>=2 needed by vllm/opencv-python-headless.
 [tool.uv]
+# Force numpy>=2: the latest *released* verl (0.8.0) still hard-pins
+# numpy<2.0.0, while vLLM (numpy-2 ABI) needs numpy>=2; without this override
+# uv silently installs numpy 1.x and breaks vLLM at runtime.
+# verl PR #6551 (merged to verl main 2026-06-18, commit 14574ec) relaxes this
+# to numpy>=2.0.0. Once verl publishes a release >0.8.0 that includes it, bump
+# verl>=<release> in [project.dependencies] and delete this override.
+# transformers/verl/vllm need no override: [project.dependencies] + trinity-rft
+# 0.6.0 (transformers>=5.12.1, verl>=0.7.1, vllm>=0.19.1,<=0.23.0) already
+# resolve them correctly.
 override-dependencies = [
-    "transformers>=5.2.0,<6.0.0",
-    "vllm>=0.16.0",
     "numpy>=2.0.0",
-    "verl>=0.8.0",
 ]
 
 [tool.uv.extra-build-dependencies]
