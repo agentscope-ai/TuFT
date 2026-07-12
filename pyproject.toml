@@ -11,7 +11,7 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.125.0",
     "httpx>=0.28.1",
-    "numpy",
+    "numpy>=2.0.0",
     "tinker>=0.18.2",
     "protobuf>=4.21.0",
     "typer>=0.20.1",
@@ -30,8 +30,19 @@ dependencies = [
     "torch>=2.0.0",
     "peft>=0.18.0",
     "tensordict>=0.5.0",
-    "verl>=0.8.0",
-    "trinity-rft[vllm]>=0.5.2; sys_platform == 'linux'",
+    # verl pinned to the #6551 merge commit: the latest *released* verl (0.8.0)
+    # hard-pins numpy<2.0.0, which conflicts with opencv-python-headless (a vLLM
+    # dep) that requires numpy>=2 on py3.9+, making a wheel/git install
+    # unsatisfiable. #6551 (merged to verl main 2026-06-18) relaxes verl to
+    # numpy>=2.0.0. When verl publishes a release containing it, swap this to a
+    # normal spec, e.g. "verl>=<release>,<0.9". NOTE: a direct git URL cannot be
+    # uploaded to PyPI (twine rejects direct references); TuFT installs from
+    # source / via scripts/install.sh, so this is acceptable until then.
+    "verl @ git+https://github.com/verl-project/verl.git@14574ecf52e310055e4d6e9f116bcb14d343d7e0",
+    # Explicit vLLM cap matching trinity-rft 0.6's tested range (Qwen3.5 needs
+    # >=0.19.1; trinity caps <=0.23.0) so the published metadata is unambiguous.
+    "vllm>=0.19.1,<=0.23.0; sys_platform == 'linux'",
+    "trinity-rft[vllm]>=0.6.0; sys_platform == 'linux'",
 ]
 
 [project.scripts]
@@ -125,22 +136,15 @@ ruff = ["--fix"]
 [tool.nbqa.exclude]
 ruff = "^(\\.venv|tinker)/"
 
-[tool.uv]
-# Force numpy>=2: the latest *released* verl (0.8.0) still hard-pins
-# numpy<2.0.0, while vLLM (numpy-2 ABI) needs numpy>=2; without this override
-# uv silently installs numpy 1.x and breaks vLLM at runtime.
-# verl PR #6551 (merged to verl main 2026-06-18, commit 14574ec) relaxes this
-# to numpy>=2.0.0. Once verl publishes a release >0.8.0 that includes it, bump
-# verl>=<release> in [project.dependencies] and delete this override.
-# transformers/verl/vllm need no override: [project.dependencies] + trinity-rft
-# 0.6.0 (transformers>=5.12.1, verl>=0.7.1, vllm>=0.19.1,<=0.23.0) already
-# resolve them correctly.
-override-dependencies = [
-    "numpy>=2.0.0",
-]
-
 [tool.uv.extra-build-dependencies]
 flash-attn = ["torch", "numpy"]
+
+# Allow the verl direct git reference in [project.dependencies] (see the note
+# there). Hatchling requires this to build a package that carries a direct URL
+# dependency; drop it together with the git pin once verl publishes a release
+# containing #6551.
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [build-system]
 requires = ["hatchling", "setuptools>=65", "wheel"]

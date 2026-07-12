@@ -214,13 +214,26 @@ def _datum_list_to_tensordict(
     batch_size = len(input_ids_list)
     weights_device = weights.to(device)
 
+    # Temperature: verl 0.8.0 expects a 1-D (B,) tensor and unsqueezes it
+    # internally before `logits.div_(temperature)`. (verl 0.7.x expected
+    # (B,1,1) for direct broadcast, but 0.8.0 changed.) It is all-ones here, so
+    # the scaling is a no-op — the field exists only to satisfy verl's engine
+    # contract. Pin the rank/shape explicitly: the TensorDict below already
+    # checks the leading dim == batch_size, but NOT that it is 1-D, so this
+    # guards against silently regressing to the 0.7.x (B,1,1) shape (or any
+    # other rank) that a verl bump might mis-broadcast across the vocab dim.
+    temperature = torch.ones(batch_size, device=device, dtype=torch.float32)
+    assert temperature.shape == (batch_size,), (
+        f"temperature must be 1-D (B,)=({batch_size},) for verl 0.8.0's internal "
+        f"unsqueeze before logits.div_(temperature); got {tuple(temperature.shape)}. "
+        "If this fires after a verl upgrade, re-check verl's temperature handling "
+        "(see the use_remove_padding note below) before changing the shape."
+    )
     td_dict = {
         "target_tokens": target_tokens.to(device),
         "weights": weights_device,
         "loss_mask": weights_device,
-        # Temperature: verl 0.8.0 expects (bsz,) and does unsqueeze internally.
-        # (verl 0.7.x expected (B,1,1) for direct broadcast, but 0.8.0 changed.)
-        "temperature": torch.ones(batch_size, device=device, dtype=torch.float32),
+        "temperature": temperature,
         "adapter_id": adapter_id,
     }
 
@@ -257,10 +270,12 @@ def _datum_list_to_tensordict(
         micro_batch_size_per_gpu=mb,
         # use_remove_padding=False: we use NO_PADDING pad_mode (jagged tensors)
         # but NOT verl's rmpad path because rmpad does
-        #   `logits_rmpad.div_(temperature)` with a scalar temperature
-        # while our TensorDict-resident temperature must be (B,1,1) to pass
-        # TensorDict batch_size validation. These two constraints conflict;
-        # fixing requires monkey-patching verl's prepare_model_outputs (TODO).
+        #   `logits_rmpad.div_(temperature)` expecting a scalar temperature,
+        # while our TensorDict-resident temperature is (B,) (see the temperature
+        # note above): it must carry a leading batch dim to pass TensorDict
+        # batch_size validation, so it can't be a bare scalar. These two
+        # constraints conflict; fixing requires monkey-patching verl's
+        # prepare_model_outputs (TODO).
         # With False + jagged nested tensors + NO_PADDING, verl pads to
         # max_seq_len internally, forwards, then narrows logits back per
         # sample, so per-sample logprob lengths still equal their real
@@ -293,6 +308,19 @@ def _make_verl_loss_fn(
         log_probs_nt = model_output["log_probs"]
         weights = data["weights"]
         batch_size, max_len = weights.shape
+        # Guard (verl 0.8.0 contract): with use_remove_padding=False + NO_PADDING,
+        # verl narrows logits back per sample, so log_probs is a nested
+        # (B, per_sample_len) tensor whose batch dim must equal B (the padded
+        # (B, max_len) view below then aligns per sample). This is the same
+        # forward/narrow path that applies `logits.div_(temperature)`, so a verl
+        # upgrade that changes it trips here loudly instead of silently
+        # misaligning logprobs. (Over-length samples are already caught by
+        # to_padded_tensor's output_size.)
+        assert log_probs_nt.size(0) == batch_size, (
+            f"verl returned log_probs with batch dim {log_probs_nt.size(0)} != "
+            f"expected {batch_size}; verl's forward/temperature path may have changed — "
+            "re-verify before bumping verl past 0.8.x."
+        )
         target_logprobs = torch.nested.to_padded_tensor(
             log_probs_nt, padding=0.0, output_size=(batch_size, max_len)
         )
@@ -906,10 +934,14 @@ class VerlWorkerActor:
         os.environ["MASTER_ADDR"] = master_addr
         os.environ["MASTER_PORT"] = str(master_port)
         # Must set CUDA device before init_process_group to avoid DeviceMesh
-        # picking wrong GPU (PyTorch 2.6+ creates DeviceMesh internally).
+        # picking the wrong GPU (PyTorch 2.6+ creates DeviceMesh internally).
+        # Each actor is a Ray num_gpus=1 process: Ray sets CUDA_VISIBLE_DEVICES
+        # to a single physical GPU that torch sees as cuda:0. Do NOT use the
+        # global rank (self.rank) here — rank>=1 would select a nonexistent
+        # local device and fail before NCCL init. Exactly one device is visible,
+        # so always pin index 0.
         if torch.cuda.is_available():
-            local_rank = int(os.environ.get("LOCAL_RANK", self.rank))
-            torch.cuda.set_device(local_rank)
+            torch.cuda.set_device(0)
         dist.init_process_group(
             backend="nccl" if torch.cuda.is_available() else "gloo",
             rank=self.rank,

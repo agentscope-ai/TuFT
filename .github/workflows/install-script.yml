@@ -255,10 +255,14 @@ jobs:
         env:
           TUFT_HOME: ${{ runner.temp }}/tuft
 
-      - name: Test upgrade --from-source (uses local checkout)
+      - name: Test upgrade --from-source (real git path against this checkout)
         run: |
           export PATH="${TUFT_HOME}/bin:$PATH"
-          tuft upgrade --local-source "$GITHUB_WORKSPACE"
+          # Exercise the real VCS clone+build+resolve path (not --local-source),
+          # pointed at this checkout's git so it validates the PR's own published
+          # metadata instead of upstream main.
+          export TUFT_GIT_URL="file://$GITHUB_WORKSPACE"
+          tuft upgrade --from-source
         env:
           TUFT_HOME: ${{ runner.temp }}/tuft
 

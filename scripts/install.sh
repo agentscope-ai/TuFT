@@ -305,8 +305,12 @@ case "${1:-}" in
             echo "Upgrading from local source: $UPGRADE_LOCAL_SOURCE"
             uv pip install --python "$TUFT_PYTHON" --upgrade "${UPGRADE_LOCAL_SOURCE}[backend,persistence]"
         elif [ "$UPGRADE_FROM_SOURCE" = true ]; then
-            echo "Upgrading from GitHub..."
-            uv pip install --python "$TUFT_PYTHON" --upgrade "git+https://github.com/agentscope-ai/tuft.git#egg=tuft[backend,persistence]"
+            # Repo is overridable (default: upstream main) so CI / advanced users
+            # can exercise the real VCS clone+build+resolve path against a
+            # specific checkout, e.g. TUFT_GIT_URL="file://$GITHUB_WORKSPACE".
+            TUFT_GIT_URL="${TUFT_GIT_URL:-https://github.com/agentscope-ai/tuft.git}"
+            echo "Upgrading from Git: git+${TUFT_GIT_URL}"
+            uv pip install --python "$TUFT_PYTHON" --upgrade "git+${TUFT_GIT_URL}#egg=tuft[backend,persistence]"
         else
             uv pip install --python "$TUFT_PYTHON" --upgrade "tuft[backend,persistence]"
         fi
