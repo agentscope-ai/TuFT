@@ -259,9 +259,10 @@ jobs:
         run: |
           export PATH="${TUFT_HOME}/bin:$PATH"
           # Exercise the real VCS clone+build+resolve path (not --local-source),
-          # pointed at this checkout's git so it validates the PR's own published
-          # metadata instead of upstream main.
-          export TUFT_GIT_URL="file://$GITHUB_WORKSPACE"
+          # pointed at this checkout's git. Pin the exact commit ($GITHUB_SHA):
+          # a bare file:// repo has no origin/HEAD, so uv cannot infer a default
+          # branch and fails without an explicit rev.
+          export TUFT_GIT_URL="file://$GITHUB_WORKSPACE@$GITHUB_SHA"
           tuft upgrade --from-source
         env:
           TUFT_HOME: ${{ runner.temp }}/tuft

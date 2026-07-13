@@ -301,18 +301,25 @@ case "${1:-}" in
         done
 
         echo "Upgrading TuFT..."
+        # verl is pinned to the #6551 git commit in pyproject (see the note there).
+        # uv only honors a URL dependency when it is a DIRECT requirement, not when
+        # it arrives transitively via a registry/git package, so pass it explicitly
+        # on the registry (PyPI) and git upgrade paths. The local-source path builds
+        # tuft as a project and needs no extra arg. Remove this together with the
+        # pyproject git pin once verl publishes a release containing #6551.
+        TUFT_VERL_GIT="verl @ git+https://github.com/verl-project/verl.git@14574ecf52e310055e4d6e9f116bcb14d343d7e0"
         if [ -n "$UPGRADE_LOCAL_SOURCE" ]; then
             echo "Upgrading from local source: $UPGRADE_LOCAL_SOURCE"
             uv pip install --python "$TUFT_PYTHON" --upgrade "${UPGRADE_LOCAL_SOURCE}[backend,persistence]"
         elif [ "$UPGRADE_FROM_SOURCE" = true ]; then
             # Repo is overridable (default: upstream main) so CI / advanced users
             # can exercise the real VCS clone+build+resolve path against a
-            # specific checkout, e.g. TUFT_GIT_URL="file://$GITHUB_WORKSPACE".
+            # specific checkout, e.g. TUFT_GIT_URL="file://$GITHUB_WORKSPACE@$GITHUB_SHA".
             TUFT_GIT_URL="${TUFT_GIT_URL:-https://github.com/agentscope-ai/tuft.git}"
             echo "Upgrading from Git: git+${TUFT_GIT_URL}"
-            uv pip install --python "$TUFT_PYTHON" --upgrade "git+${TUFT_GIT_URL}#egg=tuft[backend,persistence]"
+            uv pip install --python "$TUFT_PYTHON" --upgrade "git+${TUFT_GIT_URL}#egg=tuft[backend,persistence]" "$TUFT_VERL_GIT"
         else
-            uv pip install --python "$TUFT_PYTHON" --upgrade "tuft[backend,persistence]"
+            uv pip install --python "$TUFT_PYTHON" --upgrade "tuft[backend,persistence]" "$TUFT_VERL_GIT"
         fi
 
         # Also update flash-attn
