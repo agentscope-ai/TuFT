@@ -6,7 +6,9 @@ import sys
 import torch
 
 
-FLASH_VERSION = "2.8.3"
+# cu12 wheels are hosted on the aliyun mirror (2.8.3 is NOT published there ->
+# 403); cu13 uses the community GitHub 2.8.3 build. Keep per-CUDA versions.
+FLASH_VERSIONS = {"12": "2.8.1", "13": "2.8.3"}
 
 # Get torch version
 TORCH_VERSION_RAW = torch.__version__
@@ -32,9 +34,10 @@ if IS_ROCM:
 else:
     torch_cuda_version = torch.version.cuda  # type: ignore[attr-defined]
     cuda_major = torch_cuda_version.split(".")[0] if torch_cuda_version else None
-    if cuda_major not in ("12", "13"):
+    if cuda_major not in FLASH_VERSIONS:
         print(f"Only CUDA 12/13 wheels are hosted for flash-attn. Got CUDA {cuda_major}.")
         sys.exit(1)
+    FLASH_VERSION = FLASH_VERSIONS[cuda_major]
     # CUDA 13 wheels use "cu13" tag; CUDA 12 uses "cu12"
     cuda_version = cuda_major
     wheel_filename = (

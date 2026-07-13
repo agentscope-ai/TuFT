@@ -199,14 +199,37 @@ install_tuft() {
         PACKAGE_SPEC="$TUFT_PYPI_PACKAGE"
     fi
 
+    # Ensure the verl override file (pins verl to the #6551 commit) exists, then
+    # install with it so registry/git resolves satisfy verl>=0.8,<0.9.
+    setup_verl_override
+
     # Install tuft with all extras (backend, persistence)
-    uv pip install --python "$TUFT_VENV/bin/python" "${PACKAGE_SPEC}[backend,persistence]"
+    uv pip install --python "$TUFT_VENV/bin/python" --override "$VERL_OVERRIDE_FILE" "${PACKAGE_SPEC}[backend,persistence]"
 
     print_success "TuFT installed successfully"
 }
 
+# Ensure the uv override file pinning verl to the #6551 commit exists at
+# $VERL_OVERRIDE_FILE (prefer the bundled file, else download, else write it
+# inline). See scripts/verl-git-override.txt for the rationale.
+setup_verl_override() {
+    mkdir -p "$(dirname "$VERL_OVERRIDE_FILE")"
+    if [ -n "$LOCAL_SOURCE_PATH" ] && [ -f "$LOCAL_SOURCE_PATH/scripts/verl-git-override.txt" ]; then
+        cp "$LOCAL_SOURCE_PATH/scripts/verl-git-override.txt" "$VERL_OVERRIDE_FILE"
+    elif ! curl -fsSL "$VERL_OVERRIDE_URL" -o "$VERL_OVERRIDE_FILE" 2>/dev/null; then
+        # Offline / pre-merge fallback. Keep in sync with pyproject [tool.uv]
+        # override-dependencies and scripts/verl-git-override.txt.
+        printf '%s\n' "verl @ git+https://github.com/verl-project/verl.git@14574ecf52e310055e4d6e9f116bcb14d343d7e0" > "$VERL_OVERRIDE_FILE"
+    fi
+}
+
 # URL for the flash-attn installation script
 FLASH_ATTN_SCRIPT_URL="https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install_flash_attn.py"
+
+# uv override file that pins verl to the #6551 commit (numpy>=2 + runtime fixes);
+# see scripts/verl-git-override.txt. Passed via --override on every install path.
+VERL_OVERRIDE_URL="https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/verl-git-override.txt"
+VERL_OVERRIDE_FILE="$TUFT_HOME/scripts/verl-git-override.txt"
 
 # Install flash-attn from precompiled wheels (avoids lengthy compilation)
 # Also stores the script locally for later use by install-backend command
@@ -301,25 +324,24 @@ case "${1:-}" in
         done
 
         echo "Upgrading TuFT..."
-        # verl is pinned to the #6551 git commit in pyproject (see the note there).
-        # uv only honors a URL dependency when it is a DIRECT requirement, not when
-        # it arrives transitively via a registry/git package, so pass it explicitly
-        # on the registry (PyPI) and git upgrade paths. The local-source path builds
-        # tuft as a project and needs no extra arg. Remove this together with the
-        # pyproject git pin once verl publishes a release containing #6551.
-        TUFT_VERL_GIT="verl @ git+https://github.com/verl-project/verl.git@14574ecf52e310055e4d6e9f116bcb14d343d7e0"
+        # verl is pinned to the #6551 commit via a uv override file placed at
+        # install time (scripts/verl-git-override.txt). Use --override (not a
+        # direct requirement): the commit reports 0.9.0.dev0, which a normal
+        # requirement can't satisfy against verl>=0.8,<0.9. Remove once verl
+        # publishes a release containing #6551.
+        VERL_OVERRIDE_FILE="$TUFT_HOME/scripts/verl-git-override.txt"
         if [ -n "$UPGRADE_LOCAL_SOURCE" ]; then
             echo "Upgrading from local source: $UPGRADE_LOCAL_SOURCE"
-            uv pip install --python "$TUFT_PYTHON" --upgrade "${UPGRADE_LOCAL_SOURCE}[backend,persistence]"
+            uv pip install --python "$TUFT_PYTHON" --upgrade --override "$VERL_OVERRIDE_FILE" "${UPGRADE_LOCAL_SOURCE}[backend,persistence]"
         elif [ "$UPGRADE_FROM_SOURCE" = true ]; then
             # Repo is overridable (default: upstream main) so CI / advanced users
             # can exercise the real VCS clone+build+resolve path against a
             # specific checkout, e.g. TUFT_GIT_URL="file://$GITHUB_WORKSPACE@$GITHUB_SHA".
             TUFT_GIT_URL="${TUFT_GIT_URL:-https://github.com/agentscope-ai/tuft.git}"
             echo "Upgrading from Git: git+${TUFT_GIT_URL}"
-            uv pip install --python "$TUFT_PYTHON" --upgrade "git+${TUFT_GIT_URL}#egg=tuft[backend,persistence]" "$TUFT_VERL_GIT"
+            uv pip install --python "$TUFT_PYTHON" --upgrade --override "$VERL_OVERRIDE_FILE" "git+${TUFT_GIT_URL}#egg=tuft[backend,persistence]"
         else
-            uv pip install --python "$TUFT_PYTHON" --upgrade "tuft[backend,persistence]" "$TUFT_VERL_GIT"
+            uv pip install --python "$TUFT_PYTHON" --upgrade --override "$VERL_OVERRIDE_FILE" "tuft[backend,persistence]"
         fi
 
         # Also update flash-attn
