@@ -92,6 +92,7 @@ async def run_api_server(
     if chat_template:
         cli_args.extend(["--chat-template", chat_template])
     args = parser.parse_args(cli_args)
+    assert args is not None
     logger.info("Starting vLLM OpenAI API server with args: %s", args)
 
     validate_api_server_args(args)

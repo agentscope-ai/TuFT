@@ -23,7 +23,7 @@ import os
 import socket
 from dataclasses import dataclass
 from logging import getLogger
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 
 logger = getLogger(__name__)
@@ -146,6 +146,7 @@ class VLLMEngine:
                 "top_k": self.config.top_k,
                 "repetition_penalty": self.config.repetition_penalty,
             }
+            assert self.config.max_model_len is not None
 
             engine_args = vllm.AsyncEngineArgs(
                 model=self.config.model_path,
@@ -156,22 +157,22 @@ class VLLMEngine:
                 max_model_len=self.config.max_model_len,
                 enable_prefix_caching=True,
                 enable_chunked_prefill=True,
-                dtype=self.config.dtype,
+                dtype=cast(Any, self.config.dtype),
                 trust_remote_code=True,
                 gpu_memory_utilization=self.config.gpu_memory_utilization,
                 enforce_eager=self.config.enforce_eager,
                 override_generation_config=override_generation_config,
-                reasoning_parser=self.config.reasoning_parser,
+                reasoning_parser=cast(Any, self.config.reasoning_parser),
                 disable_log_stats=True,
                 enable_log_requests=self.config.enable_log_requests,
                 enable_lora=self.config.enable_lora,
-                max_lora_rank=self.config.max_lora_rank,
+                max_lora_rank=cast(Any, self.config.max_lora_rank),
                 max_loras=self.config.max_loras,
                 # Return logprobs of the actual sampling distribution (after
                 # temperature scaling) -- required for RL importance ratios.
                 logprobs_mode="processed_logprobs",
                 async_scheduling=True,
-                **({"quantization": self.config.quantization} if self.config.quantization else {}),
+                quantization=cast(Any, self.config.quantization),
             )
 
             self.async_llm = vllm.AsyncLLMEngine.from_engine_args(engine_args)
