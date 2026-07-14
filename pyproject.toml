@@ -43,8 +43,7 @@ dependencies = [
     # TuFT integrates with vLLM directly (src/tuft/backends/vllm_engine.py);
     # the in-process OpenAI API server shim and the prompt-logprobs worker
     # patch are validated against this exact release. Before changing the pin,
-    # review docs/sphinx_doc/source/development/vllm-backend.md and rerun the GPU
-    # verification checklist there.
+    # review agentscope-ai/TuFT#131 and rerun its GPU verification checklist.
     "vllm==0.24.0; sys_platform == 'linux'",
 ]
 

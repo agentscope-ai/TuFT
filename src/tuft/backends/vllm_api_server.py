@@ -21,7 +21,8 @@ MAINTENANCE NOTE: this embedding recipe touches vLLM internals that have
 historically churned across minor releases (0.12 / 0.13 / 0.17 / 0.22 / 0.23
 all moved or renamed pieces of it). The imports below are validated against
 the exact vLLM version pinned in pyproject.toml; revisit this module whenever
-that pin changes. See docs/sphinx_doc/source/development/vllm-backend.md.
+that pin changes. See agentscope-ai/TuFT#131 for the design and maintenance
+notes.
 """
 
 import asyncio

@@ -2,9 +2,8 @@
 
 This is TuFT's direct vLLM integration, replacing the previously used
 ``vLLMRolloutModel`` from trinity-rft (the behavior mirrors trinity 0.6.0 for
-the vLLM range pinned in pyproject.toml; see
-docs/sphinx_doc/source/development/vllm-backend.md for the full design and
-maintenance notes). One actor instance owns:
+the vLLM range pinned in pyproject.toml; see agentscope-ai/TuFT#131 for the
+full design and maintenance notes). One actor instance owns:
 
 - a ``vllm.AsyncLLMEngine`` created in ``prepare()``, used directly by the
   Tinker-compatible sampling path (``generate()`` returns raw vLLM
