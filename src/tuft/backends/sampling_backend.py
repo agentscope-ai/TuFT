@@ -123,6 +123,7 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                 else config.max_model_len
             ),
             gpu_memory_utilization=gpu_memory_utilization,
+            enforce_eager=config.sampling_enforce_eager,
             temperature=config.temperature,
             top_p=config.top_p,
             top_k=config.top_k,

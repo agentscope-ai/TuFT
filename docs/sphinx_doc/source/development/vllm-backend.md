@@ -85,7 +85,7 @@ adapter id, so engine-side removal could never succeed.
   RL importance ratios require logprobs of the *actual* sampling
   distribution.
 - **Prompt logprobs** are *not* temperature-scaled by upstream vLLM (still
-  unfixed as of 0.23). `vllm_worker.py` patches
+  unfixed in 0.24.0). `vllm_worker.py` patches
   `GPUModelRunner._get_prompt_logprobs_dict` to add the missing
   `logits /= temperature` step. Removing this patch silently changes prompt
   logprob values whenever temperature ≠ 1.0, which corrupts
@@ -99,12 +99,17 @@ adapter id, so engine-side removal could never succeed.
   Trinity's default); per-request determinism comes from
   `SamplingParams.seed`. `ModelConfig.seed` is intentionally not wired to
   the engine to avoid a behavior change — wire it deliberately if desired.
+- **Eager execution** defaults to enabled for the embedded engine. vLLM 0.24's
+  default TorchInductor/CUDA-graph warmup did not finish within several
+  minutes on an L4, both standalone and colocated. Set
+  ``sampling_enforce_eager`` to ``false`` only after validating startup
+  latency, prompt logprobs, LoRA, and colocation on the target hardware.
 
 ## Maintenance guide
 
 The vLLM API surface TuFT uses splits into two stability classes:
 
-**Stable (engine-level; unchanged across vLLM 0.10 → 0.25):**
+**Stable (public engine-level surface):**
 `AsyncEngineArgs`, `AsyncLLMEngine.from_engine_args`, `generate()`,
 `add_lora`/`remove_lora`, `SamplingParams` fields (`n`, `seed`, `top_k`,
 `top_p`, `temperature`, `logprobs`, `prompt_logprobs`, `stop`,
@@ -125,17 +130,17 @@ When **bumping the vLLM pin** in `pyproject.toml`, check:
    `init_app_state`, `create_server_socket`, `serve_http`,
    `make_arg_parser`, `FlexibleArgumentParser`, utils modules) and
    `init_app_state(engine, app.state, args)` signature is unchanged.
-2. The `reasoning_content → reasoning` alias patch: already unnecessary for
-   vLLM >= 0.22 (fixed upstream in #42664); delete it once the pin's floor
-   passes 0.22.
-3. `vllm_worker.py`: diff the patched `_get_prompt_logprobs_dict` against
+2. `vllm_worker.py`: diff the patched `_get_prompt_logprobs_dict` against
    upstream `gpu_model_runner.py` for the new version; re-vendor with the
    `PATCH START/END` block if upstream changed, and check whether upstream
    has finally added temperature scaling (then delete the patch entirely).
-4. Env vars in `VLLMEngine.__init__` (e.g. `VLLM_USE_V2_MODEL_RUNNER`,
+3. Env vars in `VLLMEngine.__init__` (e.g. `VLLM_USE_V2_MODEL_RUNNER`,
    `VLLM_ENABLE_V1_MULTIPROCESSING`) — review against the new version's
    defaults.
-5. Run the GPU verification below.
+4. Align vLLM's exact PyTorch ABI requirement and its FastAPI/Transformers
+   bounds in `pyproject.toml`, then resolve the dependency graph with uv.
+5. Run `scripts/verify_runtime_versions.py` in packaging/release-image paths
+   and run the GPU verification below.
 6. Medium-term watch item: vLLM's experimental Rust frontend (RFC #40846)
    runs the API server out-of-process and cannot share an in-process
    engine. The Python server remains the default with no deprecation
@@ -148,9 +153,13 @@ modules):
 
 ```bash
 # Sampling backend + OpenAI API integration tests on a GPU machine
-TUFT_TEST_MODEL=Qwen/Qwen3-0.6B uv run pytest tests/test_sampling_backend.py -m gpu
+TUFT_TEST_MODEL=Qwen/Qwen3-0.6B uv run pytest tests/test_sampling_backend.py -m gpu --gpu
 TUFT_TEST_MODEL=Qwen/Qwen3-0.6B uv run pytest tests/test_openai_api.py --gpu
 ```
+
+The current project pins vLLM 0.24.0 and its required PyTorch 2.11.0 ABI.
+The release Dockerfile verifies those installed versions against
+`pyproject.toml` before an image can be published.
 
 Also confirm manually: (a) prompt logprobs at `temperature=0.7` with and
 without prefix cache agree, (b) a trained LoRA is servable both through

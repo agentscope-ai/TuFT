@@ -10,7 +10,9 @@
 # The uv virtual environment is created at `/root/.tuft/venv`, use `source /root/.tuft/venv/bin/activate` to activate it.
 # Make sure to use `uv pip` to install packages within the virtual environment.
 
-FROM nvcr.io/nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04
+# torch 2.11 and vLLM 0.24 use the CUDA 13.0 wheel ABI. Keep the system
+# toolkit aligned so optional compiled kernels can also resolve libnvrtc.so.13.
+FROM nvcr.io/nvidia/cuda:13.0.2-cudnn-devel-ubuntu22.04
 
 WORKDIR /workspace
 
@@ -42,7 +44,8 @@ COPY ./scripts ./scripts
 RUN bash ./scripts/install.sh --local-source /workspace \
     && . $HOME/.local/bin/env \
     && . /root/.tuft/venv/bin/activate \
-    && uv pip install .[dev] --override scripts/verl-git-override.txt
+    && uv pip install .[dev] --override scripts/verl-git-override.txt \
+    && python scripts/verify_runtime_versions.py
 
 ENTRYPOINT ["/bin/bash", "-c", "source ${VIRTUAL_ENV}/bin/activate && exec \"$@\"", "--"]
 CMD ["bash"]

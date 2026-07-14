@@ -7,9 +7,11 @@ authors = [
 ]
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.15"
 dependencies = [
-    "fastapi>=0.125.0",
+    # Keep the API stack aligned with the pinned vLLM release. vLLM 0.24.0
+    # requires FastAPI >=0.133,<0.137.
+    "fastapi>=0.133.0,<0.137.0",
     "httpx>=0.28.1",
     "numpy>=2.0.0",
     "tinker>=0.18.2",
@@ -18,7 +20,7 @@ dependencies = [
     "uvicorn[standard]>=0.38.0",
     "omegaconf>=2.3.0",
     "ray>=2.50.0",
-    "transformers>=5.2.0,<6.0.0",
+    "transformers>=5.5.3,<6.0.0",
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-exporter-otlp>=1.20.0",
@@ -27,7 +29,8 @@ dependencies = [
     "psutil>=5.9.0",
     "nvidia-ml-py>=13.0.0",
     # Ray worker installs only main deps when packing; FSDP/verl + vLLM sampling need these
-    "torch>=2.0.0",
+    # vLLM CUDA extensions are built against this exact PyTorch ABI.
+    "torch==2.11.0",
     "peft>=0.18.0",
     "tensordict>=0.5.0",
     # Normal (registry-clean, publishable) metadata. The only released verl
@@ -39,9 +42,10 @@ dependencies = [
     "verl>=0.8.0,<0.9",
     # TuFT integrates with vLLM directly (src/tuft/backends/vllm_engine.py);
     # the in-process OpenAI API server shim and the prompt-logprobs worker
-    # patch are validated against this range (Qwen3.5 needs >=0.19.1). Before
-    # raising the cap, review docs/sphinx_doc/source/development/vllm-backend.md.
-    "vllm>=0.19.1,<=0.23.0; sys_platform == 'linux'",
+    # patch are validated against this exact release. Before changing the pin,
+    # review docs/sphinx_doc/source/development/vllm-backend.md and rerun the GPU
+    # verification checklist there.
+    "vllm==0.24.0; sys_platform == 'linux'",
 ]
 
 [project.scripts]

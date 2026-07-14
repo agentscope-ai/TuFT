@@ -45,6 +45,10 @@ class VLLMEngineConfig:
     gpu_memory_utilization: float = 0.9
     dtype: str = "bfloat16"
     seed: int = 42
+    # vLLM 0.24's default TorchInductor/CUDA-graph warmup can take many
+    # minutes (especially with fractional-GPU colocation). Prefer predictable
+    # startup until that path is suitable for TuFT's embedded engine again.
+    enforce_eager: bool = True
 
     # Default sampling parameters (per-request params override via clone).
     temperature: float = 1.0
@@ -92,8 +96,8 @@ class VLLMEngine:
         self.config = config
         self.vllm_version = get_vllm_version()
 
-        # Engine environment. Mirrors the trinity-rft 0.6.0 setup that TuFT
-        # previously ran on for vLLM 0.19-0.23; revisit when bumping vLLM.
+        # Engine environment. Validated with the exact vLLM pin in
+        # pyproject.toml; revisit these overrides whenever that pin changes.
         os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
         os.environ["VLLM_RAY_BUNDLE_INDICES"] = config.bundle_indices
         if self.vllm_version >= parse_version("0.22.0"):
@@ -156,6 +160,7 @@ class VLLMEngine:
                 dtype=self.config.dtype,
                 trust_remote_code=True,
                 gpu_memory_utilization=self.config.gpu_memory_utilization,
+                enforce_eager=self.config.enforce_eager,
                 override_generation_config=override_generation_config,
                 reasoning_parser=self.config.reasoning_parser,
                 disable_log_stats=True,

@@ -5,12 +5,14 @@ on:
     branches: [main, dev/**, feature/**]
     paths:
       - 'scripts/install.sh'
+      - 'scripts/verify_runtime_versions.py'
       - '.github/workflows/install-script.yml'
       - 'pyproject.toml'
   pull_request:
     branches: [main]
     paths:
       - 'scripts/install.sh'
+      - 'scripts/verify_runtime_versions.py'
       - '.github/workflows/install-script.yml'
       - 'pyproject.toml'
 
@@ -150,6 +152,7 @@ jobs:
         run: |
           "${TUFT_HOME}/venv/bin/python" -c "import peft; print('peft imported successfully')"
           "${TUFT_HOME}/venv/bin/python" -c "import redis; print('redis imported successfully')"
+          "${TUFT_HOME}/venv/bin/python" scripts/verify_runtime_versions.py
         env:
           TUFT_HOME: ${{ runner.temp }}/tuft
 

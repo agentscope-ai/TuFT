@@ -91,6 +91,9 @@ class ModelConfig(BaseModel):
     # Max context length for sampling (vLLM) only; if unset, max_model_len is used.
     # Can be set smaller (e.g. 2048) in testing to reduce GPU memory and startup time.
     sampling_max_model_len: int | None = None
+    # Disable vLLM's TorchInductor/CUDA-graph path. It currently fails to finish
+    # warmup reliably in TuFT's embedded and fractional-GPU configurations.
+    sampling_enforce_eager: bool = True
 
     # OpenAI-compatible vLLM API: tool calling (required for qwenpaw ReAct agents).
     enable_auto_tool_choice: bool = False
