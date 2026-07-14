@@ -69,13 +69,17 @@ tuft
 
 ## 通过 PyPI 安装
 
-您也可以直接从 PyPI 安装 TuFT：
+在 Verl 发布包含 NumPy 2 修复的版本之前，通过 PyPI 安装时必须使用
+TuFT 提供的临时 override 文件：
 
 ```bash
-uv pip install tuft
+curl -fsSL https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/verl-git-override.txt \
+  -o /tmp/tuft-verl-git-override.txt
+uv pip install --override /tmp/tuft-verl-git-override.txt "tuft>=0.1.8"
 
 # 根据需要安装可选依赖
-uv pip install "tuft[dev,backend,persistence]"
+uv pip install --override /tmp/tuft-verl-git-override.txt \
+  "tuft[dev,backend,persistence]>=0.1.8"
 ```
 
 ## 使用预构建的 Docker 镜像

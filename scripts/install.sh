@@ -16,7 +16,7 @@ TUFT_HOME="${TUFT_HOME:-$HOME/.tuft}"
 TUFT_BIN="$TUFT_HOME/bin"
 TUFT_VENV="$TUFT_HOME/venv"
 PYTHON_VERSION="3.12"
-TUFT_PYPI_PACKAGE="tuft"
+TUFT_PYPI_REQUIREMENT="${TUFT_PYPI_REQUIREMENT:-tuft[backend,persistence]>=0.1.8}"
 TUFT_GIT_REPO="https://github.com/agentscope-ai/tuft.git"
 INSTALL_FROM_SOURCE=false
 LOCAL_SOURCE_PATH=""
@@ -70,6 +70,7 @@ parse_args() {
                 echo ""
                 echo "Environment Variables:"
                 echo "  TUFT_HOME             Installation directory (default: ~/.tuft)"
+                echo "  TUFT_PYPI_REQUIREMENT Override the default PyPI requirement"
                 exit 0
                 ;;
             *)
@@ -190,21 +191,21 @@ install_tuft() {
     # Determine package source
     if [ -n "$LOCAL_SOURCE_PATH" ]; then
         print_step "Installing from local source: $LOCAL_SOURCE_PATH"
-        PACKAGE_SPEC="$LOCAL_SOURCE_PATH"
+        PACKAGE_SPEC="${LOCAL_SOURCE_PATH}[backend,persistence]"
     elif [ "$INSTALL_FROM_SOURCE" = true ]; then
         print_step "Installing from GitHub: $TUFT_GIT_REPO"
-        PACKAGE_SPEC="git+${TUFT_GIT_REPO}"
+        PACKAGE_SPEC="git+${TUFT_GIT_REPO}#egg=tuft[backend,persistence]"
     else
-        print_step "Installing from PyPI: $TUFT_PYPI_PACKAGE"
-        PACKAGE_SPEC="$TUFT_PYPI_PACKAGE"
+        print_step "Installing from PyPI: $TUFT_PYPI_REQUIREMENT"
+        PACKAGE_SPEC="$TUFT_PYPI_REQUIREMENT"
     fi
 
     # Ensure the verl override file (pins verl to the #6551 commit) exists, then
     # install with it so registry/git resolves satisfy verl>=0.8,<0.9.
     setup_verl_override
 
-    # Install tuft with all extras (backend, persistence)
-    uv pip install --python "$TUFT_VENV/bin/python" --override "$VERL_OVERRIDE_FILE" "${PACKAGE_SPEC}[backend,persistence]"
+    # PACKAGE_SPEC already includes the backend and persistence extras.
+    uv pip install --python "$TUFT_VENV/bin/python" --override "$VERL_OVERRIDE_FILE" "$PACKAGE_SPEC"
 
     print_success "TuFT installed successfully"
 }
@@ -216,10 +217,19 @@ setup_verl_override() {
     mkdir -p "$(dirname "$VERL_OVERRIDE_FILE")"
     if [ -n "$LOCAL_SOURCE_PATH" ] && [ -f "$LOCAL_SOURCE_PATH/scripts/verl-git-override.txt" ]; then
         cp "$LOCAL_SOURCE_PATH/scripts/verl-git-override.txt" "$VERL_OVERRIDE_FILE"
-    elif ! curl -fsSL "$VERL_OVERRIDE_URL" -o "$VERL_OVERRIDE_FILE" 2>/dev/null; then
+        return
+    fi
+
+    local tmp_file="${VERL_OVERRIDE_FILE}.tmp"
+    if curl -fsSL "$VERL_OVERRIDE_URL" -o "$tmp_file" 2>/dev/null; then
+        mv "$tmp_file" "$VERL_OVERRIDE_FILE"
+    else
+        rm -f "$tmp_file"
         # Offline / pre-merge fallback. Keep in sync with pyproject [tool.uv]
         # override-dependencies and scripts/verl-git-override.txt.
-        printf '%s\n' "verl @ git+https://github.com/verl-project/verl.git@14574ecf52e310055e4d6e9f116bcb14d343d7e0" > "$VERL_OVERRIDE_FILE"
+        if [ ! -f "$VERL_OVERRIDE_FILE" ]; then
+            printf '%s\n' "verl @ git+https://github.com/verl-project/verl.git@14574ecf52e310055e4d6e9f116bcb14d343d7e0" > "$VERL_OVERRIDE_FILE"
+        fi
     fi
 }
 
@@ -278,6 +288,9 @@ set -e
 TUFT_HOME="${TUFT_HOME:-$HOME/.tuft}"
 TUFT_VENV="$TUFT_HOME/venv"
 TUFT_PYTHON="$TUFT_VENV/bin/python"
+TUFT_PYPI_REQUIREMENT="${TUFT_PYPI_REQUIREMENT:-tuft[backend,persistence]>=0.1.8}"
+VERL_OVERRIDE_URL="${TUFT_VERL_OVERRIDE_URL:-https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/verl-git-override.txt}"
+VERL_OVERRIDE_FILE="$TUFT_HOME/scripts/verl-git-override.txt"
 
 # Verify installation
 if [ ! -f "$TUFT_PYTHON" ]; then
@@ -286,6 +299,27 @@ if [ ! -f "$TUFT_PYTHON" ]; then
     echo '  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install.sh)"'
     exit 1
 fi
+
+# Atomically refresh the release-channel override before upgrades. Keep the
+# remote file at this stable URL after the workaround is removed (it can become
+# comment-only), so old wrappers stop applying the pin instead of retaining it.
+refresh_verl_override() {
+    mkdir -p "$(dirname "$VERL_OVERRIDE_FILE")"
+    local tmp_file="${VERL_OVERRIDE_FILE}.tmp"
+    if curl -fsSL "$VERL_OVERRIDE_URL" -o "$tmp_file" 2>/dev/null; then
+        mv "$tmp_file" "$VERL_OVERRIDE_FILE"
+        return
+    fi
+
+    rm -f "$tmp_file"
+    if [ -f "$VERL_OVERRIDE_FILE" ]; then
+        echo "Warning: could not refresh the Verl override; using the existing file."
+        return
+    fi
+
+    echo "Error: Verl override is unavailable. Re-run the TuFT installer."
+    return 1
+}
 
 # Handle commands
 case "${1:-}" in
@@ -327,9 +361,15 @@ case "${1:-}" in
         # verl is pinned to the #6551 commit via a uv override file placed at
         # install time (scripts/verl-git-override.txt). Use --override (not a
         # direct requirement): the commit reports 0.9.0.dev0, which a normal
-        # requirement can't satisfy against verl>=0.8,<0.9. Remove once verl
-        # publishes a release containing #6551.
-        VERL_OVERRIDE_FILE="$TUFT_HOME/scripts/verl-git-override.txt"
+        # requirement can't satisfy against verl>=0.8,<0.9. Once verl publishes
+        # a release containing #6551, keep the remote file but make it
+        # comment-only so existing wrappers refresh away the temporary pin.
+        LOCAL_VERL_OVERRIDE="$UPGRADE_LOCAL_SOURCE/scripts/verl-git-override.txt"
+        if [ -n "$UPGRADE_LOCAL_SOURCE" ] && [ -f "$LOCAL_VERL_OVERRIDE" ]; then
+            cp "$LOCAL_VERL_OVERRIDE" "$VERL_OVERRIDE_FILE"
+        else
+            refresh_verl_override
+        fi
         if [ -n "$UPGRADE_LOCAL_SOURCE" ]; then
             echo "Upgrading from local source: $UPGRADE_LOCAL_SOURCE"
             uv pip install --python "$TUFT_PYTHON" --upgrade --override "$VERL_OVERRIDE_FILE" "${UPGRADE_LOCAL_SOURCE}[backend,persistence]"
@@ -341,7 +381,7 @@ case "${1:-}" in
             echo "Upgrading from Git: git+${TUFT_GIT_URL}"
             uv pip install --python "$TUFT_PYTHON" --upgrade --override "$VERL_OVERRIDE_FILE" "git+${TUFT_GIT_URL}#egg=tuft[backend,persistence]"
         else
-            uv pip install --python "$TUFT_PYTHON" --upgrade --override "$VERL_OVERRIDE_FILE" "tuft[backend,persistence]"
+            uv pip install --python "$TUFT_PYTHON" --upgrade --override "$VERL_OVERRIDE_FILE" "$TUFT_PYPI_REQUIREMENT"
         fi
 
         # Also update flash-attn
@@ -397,6 +437,8 @@ case "${1:-}" in
         echo "  TUFT_PORT            Default port for launch command"
         echo "  TUFT_CHECKPOINT_DIR  Default checkpoint directory"
         echo "  TUFT_LOG_LEVEL       Default log level"
+        echo "  TUFT_PYPI_REQUIREMENT Override the PyPI package requirement"
+        echo "  TUFT_VERL_OVERRIDE_URL Override the release-channel Verl override URL"
         echo ""
         echo "Examples:"
         echo "  tuft launch --config tuft_config.yaml"

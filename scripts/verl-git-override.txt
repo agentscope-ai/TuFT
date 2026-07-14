@@ -4,5 +4,7 @@
 # because a normal direct requirement cannot satisfy verl>=0.8,<0.9 (the pinned
 # commit reports 0.9.0.dev0) and registry/pip-mode installs ignore pyproject
 # [tool.uv]. Keep in sync with the [tool.uv] override-dependencies in
-# pyproject.toml; remove both once verl publishes a release containing #6551.
+# pyproject.toml. Once verl publishes a release containing #6551, remove the
+# project override but keep this file at the same path with comments only, so
+# installed wrappers refresh away the temporary pin.
 verl @ git+https://github.com/verl-project/verl.git@14574ecf52e310055e4d6e9f116bcb14d343d7e0

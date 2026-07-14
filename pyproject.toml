@@ -1,6 +1,6 @@
 [project]
 name = "tuft"
-version = "0.1.7"
+version = "0.1.8"
 description = "A multi-tenant fine-tuning platform for LLMs with Tinker-compatible API"
 authors = [
     { name = "TuFT Developers", email = "tuft@list.alibaba-inc.com" }
@@ -140,7 +140,9 @@ ruff = "^(\\.venv|tinker)/"
 # an override replaces the constraint. Covers project-mode installs (uv pip
 # install -e . / . / .[dev] / --local-source). install.sh and docker pass the
 # same pin via --override scripts/verl-git-override.txt for registry/git installs.
-# Remove both once verl publishes a release containing #6551.
+# Once verl publishes a release containing #6551, remove this project override
+# and leave scripts/verl-git-override.txt present but comment-only so installed
+# wrappers refresh away the temporary pin.
 override-dependencies = [
     "verl @ git+https://github.com/verl-project/verl.git@14574ecf52e310055e4d6e9f116bcb14d343d7e0",
 ]
