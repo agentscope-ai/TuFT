@@ -1,4 +1,4 @@
-"""Sampling backend implementated using vLLM"""
+"""Sampling backend implemented using vLLM"""
 
 import asyncio
 import json
@@ -16,6 +16,7 @@ from tinker import types
 from ..config import ModelConfig
 from ..telemetry.tracing import get_tracer
 from .base_backend import BaseSamplingBackend
+from .vllm_engine import VLLMEngine, VLLMEngineConfig
 
 
 _get_tracer = lambda: get_tracer("tuft.sampling_backend")  # noqa: E731
@@ -29,43 +30,13 @@ def _build_sample_response(
     include_prompt_logprobs: bool = False,
     topk_prompt_logprobs: int = 0,
 ) -> types.SampleResponse:
-    """Build a tinker 0.18.2 SampleResponse from vLLM RequestOutput.
+    """Build a tinker 0.18.2 SampleResponse from a raw vLLM RequestOutput.
 
-    WHY THIS EXISTS:
-      trinity-rft 0.5.1 declares ``tinker>=0.10.0`` as a dependency but its
-      ``vLLMRolloutModel.sample()`` constructs ``SampledSequence`` and
-      ``SampleResponse`` using the old tinker 0.7 keyword arguments
-      (``tokens=``, ``logprobs=``, ``prompt_logprobs=``,
-      ``topk_prompt_logprobs=``).  In tinker 0.18.2 these types are frozen
-      dataclasses and the old names are no longer valid constructor parameters,
-      causing ``TypeError: SampledSequence.__init__() got an unexpected keyword
-      argument 'tokens'``.
-
-      Because the trinity model runs as a **Ray remote actor in a separate
-      process**, we cannot monkey-patch tinker's constructors from our main
-      process.  The only self-contained workaround is to bypass trinity's
-      ``sample()`` entirely, call its lower-level ``_generate_internal()``
-      (which returns the raw vLLM ``RequestOutput`` without touching tinker
-      types), and build the ``SampleResponse`` ourselves here using the new
-      tinker 0.18.2 constructor API.
-
-    HOW TO REVERT WHEN TRINITY IS FIXED:
-      The recommended first step is to upgrade trinity-rft to its latest
-      version (``pip install --upgrade trinity-rft``).  If the new version
-      constructs ``SampledSequence`` / ``SampleResponse`` with tinker
-      0.18.2-compatible keyword arguments (``_tokens_list=``,
-      ``_logprobs_list=``, etc.), then do the following:
-
-      1. In ``VLLMSamplingBackend.sample()``, replace the call to
-         ``engine._generate_internal.remote()`` + ``_build_sample_response()``
-         with a direct call to ``engine.sample.remote()``.
-      2. Delete this ``_build_sample_response()`` function.
-      3. Optionally delete ``_normalize_sample_response()`` if no longer needed.
-      4. Remove the ``skip_reading_prefix_cache`` workaround in
-         ``VLLMSamplingBackend.sample()`` (trinity handles it internally).
-
-    The logic below mirrors trinity's ``vllm_model.py::sample()`` but uses
-    the new constructor API (``_tokens_list=``, ``_logprobs_list=``, etc.).
+    The engine actor (``vllm_engine.VLLMEngine.generate``) returns vLLM's
+    ``RequestOutput`` untouched; this function is the single adapter between
+    vLLM's output format and tinker's frozen dataclasses (constructed via
+    their list-based ``_tokens_list=`` / ``_logprobs_list=`` fields in
+    tinker 0.18.2).
     """
     sequences: list[types.SampledSequence] = []
     topk_prompt_logprobs_list: list[list[tuple[int, float]] | None] = [None]
@@ -104,74 +75,6 @@ def _build_sample_response(
     )
 
 
-def _normalize_sample_response(raw: Any) -> types.SampleResponse:
-    """Normalize engine sample response to tinker 0.18.2 SampleResponse dataclass.
-
-    Handles responses from engines that may use older tinker versions:
-    - If already a SampleResponse dataclass: pass through
-    - If dict (JSON-like): construct from dict fields
-    - If Pydantic-like object with .sequences attribute: extract and convert
-    """
-    if isinstance(raw, types.SampleResponse):
-        return raw
-
-    # Handle dict response (e.g., from JSON serialization)
-    if isinstance(raw, dict):
-        sequences = []
-        for seq_data in raw.get("sequences", []):
-            if isinstance(seq_data, dict):
-                sequences.append(
-                    types.SampledSequence(
-                        stop_reason=seq_data["stop_reason"],
-                        _tokens_list=seq_data.get("tokens", []),
-                        _logprobs_list=seq_data.get("logprobs"),
-                    )
-                )
-            else:
-                # Already a SampledSequence-like object
-                sequences.append(
-                    types.SampledSequence(
-                        stop_reason=seq_data.stop_reason,
-                        _tokens_list=list(seq_data.tokens) if hasattr(seq_data, "tokens") else [],
-                        _logprobs_list=list(seq_data.logprobs)
-                        if hasattr(seq_data, "logprobs") and seq_data.logprobs is not None
-                        else None,
-                    )
-                )
-        return types.SampleResponse(
-            sequences=sequences,
-            _prompt_logprobs_list=raw.get("prompt_logprobs"),
-            _topk_prompt_logprobs_list=raw.get("topk_prompt_logprobs"),
-        )
-
-    # Handle old Pydantic-like object (has .sequences attribute)
-    if hasattr(raw, "sequences"):
-        sequences = []
-        for seq in raw.sequences:
-            tokens = list(seq.tokens) if hasattr(seq, "tokens") else []
-            logprobs = (
-                list(seq.logprobs)
-                if hasattr(seq, "logprobs") and seq.logprobs is not None
-                else None
-            )
-            sequences.append(
-                types.SampledSequence(
-                    stop_reason=seq.stop_reason,
-                    _tokens_list=tokens,
-                    _logprobs_list=logprobs,
-                )
-            )
-        prompt_lp = getattr(raw, "prompt_logprobs", None)
-        topk_lp = getattr(raw, "topk_prompt_logprobs", None)
-        return types.SampleResponse(
-            sequences=sequences,
-            _prompt_logprobs_list=prompt_lp,
-            _topk_prompt_logprobs_list=topk_lp,
-        )
-
-    raise TypeError(f"Cannot normalize sample response of type {type(raw)}")
-
-
 class VLLMSamplingBackend(BaseSamplingBackend):
     """A sampling backend using vLLM.
 
@@ -203,17 +106,23 @@ class VLLMSamplingBackend(BaseSamplingBackend):
         else:
             return self._create_standalone_engine(config)
 
-    def _build_inference_model_config(self, config: ModelConfig, **extra_kwargs):
-        from trinity.common.config import InferenceModelConfig
-
-        return InferenceModelConfig(
+    def _build_engine_config(
+        self,
+        config: ModelConfig,
+        *,
+        tensor_parallel_size: int,
+        gpu_memory_utilization: float,
+        bundle_indices: str = "",
+    ) -> VLLMEngineConfig:
+        return VLLMEngineConfig(
             model_path=str(config.model_path),
-            tensor_parallel_size=extra_kwargs.pop("tensor_parallel_size"),
+            tensor_parallel_size=tensor_parallel_size,
             max_model_len=(
                 config.sampling_max_model_len
                 if config.sampling_max_model_len is not None
                 else config.max_model_len
             ),
+            gpu_memory_utilization=gpu_memory_utilization,
             temperature=config.temperature,
             top_p=config.top_p,
             top_k=config.top_k,
@@ -221,25 +130,19 @@ class VLLMSamplingBackend(BaseSamplingBackend):
             min_response_tokens=config.min_response_tokens,
             repetition_penalty=1.0,
             enable_lora=True,
+            max_lora_rank=config.max_lora_rank,
+            max_loras=config.max_loras,
+            quantization=config.quantization,
             enable_runtime_lora_updating=True,
             enable_openai_api=True,
             enable_auto_tool_choice=config.enable_auto_tool_choice,
             tool_call_parser=config.tool_call_parser,
             reasoning_parser=config.reasoning_parser,
-            lora_kwargs={
-                "max_lora_rank": config.max_lora_rank,
-                "max_loras": config.max_loras,
-                **({"quantization": config.quantization} if config.quantization else {}),
-            },
-            gpu_memory_utilization=extra_kwargs.pop(
-                "gpu_memory_utilization", config.sampling_memory_fraction
-            ),
-            **extra_kwargs,
+            bundle_indices=bundle_indices,
         )
 
     def _create_colocated_engine(self, config: ModelConfig):
         import ray
-        from trinity.common.models.vllm_model import vLLMRolloutModel
 
         if not self._worker_venv_path or not self._worker_venv_path.strip():
             _runtime_env = {}
@@ -254,14 +157,14 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                 },
             }
         return (
-            ray.remote(vLLMRolloutModel)
+            ray.remote(VLLMEngine)
             .options(
                 name="sampling_model_" + self.base_model,
                 num_gpus=config.sampling_memory_fraction,
                 runtime_env=_runtime_env,
             )
             .remote(
-                config=self._build_inference_model_config(
+                config=self._build_engine_config(
                     config,
                     tensor_parallel_size=1,
                     gpu_memory_utilization=config.sampling_memory_fraction,
@@ -271,7 +174,6 @@ class VLLMSamplingBackend(BaseSamplingBackend):
 
     def _create_standalone_engine(self, config: ModelConfig):
         import ray
-        from trinity.common.models.vllm_model import vLLMRolloutModel
 
         # Assign tensor_parallel_size GPUs to the actor itself
         # so that Ray populates CUDA_VISIBLE_DEVICES correctly.  vLLM then
@@ -304,18 +206,18 @@ class VLLMSamplingBackend(BaseSamplingBackend):
         standalone_gpu_memory_utilization = 0.9
 
         return (
-            ray.remote(vLLMRolloutModel)
+            ray.remote(VLLMEngine)
             .options(
                 name=actor_name,
                 num_gpus=num_gpus,
                 runtime_env=_runtime_env,
             )
             .remote(
-                config=self._build_inference_model_config(
+                config=self._build_engine_config(
                     config,
                     tensor_parallel_size=config.tensor_parallel_size,
-                    bundle_indices=bundle_indices,
                     gpu_memory_utilization=standalone_gpu_memory_utilization,
+                    bundle_indices=bundle_indices,
                 )
             )
         )
@@ -380,32 +282,6 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                         raise ValueError(f"LoRA adapter {lora_id} not found in backend.")
                     lora_request = self.lora_adapters[lora_id] if lora_id is not None else None
 
-                # -----------------------------------------------------------------
-                # WORKAROUND: bypass trinity's engine.sample.remote()
-                #
-                # trinity-rft 0.5.1 uses old tinker 0.7 constructor keywords
-                # (tokens=, logprobs=) inside its sample() method, which crash
-                # with tinker 0.18.2 frozen dataclasses.  The actor runs in a
-                # separate Ray worker process, so monkey-patching from here
-                # won't help.
-                #
-                # Instead we call the lower-level _generate_internal() which
-                # returns raw vLLM RequestOutput, then build SampleResponse
-                # ourselves via _build_sample_response() using the new API.
-                #
-                # TODO(trinity): First try upgrading trinity-rft to latest
-                # (pip install --upgrade trinity-rft). If the new version is
-                # compatible with tinker 0.18.2, replace this block with:
-                #   raw_response = await self.engine.sample.remote(
-                #       prompt=prompt,
-                #       num_samples=num_samples,
-                #       sampling_params=sampling_params,
-                #       include_prompt_logprobs=include_prompt_logprobs,
-                #       topk_prompt_logprobs=topk_prompt_logprobs,
-                #       lora_request=lora_request,
-                #   )
-                #   return _normalize_sample_response(raw_response)
-                # -----------------------------------------------------------------
                 prompt_token_ids = prompt.to_ints()
                 params = {
                     "max_tokens": (
@@ -419,9 +295,11 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                     "prompt_logprobs": (topk_prompt_logprobs if include_prompt_logprobs else None),
                     "logprobs": 0,
                 }
-                # Avoid prefix cache corruption when computing prompt logprobs.
-                # Trinity sets this for vLLM >= 0.12.0 to prevent OverflowError
-                # in vLLM's _update_prompt_logprobs when prefix cache is active.
+                # Avoid prefix cache reads when computing prompt logprobs
+                # (cached prompt chunks would otherwise skip logit computation
+                # and corrupt the returned logprobs). Native vLLM SamplingParams
+                # field since 0.12; newer vLLM auto-sets it when prompt_logprobs
+                # is requested -- kept explicit here for clarity.
                 if include_prompt_logprobs:
                     params["skip_reading_prefix_cache"] = True
                 if sampling_params.stop is not None:
@@ -445,7 +323,7 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                         params["stop_token_ids"] = int_stops
 
                 # Ray @ray.remote decorator adds .remote() method dynamically
-                req_output = await self.engine._generate_internal.remote(  # type: ignore[attr-defined]
+                req_output = await self.engine.generate.remote(  # type: ignore[attr-defined]
                     prompt={"prompt_token_ids": prompt_token_ids},
                     lora_request=lora_request,
                     **params,
@@ -475,7 +353,7 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                     )
                     if not adapter_path.exists():
                         raise ValueError(f"LoRA adapter path {adapter_path} does not exist.")
-                    await self.engine.add_lora_adapter.remote(self.lora_adapters[lora_id])  # type: ignore[attr-defined]
+                    await self.engine.add_lora.remote(self.lora_adapters[lora_id])  # type: ignore[attr-defined]
             except Exception as e:
                 span.record_exception(e)
                 span.set_status(StatusCode.ERROR)
@@ -486,8 +364,9 @@ class VLLMSamplingBackend(BaseSamplingBackend):
             span.set_attribute("tuft.lora_id", lora_id)
             async with self._lock:
                 if lora_id in self.lora_adapters:
-                    await self.engine.remove_lora_adapter.remote(lora_id)  # type: ignore[attr-defined]
-                    del self.lora_adapters[lora_id]
+                    # vLLM removes adapters by their integer id, not name.
+                    lora_request = self.lora_adapters.pop(lora_id)
+                    await self.engine.remove_lora.remote(lora_request.lora_int_id)  # type: ignore[attr-defined]
 
 
 class DPSamplingBackend(BaseSamplingBackend):

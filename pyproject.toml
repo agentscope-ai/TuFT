@@ -37,10 +37,11 @@ dependencies = [
     # and scripts/verl-git-override.txt) rather than a direct URL here, so the
     # published metadata stays clean and the <0.9 cap is honored.
     "verl>=0.8.0,<0.9",
-    # Explicit vLLM cap matching trinity-rft 0.6's tested range (Qwen3.5 needs
-    # >=0.19.1; trinity caps <=0.23.0) so the published metadata is unambiguous.
+    # TuFT integrates with vLLM directly (src/tuft/backends/vllm_engine.py);
+    # the in-process OpenAI API server shim and the prompt-logprobs worker
+    # patch are validated against this range (Qwen3.5 needs >=0.19.1). Before
+    # raising the cap, review docs/sphinx_doc/source/development/vllm-backend.md.
     "vllm>=0.19.1,<=0.23.0; sys_platform == 'linux'",
-    "trinity-rft[vllm]>=0.6.0; sys_platform == 'linux'",
 ]
 
 [project.scripts]
