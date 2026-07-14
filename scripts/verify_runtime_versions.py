@@ -27,9 +27,7 @@ def exact_project_pins(pyproject_path: Path) -> dict[str, str]:
 
     missing = set(PINNED_PACKAGES) - pins.keys()
     if missing:
-        raise RuntimeError(
-            "Expected exact project pins for: " + ", ".join(sorted(missing))
-        )
+        raise RuntimeError("Expected exact project pins for: " + ", ".join(sorted(missing)))
     return pins
 
 
