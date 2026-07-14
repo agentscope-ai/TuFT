@@ -181,7 +181,9 @@
 <h2>Quick start<a class="headerlink" href="#quick-start" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#quick-start'">¶</a></h2>
 <section id="install-optional-dependency">
 <h3>Install optional dependency<a class="headerlink" href="#install-optional-dependency" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#install-optional-dependency'">¶</a></h3>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"tuft[persistence]"</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">curl<span class="w"> </span>-fsSL<span class="w"> </span>https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/verl-git-override.txt<span class="w"> </span><span class="se">\</span>
+</span><span id="line-2"><span class="w">  </span>-o<span class="w"> </span>/tmp/tuft-verl-git-override.txt
+</span><span id="line-3">uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>--override<span class="w"> </span>/tmp/tuft-verl-git-override.txt<span class="w"> </span><span class="s2">"tuft[persistence]&gt;=0.1.8"</span>
 </span></code></pre></div>
 </div>
 </section>
@@ -564,7 +566,7 @@
 </div>
 </footer>
 </div>
-<script src="../_static/documentation_options.js?v=ca7ad2ea"></script>
+<script src="../_static/documentation_options.js?v=22607128"></script>
 <script src="../_static/doctools.js?v=9bcbadda"></script>
 <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
 <script defer="defer" src="../_static/theme.js?v=5db23cf8"></script>

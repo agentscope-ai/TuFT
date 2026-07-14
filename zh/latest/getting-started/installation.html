@@ -203,11 +203,15 @@
 </section>
 <section id="pypi">
 <h2>通过 PyPI 安装<a class="headerlink" href="#pypi" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#pypi'">¶</a></h2>
-<p>您也可以直接从 PyPI 安装 TuFT：</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>tuft
-</span><span id="line-2">
-</span><span id="line-3"><span class="c1"># 根据需要安装可选依赖</span>
-</span><span id="line-4">uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"tuft[dev,backend,persistence]"</span>
+<p>在 Verl 发布包含 NumPy 2 修复的版本之前，通过 PyPI 安装时必须使用
+TuFT 提供的临时 override 文件：</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">curl<span class="w"> </span>-fsSL<span class="w"> </span>https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/verl-git-override.txt<span class="w"> </span><span class="se">\</span>
+</span><span id="line-2"><span class="w">  </span>-o<span class="w"> </span>/tmp/tuft-verl-git-override.txt
+</span><span id="line-3">uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>--override<span class="w"> </span>/tmp/tuft-verl-git-override.txt<span class="w"> </span><span class="s2">"tuft&gt;=0.1.8"</span>
+</span><span id="line-4">
+</span><span id="line-5"><span class="c1"># 根据需要安装可选依赖</span>
+</span><span id="line-6">uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>--override<span class="w"> </span>/tmp/tuft-verl-git-override.txt<span class="w"> </span><span class="se">\</span>
+</span><span id="line-7"><span class="w">  </span><span class="s2">"tuft[dev,backend,persistence]&gt;=0.1.8"</span>
 </span></code></pre></div>
 </div>
 </section>
@@ -285,7 +289,7 @@
 </div>
 </footer>
 </div>
-<script src="../_static/documentation_options.js?v=abd40f1a"></script>
+<script src="../_static/documentation_options.js?v=41b75b8c"></script>
 <script src="../_static/doctools.js?v=9bcbadda"></script>
 <script src="../_static/sphinx_highlight.js?v=dc90522c"></script>
 <script defer="defer" src="../_static/theme.js?v=5db23cf8"></script>
