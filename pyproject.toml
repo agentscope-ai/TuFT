@@ -135,6 +135,7 @@ ruff = ["--fix"]
 ruff = "^(\\.venv|tinker)/"
 
 [tool.uv]
+# Canonical rationale and removal procedure: scripts/verl-git-override.txt.
 # Force verl to the #6551 commit (numpy>=2 + vLLM/nccl runtime fixes). A normal
 # direct requirement can't satisfy verl>=0.8,<0.9 (the commit reports 0.9.0.dev0);
 # an override replaces the constraint. Covers project-mode installs (uv pip

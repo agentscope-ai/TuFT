@@ -236,8 +236,9 @@ setup_verl_override() {
 # URL for the flash-attn installation script
 FLASH_ATTN_SCRIPT_URL="https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install_flash_attn.py"
 
-# uv override file that pins verl to the #6551 commit (numpy>=2 + runtime fixes);
-# see scripts/verl-git-override.txt. Passed via --override on every install path.
+# uv override file that pins verl to the #6551 commit (numpy>=2 + runtime fixes).
+# scripts/verl-git-override.txt is the canonical decision record and removal
+# procedure. Pass it via --override on every supported install path.
 VERL_OVERRIDE_URL="https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/verl-git-override.txt"
 VERL_OVERRIDE_FILE="$TUFT_HOME/scripts/verl-git-override.txt"
 
