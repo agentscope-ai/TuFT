@@ -169,6 +169,7 @@ async def run_api_server(
     if _get_vllm_version() < parse_version("0.22.0"):
         _patch_reasoning_content_alias(logger)
 
+    assert args is not None
     app = build_app(args)
     await init_app_state(async_llm, app.state, args)
 

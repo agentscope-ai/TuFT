@@ -151,26 +151,27 @@ class VLLMEngine:
                 tensor_parallel_size=self.config.tensor_parallel_size,
                 seed=self.config.seed,
                 distributed_executor_backend="mp",
-                max_model_len=self.config.max_model_len,
+                max_model_len=self.config.max_model_len,  # type: ignore[arg-type]
                 enable_prefix_caching=True,
                 enable_chunked_prefill=True,
-                dtype=self.config.dtype,
+                dtype=self.config.dtype,  # type: ignore[arg-type]
                 trust_remote_code=True,
                 gpu_memory_utilization=self.config.gpu_memory_utilization,
                 enforce_eager=self.config.enforce_eager,
                 override_generation_config=override_generation_config,
-                reasoning_parser=self.config.reasoning_parser,
+                reasoning_parser=self.config.reasoning_parser,  # type: ignore[arg-type]
                 disable_log_stats=True,
                 enable_log_requests=self.config.enable_log_requests,
                 enable_lora=self.config.enable_lora,
-                max_lora_rank=self.config.max_lora_rank,
+                max_lora_rank=self.config.max_lora_rank,  # type: ignore[arg-type]
                 max_loras=self.config.max_loras,
                 # Return logprobs of the actual sampling distribution (after
                 # temperature scaling) -- required for RL importance ratios.
                 logprobs_mode="processed_logprobs",
                 async_scheduling=True,
-                **({"quantization": self.config.quantization} if self.config.quantization else {}),
             )
+            if self.config.quantization:
+                engine_args.quantization = self.config.quantization
 
             self.async_llm = vllm.AsyncLLMEngine.from_engine_args(engine_args)
             # Apply TuFT's worker-side patches (prompt-logprobs temperature
