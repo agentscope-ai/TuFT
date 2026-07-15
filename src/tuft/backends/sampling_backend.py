@@ -374,11 +374,11 @@ class VLLMSamplingBackend(BaseSamplingBackend):
         import ray
 
         try:
-            await self.engine.shutdown.remote()
+            await self.engine.shutdown.remote()  # type: ignore[attr-defined]
         except Exception:
             pass
         try:
-            ray.kill(self.engine, no_restart=True)
+            ray.kill(self.engine, no_restart=True)  # type: ignore[arg-type]
         except Exception:
             pass
         self.lora_adapters.clear()

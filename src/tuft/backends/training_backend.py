@@ -140,7 +140,7 @@ class HFTrainingBackend(BaseTrainingBackend):
         import ray
 
         try:
-            ray.kill(self.model, no_restart=True)
+            ray.kill(self.model, no_restart=True)  # type: ignore[arg-type]
         except Exception:
             pass
 
