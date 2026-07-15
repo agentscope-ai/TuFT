@@ -135,6 +135,15 @@ class HFTrainingBackend(BaseTrainingBackend):
                 trace_context=trace_context,
             )
 
+    async def shutdown(self) -> None:
+        """Kill the HF training model Ray actor."""
+        import ray
+
+        try:
+            ray.kill(self.model, no_restart=True)
+        except Exception:
+            pass
+
 
 @dataclass
 class DummyTrainingBackend(BaseTrainingBackend):

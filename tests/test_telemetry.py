@@ -82,7 +82,7 @@ def ray_cluster(request):
         yield
 
 
-def _build_state(tmp_path, use_gpu: bool = False) -> ServerState:
+async def _build_state(tmp_path, use_gpu: bool = False) -> ServerState:
     model_path = (
         Path(os.environ.get("TUFT_TEST_MODEL", "/path/to/model"))
         if use_gpu
@@ -99,7 +99,9 @@ def _build_state(tmp_path, use_gpu: bool = False) -> ServerState:
         )
     ]
     config.telemetry = TelemetryConfig(enabled=True, service_name="tuft-test")
-    return ServerState(config)
+    state = ServerState(config)
+    await state.async_init()
+    return state
 
 
 def _create_session(state: ServerState, user_id: str = "tester") -> str:
@@ -197,7 +199,7 @@ async def test_training_workflow_spans(
     request, tmp_path, span_exporter, setup_tracer_provider, ray_cluster
 ):
     """Test spans for full training workflow with correct attributes."""
-    state = _build_state(tmp_path, request.config.getoption("--gpu"))
+    state = await _build_state(tmp_path, request.config.getoption("--gpu"))
     session_id = _create_session(state)
     training = await _create_training(state, session_id)
     rid = training.training_run_id
@@ -238,7 +240,7 @@ async def test_sampling_workflow_spans(
     request, tmp_path, span_exporter, setup_tracer_provider, ray_cluster
 ):
     """Test spans for sampling workflow with correct attributes."""
-    state = _build_state(tmp_path, request.config.getoption("--gpu"))
+    state = await _build_state(tmp_path, request.config.getoption("--gpu"))
     session_id = _create_session(state)
     sampling_id = await _create_sampling(state, session_id)
     await _run_sample(state, sampling_id)
@@ -260,7 +262,7 @@ async def test_multi_session_and_training_isolation(
     request, tmp_path, span_exporter, setup_tracer_provider, ray_cluster
 ):
     """Test session and training run isolation across different users/sessions."""
-    state = _build_state(tmp_path, request.config.getoption("--gpu"))
+    state = await _build_state(tmp_path, request.config.getoption("--gpu"))
     # Create two sessions with different users
     sid1, sid2 = _create_session(state, "user1"), _create_session(state, "user2")
     t1 = await _create_training(state, sid1, "user1", rank=4)
@@ -292,7 +294,7 @@ async def test_multi_training_run_same_session(
     request, tmp_path, span_exporter, setup_tracer_provider, ray_cluster
 ):
     """Test multiple training runs in same session have isolated spans but same session_id."""
-    state = _build_state(tmp_path, request.config.getoption("--gpu"))
+    state = await _build_state(tmp_path, request.config.getoption("--gpu"))
     sid = _create_session(state)
     t1 = await _create_training(state, sid, rank=4)
     t2 = await _create_training(state, sid, rank=8)
@@ -324,7 +326,7 @@ async def test_multi_sampling_session_isolation(
     request, tmp_path, span_exporter, setup_tracer_provider, ray_cluster
 ):
     """Test multiple sampling sessions have isolated spans."""
-    state = _build_state(tmp_path, request.config.getoption("--gpu"))
+    state = await _build_state(tmp_path, request.config.getoption("--gpu"))
     sid = _create_session(state)
     ss1 = await _create_sampling(state, sid, seq_id=1)
     ss2 = await _create_sampling(state, sid, seq_id=2)
@@ -350,7 +352,7 @@ async def test_end_to_end_with_future_store(
     request, tmp_path, span_exporter, setup_tracer_provider, ray_cluster
 ):
     """Test comprehensive flow including FutureStore spans."""
-    state = _build_state(tmp_path, request.config.getoption("--gpu"))
+    state = await _build_state(tmp_path, request.config.getoption("--gpu"))
     sid = _create_session(state)
     t = await _create_training(state, sid)
     rid = t.training_run_id

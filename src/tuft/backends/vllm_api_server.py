@@ -19,10 +19,9 @@ Two accommodations are required to run inside a Ray actor:
 
 MAINTENANCE NOTE: this embedding recipe touches vLLM internals that have
 historically churned across minor releases (0.12 / 0.13 / 0.17 / 0.22 / 0.23
-all moved or renamed pieces of it). The imports below are validated against
-the exact vLLM version pinned in pyproject.toml; revisit this module whenever
-that pin changes. See agentscope-ai/TuFT#131 for the design and maintenance
-notes.
+all moved or renamed pieces of it). The imports below are valid for the vLLM
+range pinned in pyproject.toml (>=0.19.1,<=0.23.0); revisit this module when
+bumping the pin. See docs/sphinx_doc/source/development/vllm-backend.md.
 """
 
 import asyncio
@@ -30,7 +29,9 @@ import functools
 import logging
 from typing import Optional
 
+import vllm
 import vllm.envs as envs
+from packaging.version import InvalidVersion, parse as parse_version
 from vllm.entrypoints.launcher import serve_http
 from vllm.entrypoints.openai.api_server import (
     build_app,
@@ -43,6 +44,59 @@ from vllm.utils.argparse_utils import FlexibleArgumentParser
 from vllm.utils.network_utils import is_valid_ipv6_address
 from vllm.utils.system_utils import set_ulimit
 from vllm.version import __version__ as VLLM_VERSION
+
+
+def _get_vllm_version():
+    try:
+        return parse_version(vllm.__version__)
+    except InvalidVersion:
+        return parse_version("0.19.1")
+
+
+def _patch_reasoning_content_alias(logger: logging.Logger) -> None:
+    """Map ``reasoning_content`` -> ``reasoning`` in assistant chat messages.
+
+    vLLM's reasoning parsers *emit* ``reasoning_content`` but (before 0.22)
+    reject it when it is sent back in a follow-up request. Fixed upstream in
+    vLLM 0.22.0 (#42664); only applied for older versions.
+    """
+    import vllm.entrypoints.chat_utils as chat_utils
+
+    current = getattr(chat_utils, "_parse_chat_message_content", None)
+    if current is None:
+        raise RuntimeError("vLLM patch failed: _parse_chat_message_content not found")
+
+    if getattr(current, "__patched_reasoning_content_alias__", False):
+        return
+
+    @functools.wraps(current)
+    def _patched_parse_chat_message_content(
+        message,
+        mm_tracker,
+        content_format,
+        interleave_strings,
+        mm_processor_kwargs=None,
+    ):
+        if (
+            isinstance(message, dict)
+            and message.get("role") == "assistant"
+            and message.get("reasoning") is None
+            and message.get("reasoning_content") is not None
+        ):
+            message["reasoning"] = message.pop("reasoning_content")
+
+        return current(
+            message,
+            mm_tracker,
+            content_format,
+            interleave_strings,
+            mm_processor_kwargs=mm_processor_kwargs,
+        )
+
+    _patched_parse_chat_message_content.__patched_reasoning_content_alias__ = True  # type: ignore[attr-defined]
+    chat_utils._parse_chat_message_content = _patched_parse_chat_message_content
+
+    logger.info("Patched vLLM chat_utils to map reasoning_content -> reasoning")
 
 
 def _dummy_add_signal_handler(self, *args, **kwargs):
@@ -92,7 +146,7 @@ async def run_api_server(
     if chat_template:
         cli_args.extend(["--chat-template", chat_template])
     args = parser.parse_args(cli_args)
-    assert args is not None
+    args.structured_outputs_config.reasoning_parser = reasoning_parser
     logger.info("Starting vLLM OpenAI API server with args: %s", args)
 
     validate_api_server_args(args)
@@ -112,10 +166,11 @@ async def run_api_server(
     listen_address = f"http{'s' if is_ssl else ''}://{host_part}:{sock_addr[1]}"
     logger.info("vLLM API server listening on %s", listen_address)
 
-    supported_tasks = await async_llm.get_supported_tasks()
-    model_config = async_llm.model_config
-    app = build_app(args, supported_tasks, model_config)
-    await init_app_state(async_llm, app.state, args, supported_tasks)
+    if _get_vllm_version() < parse_version("0.22.0"):
+        _patch_reasoning_content_alias(logger)
+
+    app = build_app(args)
+    await init_app_state(async_llm, app.state, args)
 
     loop = asyncio.get_event_loop()
     loop.add_signal_handler = functools.partial(  # type: ignore[method-assign, assignment]
@@ -136,7 +191,6 @@ async def run_api_server(
         ssl_certfile=args.ssl_certfile,
         ssl_ca_certs=args.ssl_ca_certs,
         ssl_cert_reqs=args.ssl_cert_reqs,
-        ssl_ciphers=args.ssl_ciphers,
         h11_max_incomplete_event_size=args.h11_max_incomplete_event_size,
         h11_max_header_count=args.h11_max_header_count,
     )

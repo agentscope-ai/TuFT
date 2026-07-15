@@ -32,6 +32,8 @@ from tuft.sampling_controller import SamplingController, SamplingSessionRecord
 from tuft.state import ServerState, SessionManager
 from tuft.training_controller import TrainingController, TrainingRunRecord
 
+from .helpers import clear_ray_state
+
 
 def _is_gpu_mode() -> bool:
     """Check if running in GPU mode (not CPU test mode)."""
@@ -66,17 +68,18 @@ def _create_test_config(checkpoint_dir: Path) -> AppConfig:
 
 
 def _ensure_ray_shutdown():
-    """Ensure Ray is completely shutdown."""
-    if ray.is_initialized():
-        ray.shutdown()
-    # Give Ray time to fully shutdown
-    time.sleep(0.5)
+    """Ensure Ray is completely shutdown, including killing named actors.
+
+    Uses clear_ray_state() to properly kill named Ray actors before
+    shutting down, preventing ActorAlreadyExistsError on re-init.
+    """
+    clear_ray_state()
 
 
 def _init_ray():
     """Initialize a fresh Ray cluster."""
     _ensure_ray_shutdown()
-    ray.init()
+    ray.init(ignore_reinit_error=True)
 
 
 def _create_test_datum() -> types.Datum:
@@ -259,7 +262,11 @@ class TestSamplingSessionPersistence:
         store = get_redis_store()
         app_config = _create_test_config(tmp_path / "checkpoints")
         app_config.ensure_directories()
+        if _is_gpu_mode():
+            _init_ray()
         yield store, app_config
+        if _is_gpu_mode():
+            _ensure_ray_shutdown()
 
     def test_sampling_session_with_history_persisted(self, setup):
         """Test that sampling session history is preserved after restart."""
@@ -291,6 +298,9 @@ class TestSamplingSessionPersistence:
 
         # === Phase 2: Crash and restart ===
         del controller
+        if _is_gpu_mode():
+            _ensure_ray_shutdown()
+            _init_ray()
         new_controller = SamplingController(app_config)
 
         # === Phase 3: Verify history restored ===
@@ -317,7 +327,11 @@ class TestTrainingRunPersistence:
         store = get_redis_store()
         app_config = _create_test_config(tmp_path / "checkpoints")
         app_config.ensure_directories()
+        if _is_gpu_mode():
+            _init_ray()
         yield store, app_config
+        if _is_gpu_mode():
+            _ensure_ray_shutdown()
 
     def test_training_run_persisted_and_restored(self, setup):
         """Test that training runs are persisted and restored on controller creation."""
@@ -344,6 +358,9 @@ class TestTrainingRunPersistence:
 
         # === Phase 2: Server crash (controller destroyed) ===
         del controller
+        if _is_gpu_mode():
+            _ensure_ray_shutdown()
+            _init_ray()
 
         # === Phase 3: Server restart (new controller created) ===
         new_controller = TrainingController(app_config)
@@ -400,6 +417,9 @@ class TestTrainingRunPersistence:
 
         # === Phase 2: Crash and restart ===
         del controller
+        if _is_gpu_mode():
+            _ensure_ray_shutdown()
+            _init_ray()
         new_controller = TrainingController(app_config)
 
         # === Phase 3: Verify restoration ===

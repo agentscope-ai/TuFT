@@ -106,6 +106,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         finally:
             logger.info("Server shutting down")
             await app.state.httpx_client.aclose()
+            await app.state.server_state.shutdown()
             await app.state.server_state.future_store.shutdown()
             store = get_redis_store()
             if store.is_enabled:

@@ -1110,6 +1110,21 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         self._config_dict = _config_to_worker_dict(config)
         self.logger = logging.getLogger(f"{__name__}.FSDPTrainingBackend")
 
+    async def shutdown(self) -> None:
+        """Kill all FSDP worker Ray actors and release GPU resources."""
+        import ray
+
+        for actor in self._actors:
+            try:
+                ray.kill(actor, no_restart=True)
+            except Exception:
+                pass
+        self._actors = []
+        self._worker = None
+        self._world_size = 0
+        self._lora_id_to_adapter_name.clear()
+        self._adapter_name_to_lora_id.clear()
+
     async def async_init(self) -> None:
         if self._world_size > 0 or self._worker is not None:
             return
@@ -1354,11 +1369,26 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                 )
 
             shards = _shard_list(data, n_actors)
+
+            # In multi-actor mode every actor must issue the same number of
+            # micro-batches, otherwise FSDP-2 NCCL collectives deadlock
+            # (one rank finishes early while others are still iterating).
+            # Only use micro-batching when mb evenly divides ALL shard sizes;
+            # otherwise fall back to single-batch per shard (mb=None).
+            if mb > 0 and all(len(s) % mb == 0 for s in shards if s):
+                # Still need same micro-batch count: check that all non-empty
+                # shards produce the same n_micro.
+                micro_counts = {len(s) // mb for s in shards if s}
+                eff_mb = mb if len(micro_counts) == 1 else None
+            else:
+                eff_mb = None
+
             self.logger.info(
-                "FSDP multi-actor forward: batch=%d actors=%d mb=%s",
+                "FSDP multi-actor forward: batch=%d actors=%d mb=%s eff_mb=%s",
                 len(data),
                 n_actors,
                 mb,
+                eff_mb,
             )
 
             refs = []
@@ -1372,7 +1402,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                         loss_fn_name,
                         loss_fn_config,
                         not backward,
-                        mb if mb > 0 else None,
+                        eff_mb,
                     )
                 )
 

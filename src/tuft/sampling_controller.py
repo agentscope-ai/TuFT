@@ -145,6 +145,14 @@ class SamplingController:
         # Re-add adapters for restored sessions
         await self._rebuild_sampling_backends()
 
+    async def shutdown(self) -> None:
+        """Shut down all sampling backends and release GPU/Ray resources."""
+        for backend in self._base_backends.values():
+            try:
+                await backend.shutdown()
+            except Exception:
+                logger.exception("Failed to shut down sampling backend for %s", backend.base_model)
+
     async def _rebuild_sampling_backends(self) -> None:
         """Rebuild sampling backends for restored sessions."""
         invalid_sessions = []

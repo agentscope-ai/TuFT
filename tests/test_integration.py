@@ -578,7 +578,7 @@ def test_fsdp_multi_gpu_training_flow(fsdp_multi_gpu_server_endpoint: str) -> No
     service_client = ServiceClient(
         api_key="tml-test-key",  # pragma: allowlist secret
         base_url=fsdp_multi_gpu_server_endpoint,
-        timeout=180,
+        timeout=300,
     )
     tokenizer = AutoTokenizer.from_pretrained(os.environ["TUFT_TEST_MODEL"])
     try:
@@ -595,8 +595,11 @@ def test_fsdp_multi_gpu_training_flow(fsdp_multi_gpu_server_endpoint: str) -> No
 
         num_epochs = 40
         for epoch in range(1, num_epochs + 1):
+            # First epoch needs a longer timeout because FSDP multi-GPU workers
+            # must complete NCCL init + weight loading before the first forward.
+            fw_timeout = 300 if epoch == 1 else 120
             fwd_out = training_client.forward_backward(train_data, "cross_entropy").result(
-                timeout=120
+                timeout=fw_timeout
             )
             loss = fwd_out.metrics.get("loss:sum", fwd_out.metrics.get("loss", "—"))
             training_client.optim_step(types.AdamParams(learning_rate=1e-4)).result(timeout=120)

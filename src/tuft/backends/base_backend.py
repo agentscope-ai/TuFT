@@ -20,6 +20,14 @@ class BaseBackend(ABC):
     async def async_init(self) -> None:
         """Asynchronous initialization if needed."""
 
+    async def shutdown(self) -> None:  # noqa: B027
+        """Clean up resources (Ray actors, GPU memory, NCCL communicators, etc.).
+
+        Called when the server is shutting down. Subclasses that own Ray actors
+        or other resources should override this to ensure proper cleanup.
+        """
+        pass
+
 
 class BaseSamplingBackend(BaseBackend):
     """Abstract sampling backend."""

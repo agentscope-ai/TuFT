@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Dict, TypeVar
@@ -17,6 +18,9 @@ from .futures import FutureStore
 from .persistence import get_redis_store, is_persistence_enabled, load_record, save_record
 from .sampling_controller import SamplingController
 from .training_controller import TrainingController, TrainingRunRecord
+
+
+logger = logging.getLogger(__name__)
 
 
 T = TypeVar("T")
@@ -127,6 +131,17 @@ class ServerState:
         """Put any async initialization logic here"""
         await self.sampling.async_init()
         await self._restore_from_checkpoints()
+
+    async def shutdown(self) -> None:
+        """Shut down all backends and release resources (Ray actors, GPU memory)."""
+        try:
+            await self.training.shutdown()
+        except Exception:
+            logger.exception("Failed to shut down training backends")
+        try:
+            await self.sampling.shutdown()
+        except Exception:
+            logger.exception("Failed to shut down sampling backends")
 
     async def _restore_from_checkpoints(self) -> None:
         """Restore server state from checkpoints after Redis restore.

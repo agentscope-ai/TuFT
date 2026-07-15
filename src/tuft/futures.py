@@ -129,7 +129,13 @@ class FutureStore:
             # Use TTL for futures to prevent Redis from growing indefinitely
             # Futures are short-lived and can be safely expired
             ttl = get_redis_store().future_ttl
-            save_record(self._build_key(request_id), record, ttl_seconds=ttl)
+            success = save_record(self._build_key(request_id), record, ttl_seconds=ttl)
+            if not success:
+                # payload may contain non-serializable types (e.g. numpy.ndarray
+                # from training outputs).  Strip the payload and re-save so that
+                # the status (ready/failed) is persisted correctly.
+                record_without_payload = record.model_copy(update={"payload": None})
+                save_record(self._build_key(request_id), record_without_payload, ttl_seconds=ttl)
 
     def _allocate_future_id(self) -> int:
         """Allocate and return a new globally unique future_id."""

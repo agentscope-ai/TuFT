@@ -33,7 +33,7 @@ def ray_cluster(request):
     yield
 
 
-def _build_state(tmp_path, use_gpu: bool = False) -> ServerState:
+async def _build_state(tmp_path, use_gpu: bool = False) -> ServerState:
     if use_gpu:
         assert "TUFT_TEST_MODEL" in os.environ, (
             "Environment variable TUFT_TEST_MODEL must be set for this test."
@@ -52,7 +52,9 @@ def _build_state(tmp_path, use_gpu: bool = False) -> ServerState:
             sampling_memory_fraction=0.6,
         )
     ]
-    return ServerState(config)
+    state = ServerState(config)
+    await state.async_init()
+    return state
 
 
 def _create_session(state: ServerState, user_id: str = "tester") -> str:
@@ -66,7 +68,7 @@ def _create_session(state: ServerState, user_id: str = "tester") -> str:
 @pytest.mark.asyncio
 async def test_sampling_session_requires_seq_id(request, tmp_path) -> None:
     use_gpu = request.config.getoption("--gpu")
-    state = _build_state(tmp_path, use_gpu)
+    state = await _build_state(tmp_path, use_gpu)
     session_id = _create_session(state)
     sampling_session_id = await state.create_sampling_session(
         session_id=session_id,
@@ -97,7 +99,7 @@ async def test_sampling_session_requires_seq_id(request, tmp_path) -> None:
 async def test_sampling_session_wrong_user(request, tmp_path) -> None:
     """Test that sampling session access is restricted to the correct user."""
     use_gpu = request.config.getoption("--gpu")
-    state = _build_state(tmp_path, use_gpu)
+    state = await _build_state(tmp_path, use_gpu)
     session_id = _create_session(state)
     sampling_session_id = await state.create_sampling_session(
         session_id=session_id,
@@ -125,7 +127,7 @@ async def test_sampling_session_wrong_user(request, tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_sampling_session_cocurrent(request, tmp_path) -> None:
     use_gpu = request.config.getoption("--gpu")
-    state = _build_state(tmp_path, use_gpu)
+    state = await _build_state(tmp_path, use_gpu)
     session_id = _create_session(state)
     sampling_session_id = await state.create_sampling_session(
         session_id=session_id,
@@ -155,7 +157,7 @@ async def test_sampling_session_cocurrent(request, tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_sampling_seq_id_history_is_monotonic(request, tmp_path) -> None:
     use_gpu = request.config.getoption("--gpu")
-    state = _build_state(tmp_path, use_gpu)
+    state = await _build_state(tmp_path, use_gpu)
     session_id = _create_session(state)
     sampling_session_id = await state.create_sampling_session(
         session_id=session_id,
@@ -191,7 +193,7 @@ async def test_sampling_seq_id_history_is_monotonic(request, tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_sampling_duplicate_seq_id_overwrites_history_entry(request, tmp_path) -> None:
     use_gpu = request.config.getoption("--gpu")
-    state = _build_state(tmp_path, use_gpu)
+    state = await _build_state(tmp_path, use_gpu)
     session_id = _create_session(state)
     sampling_session_id = await state.create_sampling_session(
         session_id=session_id,
@@ -231,7 +233,7 @@ async def test_sampling_duplicate_seq_id_overwrites_history_entry(request, tmp_p
 @pytest.mark.asyncio
 async def test_training_seq_id_enforced(request, tmp_path) -> None:
     use_gpu = request.config.getoption("--gpu")
-    state = _build_state(tmp_path, use_gpu)
+    state = await _build_state(tmp_path, use_gpu)
     session_id = _create_session(state)
     training = await state.create_model(
         session_id,
@@ -299,7 +301,7 @@ async def test_training_seq_id_enforced(request, tmp_path) -> None:
 async def test_training_user_mismatch(request, tmp_path) -> None:
     """Test that training operations are restricted to the correct user."""
     use_gpu = request.config.getoption("--gpu")
-    state = _build_state(tmp_path, use_gpu)
+    state = await _build_state(tmp_path, use_gpu)
     session_id = _create_session(state)
     training = await state.create_model(
         session_id,
@@ -341,7 +343,7 @@ async def test_training_user_mismatch(request, tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_checkpoint_metadata_persisted(request, tmp_path) -> None:
     use_gpu = request.config.getoption("--gpu")
-    state = _build_state(tmp_path, use_gpu)
+    state = await _build_state(tmp_path, use_gpu)
     session_id = _create_session(state)
     training = await state.create_model(
         session_id,
@@ -382,7 +384,7 @@ async def test_checkpoint_metadata_persisted(request, tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_checkpoint_views_reflect_metadata(request, tmp_path) -> None:
     use_gpu = request.config.getoption("--gpu")
-    state = _build_state(tmp_path, use_gpu)
+    state = await _build_state(tmp_path, use_gpu)
     session_id = _create_session(state)
     training = await state.create_model(
         session_id,
@@ -420,7 +422,7 @@ async def test_checkpoint_views_reflect_metadata(request, tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_load_checkpoint_restores_state(request, tmp_path) -> None:
     use_gpu = request.config.getoption("--gpu")
-    state = _build_state(tmp_path, use_gpu)
+    state = await _build_state(tmp_path, use_gpu)
     session_id = _create_session(state)
     training = await state.create_model(
         session_id,
@@ -475,7 +477,7 @@ async def test_load_checkpoint_restores_state(request, tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_rest_client(request, tmp_path) -> None:
     use_gpu = request.config.getoption("--gpu")
-    state = _build_state(tmp_path, use_gpu)
+    state = await _build_state(tmp_path, use_gpu)
     session_id_1 = _create_session(state, "tester")
     training_1 = await state.create_model(
         session_id_1,

@@ -369,6 +369,20 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                     lora_request = self.lora_adapters.pop(lora_id)
                     await self.engine.remove_lora.remote(lora_request.lora_int_id)  # type: ignore[attr-defined]
 
+    async def shutdown(self) -> None:
+        """Shut down the vLLM engine Ray actor and release GPU resources."""
+        import ray
+
+        try:
+            await self.engine.shutdown.remote()
+        except Exception:
+            pass
+        try:
+            ray.kill(self.engine, no_restart=True)
+        except Exception:
+            pass
+        self.lora_adapters.clear()
+
 
 class DPSamplingBackend(BaseSamplingBackend):
     """Data-Parallel sampling backend: N independent vLLM instances with round-robin LB.
@@ -463,6 +477,14 @@ class DPSamplingBackend(BaseSamplingBackend):
     async def remove_adapter(self, lora_id: str) -> None:
         """Remove LoRA adapter from ALL DP instances."""
         await asyncio.gather(*[inst.remove_adapter(lora_id) for inst in self._instances])
+
+    async def shutdown(self) -> None:
+        """Shut down all DP vLLM instances."""
+        for inst in self._instances:
+            try:
+                await inst.shutdown()
+            except Exception:
+                pass
 
 
 def _build_mock_openai_app(model_name: str):
@@ -769,3 +791,13 @@ class DummySamplingBackend(BaseSamplingBackend):
     async def remove_adapter(self, lora_id: str) -> None:
         if lora_id in self.lora_adapters:
             del self.lora_adapters[lora_id]
+
+    async def shutdown(self) -> None:
+        """Stop the mock OpenAI server if running."""
+        if self._mock_server is not None:
+            try:
+                self._mock_server.should_exit = True  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        self._mock_server = None
+        self._mock_thread = None

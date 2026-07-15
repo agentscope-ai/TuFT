@@ -2,8 +2,9 @@
 
 This is TuFT's direct vLLM integration, replacing the previously used
 ``vLLMRolloutModel`` from trinity-rft (the behavior mirrors trinity 0.6.0 for
-the vLLM range pinned in pyproject.toml; see agentscope-ai/TuFT#131 for the
-full design and maintenance notes). One actor instance owns:
+the vLLM range pinned in pyproject.toml; see
+docs/sphinx_doc/source/development/vllm-backend.md for the full design and
+maintenance notes). One actor instance owns:
 
 - a ``vllm.AsyncLLMEngine`` created in ``prepare()``, used directly by the
   Tinker-compatible sampling path (``generate()`` returns raw vLLM
@@ -23,7 +24,7 @@ import os
 import socket
 from dataclasses import dataclass
 from logging import getLogger
-from typing import Any, Optional, cast
+from typing import Any, Optional
 
 
 logger = getLogger(__name__)
@@ -44,10 +45,7 @@ class VLLMEngineConfig:
     gpu_memory_utilization: float = 0.9
     dtype: str = "bfloat16"
     seed: int = 42
-    # vLLM 0.24's default TorchInductor/CUDA-graph warmup can take many
-    # minutes (especially with fractional-GPU colocation). Prefer predictable
-    # startup until that path is suitable for TuFT's embedded engine again.
-    enforce_eager: bool = True
+    enforce_eager: bool = False
 
     # Default sampling parameters (per-request params override via clone).
     temperature: float = 1.0
@@ -95,8 +93,8 @@ class VLLMEngine:
         self.config = config
         self.vllm_version = get_vllm_version()
 
-        # Engine environment. Validated with the exact vLLM pin in
-        # pyproject.toml; revisit these overrides whenever that pin changes.
+        # Engine environment. Mirrors the trinity-rft 0.6.0 setup that TuFT
+        # previously ran on for vLLM 0.19-0.23; revisit when bumping vLLM.
         os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
         os.environ["VLLM_RAY_BUNDLE_INDICES"] = config.bundle_indices
         if self.vllm_version >= parse_version("0.22.0"):
@@ -146,7 +144,6 @@ class VLLMEngine:
                 "top_k": self.config.top_k,
                 "repetition_penalty": self.config.repetition_penalty,
             }
-            assert self.config.max_model_len is not None
 
             engine_args = vllm.AsyncEngineArgs(
                 model=self.config.model_path,
@@ -157,22 +154,22 @@ class VLLMEngine:
                 max_model_len=self.config.max_model_len,
                 enable_prefix_caching=True,
                 enable_chunked_prefill=True,
-                dtype=cast(Any, self.config.dtype),
+                dtype=self.config.dtype,
                 trust_remote_code=True,
                 gpu_memory_utilization=self.config.gpu_memory_utilization,
                 enforce_eager=self.config.enforce_eager,
                 override_generation_config=override_generation_config,
-                reasoning_parser=cast(Any, self.config.reasoning_parser),
+                reasoning_parser=self.config.reasoning_parser,
                 disable_log_stats=True,
                 enable_log_requests=self.config.enable_log_requests,
                 enable_lora=self.config.enable_lora,
-                max_lora_rank=cast(Any, self.config.max_lora_rank),
+                max_lora_rank=self.config.max_lora_rank,
                 max_loras=self.config.max_loras,
                 # Return logprobs of the actual sampling distribution (after
                 # temperature scaling) -- required for RL importance ratios.
                 logprobs_mode="processed_logprobs",
                 async_scheduling=True,
-                quantization=cast(Any, self.config.quantization),
+                **({"quantization": self.config.quantization} if self.config.quantization else {}),
             )
 
             self.async_llm = vllm.AsyncLLMEngine.from_engine_args(engine_args)

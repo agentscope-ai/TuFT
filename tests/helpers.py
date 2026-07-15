@@ -132,9 +132,14 @@ def _start_server(
 
 
 def _stop_server(server: uvicorn.Server, thread: threading.Thread, client: httpx.Client) -> None:
-    """Stop a test server and close its client."""
+    """Stop a test server and close its client.
+
+    The timeout is generous (30s) to allow the server's lifespan handler to
+    complete backend shutdown (killing Ray actors, releasing GPU memory)
+    before clear_ray_state() forces a Ray cluster teardown.
+    """
     server.should_exit = True
-    thread.join(timeout=5)
+    thread.join(timeout=30)
     client.close()
 
 
@@ -205,13 +210,40 @@ def _create_reverse_training_data(tokenizer) -> list[types.Datum]:
 
 
 def clear_ray_state() -> None:
-    """Clear Ray state to avoid resource leak between tests."""
+    """Clear Ray state to avoid resource leak between tests.
+
+    This function performs a thorough cleanup of Ray resources:
+    1. Kill all named Ray actors to free GPU memory and NCCL communicators
+    2. Call ray.shutdown() (without _exiting_interpreter=True) to fully
+       disconnect and stop the local Ray cluster
+    3. Force garbage collection
+
+    The _exiting_interpreter=True flag was previously used, which causes Ray
+    to skip actor cleanup — leaving stale vLLM engines and FSDP workers alive
+    in the Ray cluster. When the next test calls ray.init(), it connects to
+    this stale cluster, leading to SIGSEGV in CoreWorkerMemoryStore::Get()
+    due to corrupted object store state.
+    """
     import gc
     import signal
 
     import psutil
 
-    ray.shutdown(_exiting_interpreter=True)
+    # Kill all named Ray actors before shutting down
+    try:
+        if ray.is_initialized():
+            for actor_name in ray.util.list_named_actors():
+                try:
+                    actor = ray.get_actor(actor_name)
+                    ray.kill(actor, no_restart=True)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # Use ray.shutdown() without _exiting_interpreter=True so that Ray
+    # performs a full cleanup (kills actors, stops local cluster, etc.)
+    ray.shutdown()
     gc.collect()
 
     if os.environ.get("TUFT_DOCKER_UNITTEST") == "1":

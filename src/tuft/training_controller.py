@@ -132,6 +132,14 @@ class TrainingController:
             )
         return backends
 
+    async def shutdown(self) -> None:
+        """Shut down all training backends and release GPU/Ray resources."""
+        for backend in self.training_backends.values():
+            try:
+                await backend.shutdown()
+            except Exception:
+                logger.exception("Failed to shut down training backend for %s", backend.base_model)
+
     def _build_key(self, model_id: str) -> str:
         return get_redis_store().build_key(self.REDIS_KEY_PREFIX, model_id)
 
@@ -740,10 +748,10 @@ class TrainingController:
         record = self.training_runs.get(model_id)
         if record is None or record.backend is None:
             return None
-        try:
-            await record.backend.create_adapter(model_id, types.LoraConfig(rank=record.lora_rank))
-        except Exception:
-            logger.exception("Failed to create adapter for model %s during restore", model_id)
+        # load_state calls load_adapter which creates the adapter from the
+        # checkpoint on disk.  Calling create_adapter first causes PEFT's
+        # load_adapter to fail with "adapter already exists" on HFTrainingBackend.
+        # Only call create_adapter as a fallback if load_state fails.
         try:
             await record.backend.load_state(
                 lora_id=model_id,
@@ -751,10 +759,33 @@ class TrainingController:
                 optimizer=(latest_ckpt.checkpoint_type == "training"),
             )
         except Exception:  # pylint: disable=broad-except
-            # If loading fails, mark as corrupted
-            record.corrupted = True
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._save_training_run, model_id)
-            return None
+            # load_state failed – try create_adapter + load_state as fallback
+            logger.warning("load_state failed for %s, trying create_adapter fallback", model_id)
+            try:
+                await record.backend.create_adapter(
+                    model_id, types.LoraConfig(rank=record.lora_rank)
+                )
+            except Exception:
+                logger.exception("Failed to create adapter for model %s during restore", model_id)
+            try:
+                await record.backend.load_state(
+                    lora_id=model_id,
+                    checkpoint_record=latest_ckpt,
+                    optimizer=(latest_ckpt.checkpoint_type == "training"),
+                )
+            except Exception:
+                # If loading still fails, mark as corrupted but still return
+                # the checkpoint so that futures AFTER the checkpoint are
+                # marked as failed (not ALL futures).
+                record.corrupted = True
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, self._save_training_run, model_id)
+                logger.warning(
+                    "Checkpoint load failed for %s; returning checkpoint "
+                    "with future_id=%d for future cleanup",
+                    model_id,
+                    latest_ckpt.future_id,
+                )
+                return latest_ckpt
 
         return latest_ckpt
