@@ -9,10 +9,11 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 from tinker import types
 from tinker.types.try_again_response import TryAgainResponse
 
+from .compat import maybe_serialize_payload
 from .exceptions import (
     FutureCancelledException,
     FutureNotFoundException,
@@ -87,6 +88,20 @@ class FutureRecord(BaseModel):
         if self.status in ("ready", "failed"):
             self.event.set()
         return self
+
+    @field_serializer("payload", mode="wrap")
+    def _serialize_payload(self, payload: Any, handler: Any, _info: Any) -> Any:
+        """Serialize payload to a JSON-safe form for Redis persistence.
+
+        ForwardBackwardOutput / SampleResponse are tinker dataclasses holding
+        numpy arrays (TensorData._numpy) that Pydantic cannot JSON-serialize.
+        Convert them via the same helper used for the HTTP response; every other
+        payload keeps Pydantic's default serialization.
+        """
+        converted = maybe_serialize_payload(payload)
+        if converted is payload:
+            return handler(payload)
+        return converted
 
 
 class FutureStore:
