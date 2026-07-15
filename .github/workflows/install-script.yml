@@ -131,7 +131,11 @@ jobs:
           TUFT_HOME: ${{ runner.temp }}/tuft
 
       - name: Clean up installation
-        run: rm -rf "${TUFT_HOME}"
+        run: |
+          pkill -KILL -f "${TUFT_HOME}" 2>/dev/null || true
+          sleep 1
+          rm -rf "${TUFT_HOME}"
+        continue-on-error: true
         env:
           TUFT_HOME: ${{ runner.temp }}/tuft
 
@@ -157,7 +161,11 @@ jobs:
           TUFT_HOME: ${{ runner.temp }}/tuft
 
       - name: Clean up installation
-        run: rm -rf "${TUFT_HOME}"
+        run: |
+          pkill -KILL -f "${TUFT_HOME}" 2>/dev/null || true
+          sleep 1
+          rm -rf "${TUFT_HOME}"
+        continue-on-error: true
         env:
           TUFT_HOME: ${{ runner.temp }}/tuft
 
@@ -208,7 +216,11 @@ jobs:
           TUFT_HOME: ${{ runner.temp }}/tuft
 
       - name: Clean up installation
-        run: rm -rf "${TUFT_HOME}"
+        run: |
+          pkill -KILL -f "${TUFT_HOME}" 2>/dev/null || true
+          sleep 1
+          rm -rf "${TUFT_HOME}"
+        continue-on-error: true
         env:
           TUFT_HOME: ${{ runner.temp }}/tuft
 
@@ -248,7 +260,11 @@ jobs:
           TUFT_HOME: ${{ runner.temp }}/tuft
 
       - name: Clean up installation
-        run: rm -rf "${TUFT_HOME}"
+        run: |
+          pkill -KILL -f "${TUFT_HOME}" 2>/dev/null || true
+          sleep 1
+          rm -rf "${TUFT_HOME}"
+        continue-on-error: true
         env:
           TUFT_HOME: ${{ runner.temp }}/tuft
 
@@ -285,6 +301,10 @@ jobs:
           TUFT_HOME: ${{ runner.temp }}/tuft
 
       - name: Clean up installation
-        run: rm -rf "${TUFT_HOME}"
+        run: |
+          pkill -KILL -f "${TUFT_HOME}" 2>/dev/null || true
+          sleep 1
+          rm -rf "${TUFT_HOME}"
+        continue-on-error: true
         env:
           TUFT_HOME: ${{ runner.temp }}/tuft
