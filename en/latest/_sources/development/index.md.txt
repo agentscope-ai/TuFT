@@ -12,6 +12,14 @@ This section covers development setup, testing, and contributing to TuFT.
 
 How to run tests on CPU and GPU, including persistence testing.
 :::
+
+:::{grid-item-card} Direct vLLM Integration
+:link: vllm-backend
+:link-type: doc
+:shadow: none
+
+Design and maintenance notes for the vLLM sampling backend (Trinity-RFT dependency removal).
+:::
 ```
 
 ## Setup Development Environment
@@ -69,4 +77,5 @@ uv run pyright
 :hidden:
 
 testing
+vllm-backend
 ```
