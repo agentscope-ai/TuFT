@@ -204,7 +204,7 @@ jobs:
           tuft upgrade
           cmp scripts/verl-git-override.txt "${TUFT_HOME}/scripts/verl-git-override.txt"
           "${TUFT_HOME}/venv/bin/python" -c \
-            "from importlib.metadata import version; assert version('tuft') == '0.1.8'"
+            "from importlib.metadata import version; assert version('tuft') == '0.1.9'"
         env:
           TUFT_HOME: ${{ runner.temp }}/tuft
 
