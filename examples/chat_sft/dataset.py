@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple, cast
 
 import numpy as np
-from datasets import load_dataset
 from tinker import types
 
 
@@ -35,6 +34,8 @@ class ChatDataset:
 
 def load_chat_dataset(dataset_name: str, seed: int = 42) -> Tuple[ChatDataset, ChatDataset]:
     """Load train/test chat dataset."""
+    from datasets import load_dataset
+
     random.seed(seed)
 
     if dataset_name == "no_robots":
