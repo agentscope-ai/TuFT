@@ -16,7 +16,7 @@ services:
       && source /root/.local/bin/env \
       && source /root/.tuft/venv/bin/activate \
       && uv pip install .[dev] \
-      && ray start --head --dashboard-host 0.0.0.0 --include-dashboard true --block"
+      && ray start --head --block"
     environment:
       - HF_ENDPOINT=https://hf-mirror.com
       - RAY_ADDRESS=auto

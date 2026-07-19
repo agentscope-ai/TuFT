@@ -44,7 +44,7 @@ COPY ./scripts ./scripts
 RUN bash ./scripts/install.sh --local-source /workspace \
     && . $HOME/.local/bin/env \
     && . /root/.tuft/venv/bin/activate \
-    && uv pip install .[dev] --override scripts/verl-git-override.txt \
+    && uv pip install .[dev] \
     && python scripts/verify_runtime_versions.py
 
 ENTRYPOINT ["/bin/bash", "-c", "source ${VIRTUAL_ENV}/bin/activate && exec \"$@\"", "--"]

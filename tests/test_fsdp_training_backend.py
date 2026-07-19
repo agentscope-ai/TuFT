@@ -2,8 +2,8 @@
 Unit and integration tests for FSDP training backend.
 
 Unit tests (no GPU):
-  - Config/slot helpers and async_init validation (no torch/verl).
-  - Tensordict and loss adapters (torch/tensordict on CPU).
+  - Config/slot helpers and async_init validation.
+  - Torch-native batching, log-prob extraction, and gradient accumulation on CPU.
 
 Integration tests (GPU, optional TUFT_TEST_MODEL):
   - FSDPTrainingBackend single-process: create_adapter, forward, optim_step, save/load.
@@ -26,7 +26,7 @@ from tuft.config import ModelConfig
 
 
 # -----------------------------------------------------------------------------
-# Unit tests: config and slot (no GPU, no torch/verl)
+# Unit tests: config and slot (no GPU)
 # -----------------------------------------------------------------------------
 
 
@@ -131,89 +131,131 @@ def test_fsdp_port_allocation_by_index():
 
 
 # -----------------------------------------------------------------------------
-# Unit tests: tensordict and loss adapters (torch/tensordict, CPU)
+# Unit tests: torch-native FSDP engine (CPU)
 # -----------------------------------------------------------------------------
 
 
-def test_chunk_tensordict_allow_2d_nested():
-    """_chunk_tensordict_allow_2d_nested splits TensorDict into N chunks; 2D nested use unbind."""
+def test_prepare_micro_batch_uses_length_masks_and_flat_rolled_labels():
+    from tuft.backends.fsdp_engine import _prepare_micro_batch
+
+    data = [
+        types.Datum(
+            model_input=types.ModelInput.from_ints(tokens=[0, 2, 3]),
+            loss_fn_inputs={},
+        ),
+        types.Datum(
+            model_input=types.ModelInput.from_ints(tokens=[4, 5]),
+            loss_fn_inputs={},
+        ),
+    ]
+    batch = _prepare_micro_batch(data, "cpu")
+    assert batch.input_ids.tolist() == [[0, 2, 3], [4, 5, 0]]
+    # Token id 0 is real in row 0; padding is derived from lengths, not token values.
+    assert batch.attention_mask.tolist() == [[1, 1, 1], [1, 1, 0]]
+    assert batch.position_ids.tolist() == [[0, 1, 2], [0, 1, 2]]
+    # roll([0, 2, 3, 4, 5], -1) -> [2, 3, 4, 5, 0]
+    assert batch.labels.tolist() == [[2, 3, 4], [5, 0, 0]]
+    assert batch.lengths == [3, 2]
+
+
+def test_prepare_loss_inputs_pads_weights_and_defaults_missing_rows():
     import torch
-    from tensordict import TensorDict
 
-    from tuft.backends.fsdp_training_backend import _chunk_tensordict_allow_2d_nested
-
-    # Build a small TensorDict: 4 rows, one regular key, one 2D nested
-    batch_size = 4
-    a = torch.arange(8, dtype=torch.float32).reshape(4, 2)
-    nested = torch.nested.nested_tensor(
-        [
-            torch.tensor([1.0, 2.0]),
-            torch.tensor([1.0]),
-            torch.tensor([1.0, 2.0, 3.0]),
-            torch.tensor([1.0]),
-        ],
-        dtype=torch.float32,
-    )
-    td = TensorDict({"a": a, "n": nested}, batch_size=[batch_size])
-    chunks = _chunk_tensordict_allow_2d_nested(td, chunks=2)
-    assert len(chunks) == 2
-    assert chunks[0]["a"].shape == (2, 2)
-    assert chunks[1]["a"].shape == (2, 2)
-    assert chunks[0]["n"].is_nested and chunks[1]["n"].is_nested
-
-
-def test_datum_list_to_tensordict_keys_and_shapes():
-    """_datum_list_to_tensordict yields TensorDict with expected keys and nested ids."""
-    from tuft.backends.fsdp_training_backend import _datum_list_to_tensordict
+    from tuft.backends.fsdp_engine import _prepare_loss_fn_inputs
 
     data = [
         types.Datum(
             model_input=types.ModelInput.from_ints(tokens=[1, 2, 3]),
-            loss_fn_inputs=dict(
-                weights=types.TensorData(data=[0.0, 1.0, 1.0], dtype="float32"),
-                target_tokens=types.TensorData(data=[2, 3, 4], dtype="int64"),
-            ),
+            loss_fn_inputs={"weights": types.TensorData(data=[0.0, 1.0, 0.0], dtype="float32")},
         ),
         types.Datum(
-            model_input=types.ModelInput.from_ints(tokens=[5, 6]),
-            loss_fn_inputs=dict(
-                weights=types.TensorData(data=[1.0, 1.0], dtype="float32"),
-                target_tokens=types.TensorData(data=[6, 7], dtype="int64"),
-            ),
+            model_input=types.ModelInput.from_ints(tokens=[4, 5]),
+            loss_fn_inputs={},
         ),
     ]
-    td = _datum_list_to_tensordict(data, adapter_id="a1", device="cpu")
-    assert td.batch_size[0] == 2
-    assert "input_ids" in td
-    assert "position_ids" in td
-    assert "weights" in td
-    assert "target_tokens" in td
-    assert "adapter_id" in td
-    assert getattr(td["input_ids"], "is_nested", False) or td["input_ids"].dim() >= 1
-    assert td["weights"].shape[0] == 2
+    target_logprobs = torch.randn(2, 3, requires_grad=True)
+    inputs = _prepare_loss_fn_inputs(data, target_logprobs, "cross_entropy")
+    assert inputs["target_logprobs"] is target_logprobs
+    assert inputs["weights"].tolist() == [[0.0, 1.0, 0.0], [1.0, 1.0, 0.0]]
 
 
-def test_make_verl_loss_fn_signature():
-    """_make_verl_loss_fn returns (model_output, data) -> (loss, metrics) callable."""
+def test_compute_target_logprobs_matches_log_softmax():
     import torch
-    from tensordict import TensorDict
 
-    from tuft.backends.fsdp_training_backend import _make_verl_loss_fn
+    from tuft.backends.fsdp_engine import _compute_target_logprobs
 
-    loss_fn = _make_verl_loss_fn("cross_entropy", {})
-    batch_size, max_len = 2, 3
-    # Engine passes nested log_probs (B, seq) as 2D nested; each row is 1D variable-length
-    log_probs = torch.randn(batch_size, max_len)
-    log_probs_nt = torch.nested.as_nested_tensor(
-        [log_probs[i] for i in range(batch_size)],
-        layout=torch.jagged,
+    torch.manual_seed(7)
+    logits = torch.randn(2, 4, 11)
+    labels = torch.randint(0, 11, (2, 4))
+    expected = torch.log_softmax(logits, dim=-1).gather(-1, labels.unsqueeze(-1)).squeeze(-1)
+    actual = _compute_target_logprobs(logits, labels)
+    torch.testing.assert_close(actual, expected)
+
+
+def test_forward_backward_micro_batches_preserve_summed_gradients():
+    import copy
+    from types import SimpleNamespace
+
+    import torch
+
+    from tuft.backends.fsdp_engine import forward_backward
+
+    class TinyCausalLM(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.embed = torch.nn.Embedding(16, 8)
+            self.lm_head = torch.nn.Linear(8, 16, bias=False)
+
+        def forward(self, input_ids, **_kwargs):
+            return SimpleNamespace(logits=self.lm_head(self.embed(input_ids)))
+
+    data = []
+    for tokens in ([1, 2, 3, 4], [5, 6], [7, 8, 9], [10, 11, 12, 13]):
+        weights = [1.0] * (len(tokens) - 1) + [0.0]
+        data.append(
+            types.Datum(
+                model_input=types.ModelInput.from_ints(tokens=list(tokens)),
+                loss_fn_inputs={"weights": types.TensorData(data=weights, dtype="float32")},
+            )
+        )
+
+    torch.manual_seed(11)
+    full_batch_model = TinyCausalLM()
+    micro_batch_model = copy.deepcopy(full_batch_model)
+    full = forward_backward(
+        full_batch_model,
+        data,
+        "cross_entropy",
+        None,
+        micro_batch_size=4,
     )
-    weights = torch.ones(batch_size, max_len)
-    data = TensorDict({"weights": weights}, batch_size=[batch_size])
-    loss, metrics = loss_fn(model_output={"log_probs": log_probs_nt}, data=data)
-    assert isinstance(loss, torch.Tensor) and loss.dim() == 0
-    assert isinstance(metrics, dict)
-    assert "loss:sum" in metrics or "loss" in str(metrics)
+    micro = forward_backward(
+        micro_batch_model,
+        data,
+        "cross_entropy",
+        None,
+        micro_batch_size=2,
+    )
+
+    assert micro["metrics"]["loss:sum"] == pytest.approx(full["metrics"]["loss:sum"])
+    for full_param, micro_param in zip(
+        full_batch_model.parameters(), micro_batch_model.parameters(), strict=True
+    ):
+        torch.testing.assert_close(micro_param.grad, full_param.grad)
+    assert [len(row) for row in micro["model_output"]["log_probs"]] == [4, 2, 3, 4]
+
+    forward_only_model = copy.deepcopy(full_batch_model)
+    for parameter in forward_only_model.parameters():
+        parameter.grad = None
+    forward_backward(
+        forward_only_model,
+        data,
+        "cross_entropy",
+        None,
+        micro_batch_size=2,
+        forward_only=True,
+    )
+    assert all(parameter.grad is None for parameter in forward_only_model.parameters())
 
 
 # -----------------------------------------------------------------------------
@@ -398,7 +440,7 @@ def test_shard_list_batch_order_contract_with_variable_length_data():
         shard_outputs = []
         for datum in shard:
             # Each actor returns logprob of length == len(tokens)
-            # (simulates verl engine returning per-token logprobs)
+            # Simulate the FSDP engine returning per-token logprobs.
             shard_outputs.append({"logprobs_len": len(datum["tokens"]), "datum_id": datum["id"]})
         all_outputs.extend(shard_outputs)
 

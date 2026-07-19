@@ -1,21 +1,5 @@
-# Temporary Verl override -- dependency decision record
+# Deprecated compatibility path.
 #
-# Decision: keep TuFT's published metadata as the normal, release-based
-# `verl>=0.8,<0.9` requirement, but have supported uv install paths replace it
-# with the pinned commit below via `--override`. The equivalent project-mode
-# override lives in pyproject.toml `[tool.uv].override-dependencies`.
-#
-# Rationale:
-# - Verl 0.8.0 pins NumPy <2, conflicting with TuFT's vLLM/OpenCV stack.
-# - verl-project/verl#6551 fixes the NumPy 2, vLLM, and NCCL runtime paths, but
-#   has not been released; its merge commit reports version 0.9.0.dev0.
-# - Adding that commit as a normal dependency would contradict TuFT's `<0.9`
-#   API cap and make the wheel metadata unsuitable for PyPI. A uv override
-#   substitutes the dependency only in the controlled installer/source/Docker
-#   flows while leaving the public compatibility contract explicit.
-#
-# Removal: after Verl publishes a compatible release, update the normal Verl
-# requirement and remove the pyproject override. Keep this file at this stable
-# path with comments only: previously installed `tuft upgrade` wrappers refresh
-# it before resolving, which removes the temporary pin for existing installs.
-verl @ git+https://github.com/verl-project/verl.git@14574ecf52e310055e4d6e9f116bcb14d343d7e0
+# TuFT no longer depends on VERL. This comment-only file remains for one release
+# so wrappers installed by older TuFT versions can refresh the former override
+# path without receiving a 404. New installs and upgrades do not read this file.

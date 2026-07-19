@@ -3,7 +3,7 @@
 Adapted from Trinity-RFT (``trinity/common/models/vllm_worker.py`` and
 ``trinity/common/models/vllm_patch/worker_patch.py``, Apache-2.0,
 https://github.com/agentscope-ai/Trinity-RFT), with the weight-sync pieces
-(verl MoE weight-loader patch, checkpoint weight-transfer engine) removed --
+(MoE weight-loader patch and checkpoint weight-transfer engine) removed --
 TuFT delivers trained weights to the sampler as on-disk LoRA adapters and
 never syncs full model weights into vLLM.
 

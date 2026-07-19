@@ -38,9 +38,7 @@ This document is organized into two parts:
 ### Install optional dependency
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/verl-git-override.txt \
-  -o /tmp/tuft-verl-git-override.txt
-uv pip install --override /tmp/tuft-verl-git-override.txt "tuft[persistence]>=0.1.8"
+uv pip install "tuft[persistence]>=0.1.8"
 ```
 
 ### Enable persistence

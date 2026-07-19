@@ -198,11 +198,7 @@ jobs:
       - name: Test upgrade command (from PyPI)
         run: |
           export PATH="${TUFT_HOME}/bin:$PATH"
-          # Prove an installed wrapper refreshes a stale pin before resolving.
-          printf '%s\n' 'verl==0.8.0' > "${TUFT_HOME}/scripts/verl-git-override.txt"
-          export TUFT_VERL_OVERRIDE_URL="file://${GITHUB_WORKSPACE}/scripts/verl-git-override.txt"
           tuft upgrade
-          cmp scripts/verl-git-override.txt "${TUFT_HOME}/scripts/verl-git-override.txt"
           "${TUFT_HOME}/venv/bin/python" -c \
             "from importlib.metadata import version; assert version('tuft') == '0.1.9'"
         env:

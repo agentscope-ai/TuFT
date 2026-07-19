@@ -38,9 +38,7 @@ TuFT 支持**可选的持久化**来保存服务器状态。启用后，TuFT 可
 ### 安装可选依赖
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/verl-git-override.txt \
-  -o /tmp/tuft-verl-git-override.txt
-uv pip install --override /tmp/tuft-verl-git-override.txt "tuft[persistence]>=0.1.8"
+uv pip install "tuft[persistence]>=0.1.8"
 ```
 
 ### 启用持久化

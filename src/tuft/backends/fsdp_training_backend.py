@@ -1,9 +1,4 @@
-"""
-FSDP training backend: multi-node/multi-GPU training via FSDP and multi-adapter LoRA.
-
-Peer to HFTrainingBackend; selected by ModelConfig.training_backend = "fsdp".
-Implements BaseTrainingBackend; uses MultiAdapterVerlWorker and adapts data/loss for the engine.
-"""
+"""Multi-node/multi-GPU training via FSDP2 and multi-adapter LoRA."""
 
 from __future__ import annotations
 
@@ -13,15 +8,13 @@ import os
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import torch
 from packaging import version
 from peft import LoraConfig, TaskType, get_peft_model
-from tensordict import TensorDict
 from tinker import types
 from torch.distributed.tensor import DTensor
-from verl.utils import tensordict_utils as tu
 
 
 # FSDP v2 imports (requires PyTorch >= 2.4)
@@ -39,18 +32,14 @@ else:
         f"FSDP v2 requires PyTorch >= 2.4, but got {torch.__version__}. "
         "Please upgrade PyTorch or use training_backend='hf' instead."
     )
-from transformers import AutoModelForCausalLM
-from verl.utils.dataset.dataset_utils import DatasetPadMode
-from verl.workers.config.engine import TrainingWorkerConfig
-from verl.workers.engine.fsdp.transformer_impl import FSDPEngineWithLMHead
-
 from tuft.backends.base_backend import BaseTrainingBackend
+from tuft.backends.fsdp_engine import (
+    FSDPModelConfig,
+    build_base_model,
+    forward_backward as fsdp_forward_backward,
+)
 from tuft.checkpoints import CheckpointRecord
 from tuft.config import ModelConfig
-from tuft.loss_fn import get_loss_fn
-
-
-logger = logging.getLogger(__name__)
 
 
 def _shard_list(xs: list[Any], n_shards: int) -> list[list[Any]]:
@@ -92,297 +81,26 @@ def _merge_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
     return merged
 
 
-def _chunk_tensordict_allow_2d_nested(td: TensorDict, chunks: int) -> list | tuple:
-    """Chunk TensorDict like engine's chunk_tensordict; 2D nested use unbind."""
-    assert isinstance(td, TensorDict) and len(td) % chunks == 0, (
-        f"expecting td with length divisible by chunks, but got {len(td)} and {chunks}"
-    )
-    chunk_size = len(td) // chunks
-    # 2D nested (e.g. input_ids) do not support chunk/slice; use unbind
-    keys = {
-        key
-        for key, val in td.items()
-        if isinstance(val, torch.Tensor) and getattr(val, "is_nested", False) and val.dim() >= 2
-    }
-    new_td = TensorDict(
-        {k: v for k, v in td.items() if k not in keys},
-        batch_size=td.batch_size,
-        device=td.device,
-    )
-    tds = new_td.chunk(chunks=chunks)
-    for key in keys:
-        tensors = td[key].unbind(dim=0)
-        for i, sub_td in enumerate(tds):
-            sub_td[key] = torch.nested.as_nested_tensor(
-                tensors[i * chunk_size : (i + 1) * chunk_size], layout=torch.jagged
-            )
-    return tds
-
-
-# Monkey-patch so prepare_micro_batches uses 2D-nested-safe chunk (avoids NestedTensor slice)
-tu.chunk_tensordict = _chunk_tensordict_allow_2d_nested
-
 # Default port for torch.distributed init (multi-GPU). ModelConfig.fsdp_master_port should match.
 DEFAULT_MASTER_PORT = 29500
-
-
-# =============================================================================
-# Data and loss adaptation: Datum -> TensorDict, tuft loss -> engine loss_function
-# =============================================================================
-
-
-def _datum_list_to_tensordict(
-    data: list[types.Datum],
-    adapter_id: str,
-    device: str = "cuda",
-    micro_batch_size: Optional[int] = None,
-) -> "TensorDict":
-    """Convert list[types.Datum] to TensorDict (input_ids, position_ids, weights, etc.).
-
-    If `micro_batch_size` is given and divides len(data), verl's
-    `forward_backward_batch` will internally split into
-    `len(data) // micro_batch_size` micro-batches and accumulate gradients
-    across them (no zero_grad inside). This keeps the number of NCCL
-    collectives per RPC at 1 across all dp ranks (one
-    `all_reduce(batch_num_tokens)` + verl's `same_micro_num_in_dp` sync),
-    which is required to avoid dp-imbalance hangs in multi-rank FSDP.
-    """
-    from torch.nn.utils.rnn import pad_sequence
-
-    input_ids_list = [torch.tensor(datum.model_input.to_ints(), dtype=torch.long) for datum in data]
-    global_token_num = [x.size(0) for x in input_ids_list]
-    # NO_PADDING path expects 2D nested (batch, seq_len) for to_padded_tensor
-    # output_size=(batch_size, max_seq_len). Use `layout=torch.jagged` so
-    # downstream verl code can call `.offsets()` (required by
-    # `rearrange_micro_batches` under `use_dynamic_bsz=True`).
-    input_ids_nested = torch.nested.nested_tensor(
-        [t.to(device) for t in input_ids_list],
-        dtype=torch.long,
-        device=device,
-        layout=torch.jagged,
-    )
-    # position_ids must be 2D nested for prepare_model_inputs to_padded_tensor
-    position_ids_list = [
-        torch.arange(seq_len, dtype=torch.long, device=device)
-        for seq_len in (x.size(0) for x in input_ids_list)
-    ]
-    position_ids_nested = torch.nested.nested_tensor(
-        position_ids_list,
-        dtype=torch.long,
-        device=device,
-        layout=torch.jagged,
-    )
-
-    # target_tokens, weights for loss from loss_fn_inputs
-    target_tokens_list = []
-    weights_list = []
-    # RLHF-specific fields (logprobs, advantages)
-    logprobs_list = []
-    advantages_list = []
-    has_rlhf_fields = False
-
-    for datum in data:
-        inp = datum.loss_fn_inputs or {}
-        toks = inp.get("target_tokens")
-        target_tokens_list.append(
-            toks.to_torch() if toks is not None else torch.zeros(1, dtype=torch.long)
-        )
-        w = inp.get("weights")
-        default_weights = torch.ones(len(datum.model_input.to_ints()), dtype=torch.float32)
-        weights_list.append(w.to_torch() if w is not None else default_weights)
-
-        # Extract RLHF fields if present
-        logprobs = inp.get("logprobs")
-        if logprobs is not None:
-            has_rlhf_fields = True
-            logprobs_list.append(logprobs.to_torch())
-        else:
-            logprobs_list.append(torch.zeros(1, dtype=torch.float32))
-
-        advantages = inp.get("advantages")
-        if advantages is not None:
-            advantages_list.append(advantages.to_torch())
-        else:
-            advantages_list.append(torch.zeros(1, dtype=torch.float32))
-
-    target_tokens = pad_sequence(
-        [t.squeeze() if t.dim() > 1 else t for t in target_tokens_list],
-        batch_first=True,
-        padding_value=0,
-    )
-    weights = pad_sequence(weights_list, batch_first=True, padding_value=0.0)
-    batch_size = len(input_ids_list)
-    weights_device = weights.to(device)
-
-    # Temperature: verl 0.8.0 expects a 1-D (B,) tensor and unsqueezes it
-    # internally before `logits.div_(temperature)`. (verl 0.7.x expected
-    # (B,1,1) for direct broadcast, but 0.8.0 changed.) It is all-ones here, so
-    # the scaling is a no-op — the field exists only to satisfy verl's engine
-    # contract. Pin the rank/shape explicitly: the TensorDict below already
-    # checks the leading dim == batch_size, but NOT that it is 1-D, so this
-    # guards against silently regressing to the 0.7.x (B,1,1) shape (or any
-    # other rank) that a verl bump might mis-broadcast across the vocab dim.
-    temperature = torch.ones(batch_size, device=device, dtype=torch.float32)
-    assert temperature.shape == (batch_size,), (
-        f"temperature must be 1-D (B,)=({batch_size},) for verl 0.8.0's internal "
-        f"unsqueeze before logits.div_(temperature); got {tuple(temperature.shape)}. "
-        "If this fires after a verl upgrade, re-check verl's temperature handling "
-        "(see the use_remove_padding note below) before changing the shape."
-    )
-    td_dict = {
-        "target_tokens": target_tokens.to(device),
-        "weights": weights_device,
-        "loss_mask": weights_device,
-        "temperature": temperature,
-        "adapter_id": adapter_id,
-    }
-
-    # Add RLHF fields if any datum has them
-    if has_rlhf_fields:
-        logprobs_padded = pad_sequence(logprobs_list, batch_first=True, padding_value=0.0)
-        advantages_padded = pad_sequence(advantages_list, batch_first=True, padding_value=0.0)
-        td_dict["logprobs"] = logprobs_padded.to(device)
-        td_dict["advantages"] = advantages_padded.to(device)
-
-    td = TensorDict(td_dict, batch_size=batch_size)
-    td["input_ids"] = input_ids_nested
-    td["position_ids"] = position_ids_nested
-    tu.assign_non_tensor(td, global_token_num=global_token_num)
-    # v22 grad-accum: route through verl's `use_dynamic_bsz=False` path with
-    # a fixed `micro_batch_size_per_gpu`. verl's loop never zero_grad's, so
-    # gradients accumulate across all mb's; the caller's optim_step then
-    # consumes the accumulated grad and zero_grad's.
-    if micro_batch_size and micro_batch_size > 0 and batch_size % micro_batch_size == 0:
-        mb = micro_batch_size
-    else:
-        if micro_batch_size and micro_batch_size > 0:
-            logger.warning(
-                "Configured micro_batch_size=%d does not evenly divide batch_size=%d; "
-                "falling back to full batch as a single micro-batch. "
-                "This may cause OOM for large batches.",
-                micro_batch_size,
-                batch_size,
-            )
-        mb = batch_size
-    tu.assign_non_tensor(
-        td,
-        use_dynamic_bsz=False,
-        micro_batch_size_per_gpu=mb,
-        # use_remove_padding=False: we use NO_PADDING pad_mode (jagged tensors)
-        # but NOT verl's rmpad path because rmpad does
-        #   `logits_rmpad.div_(temperature)` expecting a scalar temperature,
-        # while our TensorDict-resident temperature is (B,) (see the temperature
-        # note above): it must carry a leading batch dim to pass TensorDict
-        # batch_size validation, so it can't be a bare scalar. These two
-        # constraints conflict; fixing requires monkey-patching verl's
-        # prepare_model_outputs (TODO).
-        # With False + jagged nested tensors + NO_PADDING, verl pads to
-        # max_seq_len internally, forwards, then narrows logits back per
-        # sample, so per-sample logprob lengths still equal their real
-        # input_ids lengths (verified in post-mortem replay 2026-06-09).
-        use_remove_padding=False,
-        pad_mode=DatasetPadMode.NO_PADDING,
-    )
-    return td
-
-
-def _make_verl_loss_fn(
-    loss_fn_name: str,
-    loss_fn_config: dict[str, float] | None,
-) -> Callable[..., Any]:
-    """Wrap tuft get_loss_fn to engine signature (model_output, data) -> (loss, metrics)."""
-    loss_fn_config = loss_fn_config or {}
-    tuft_loss = get_loss_fn(loss_fn_name)
-
-    # Check if this is an RLHF loss function that requires additional fields
-    rlhf_loss_fns = {"ppo", "grpo", "cispo", "importance_sampling", "dro"}
-    is_rlhf = loss_fn_name.lower() in rlhf_loss_fns
-
-    def _loss_function(
-        model_output: Dict[str, Any],
-        data: TensorDict,
-        dp_group: Any = None,
-        **kwargs: Any,
-    ) -> Any:
-        # model_output["log_probs"] is nested (B, seq); data["weights"] is (B, max_len)
-        log_probs_nt = model_output["log_probs"]
-        weights = data["weights"]
-        batch_size, max_len = weights.shape
-        # Guard (verl 0.8.0 contract): with use_remove_padding=False + NO_PADDING,
-        # verl narrows logits back per sample, so log_probs is a nested
-        # (B, per_sample_len) tensor whose batch dim must equal B (the padded
-        # (B, max_len) view below then aligns per sample). This is the same
-        # forward/narrow path that applies `logits.div_(temperature)`, so a verl
-        # upgrade that changes it trips here loudly instead of silently
-        # misaligning logprobs. (Over-length samples are already caught by
-        # to_padded_tensor's output_size.)
-        assert log_probs_nt.size(0) == batch_size, (
-            f"verl returned log_probs with batch dim {log_probs_nt.size(0)} != "
-            f"expected {batch_size}; verl's forward/temperature path may have changed — "
-            "re-verify before bumping verl past 0.8.x."
-        )
-        target_logprobs = torch.nested.to_padded_tensor(
-            log_probs_nt, padding=0.0, output_size=(batch_size, max_len)
-        )
-
-        # Build loss_fn_inputs based on loss function type
-        if is_rlhf:
-            # RLHF losses (PPO, GRPO, etc.) need logprobs and advantages
-            # Check if data has required fields
-            has_logprobs = "logprobs" in data.keys()
-            has_advantages = "advantages" in data.keys()
-
-            if not has_logprobs or not has_advantages:
-                import logging
-
-                logging.warning(
-                    f"RLHF loss '{loss_fn_name}' requires 'logprobs' and 'advantages' in data. "
-                    f"Available keys: {list(data.keys())}. "
-                    f"Using fallback values."
-                )
-
-            loss_fn_inputs = {
-                "target_logprobs": target_logprobs,
-                "logprobs": data.get("logprobs", target_logprobs)
-                if has_logprobs
-                else target_logprobs,
-                "advantages": data.get("advantages", torch.zeros_like(target_logprobs))
-                if has_advantages
-                else torch.zeros_like(target_logprobs),
-            }
-        else:
-            # Standard losses (cross_entropy) only need target_logprobs and weights
-            loss_fn_inputs = {"target_logprobs": target_logprobs, "weights": weights}
-
-        loss, metrics = tuft_loss(loss_fn_inputs, loss_fn_config)
-        return loss, metrics
-
-    return _loss_function
 
 
 def _fsdp_logprobs_to_loss_fn_outputs(
     engine_output: Dict[str, Any],
     data: list[types.Datum],
 ) -> list[Dict[str, Any]]:
-    """Extract log_probs from engine.forward_backward_batch model_output and convert to
-    per-datum loss_fn_outputs."""
+    """Convert engine log-prob tensors to per-datum Tinker outputs."""
+
     model_output = (engine_output or {}).get("model_output") or {}
-    log_probs_nt = model_output.get("log_probs")
-    if log_probs_nt is None or not hasattr(log_probs_nt, "unbind"):
-        return [
-            {"logprobs": types.TensorData(data=[0.0], dtype="float32", shape=[1])} for _ in data
-        ]
-    try:
-        # Verl returns log_probs as nested tensor (batch, variable_len); unbind(0) gives per-sample
-        per_sample = log_probs_nt.unbind(dim=0)
-        return [
-            {"logprobs": types.TensorData.from_torch(t.detach().cpu().float().clone())}
-            for t in per_sample
-        ]
-    except Exception:
-        return [
-            {"logprobs": types.TensorData(data=[0.0], dtype="float32", shape=[1])} for _ in data
-        ]
+    per_sample = model_output.get("log_probs") or []
+    if len(per_sample) != len(data):
+        raise RuntimeError(
+            f"FSDP engine returned {len(per_sample)} log-prob rows for {len(data)} datums"
+        )
+    return [
+        {"logprobs": types.TensorData.from_torch(t.detach().cpu().float().clone())}
+        for t in per_sample
+    ]
 
 
 # =============================================================================
@@ -438,15 +156,13 @@ def _get_rank_slots_from_config(config: ModelConfig) -> Dict[int, int]:
 
 
 def _config_to_worker_dict(config: ModelConfig) -> dict:
-    """ModelConfig -> serializable dict for TrainingWorkerConfig and SlotPoolConfig in actors."""
+    """Convert ModelConfig to the serializable subset needed by Ray workers."""
+
     rank_slots = _get_rank_slots_from_config(config)
     return {
         "model_path": str(config.model_path),
         "max_model_len": config.max_model_len,
-        "use_remove_padding": getattr(config, "use_remove_padding", False),
         "fsdp_override_config": dict(getattr(config, "fsdp_override_config", None) or {}),
-        # Top-level attn_implementation acts as default if fsdp_override_config does
-        # not specify one. None lets verl/transformers pick its own default.
         "attn_implementation": getattr(config, "attn_implementation", None),
         "slot_config": {
             "rank_slots": rank_slots,
@@ -456,41 +172,24 @@ def _config_to_worker_dict(config: ModelConfig) -> dict:
     }
 
 
-def _worker_dict_to_training_config(config_dict: dict) -> tuple:
-    """Build TrainingWorkerConfig and SlotPoolConfig from config_dict inside an actor."""
-    from verl.trainer.config import CheckpointConfig
-    from verl.workers.config import HFModelConfig
-    from verl.workers.config.engine import FSDPEngineConfig
-    from verl.workers.config.optimizer import OptimizerConfig
+def _worker_dict_to_configs(config_dict: dict) -> tuple[FSDPModelConfig, SlotPoolConfig]:
+    """Build the torch-native model and slot configurations inside an actor."""
 
     override = dict(config_dict.get("fsdp_override_config") or {})
-    if "attn_implementation" not in override:
-        # Resolution order: fsdp_override_config > top-level attn_implementation > "eager".
-        top_attn = config_dict.get("attn_implementation")
-        override["attn_implementation"] = top_attn or "eager"
+    attn_implementation = override.pop(
+        "attn_implementation",
+        config_dict.get("attn_implementation") or "sdpa",
+    )
     logging.getLogger(__name__).info(
         "[FSDPTrainingBackend] Loading %s with attn_implementation=%s",
         config_dict.get("model_path"),
-        override["attn_implementation"],
+        attn_implementation,
     )
-    hf_model_config = HFModelConfig(
+    model_config = FSDPModelConfig(
         path=config_dict["model_path"],
-        use_remove_padding=config_dict.get("use_remove_padding", False),
+        max_model_len=int(config_dict["max_model_len"]),
+        attn_implementation=attn_implementation,
         override_config=override,
-    )
-    engine_config = FSDPEngineConfig(
-        strategy="fsdp2",
-        use_dynamic_bsz=False,
-        max_token_len_per_gpu=config_dict["max_model_len"],
-        micro_batch_size_per_gpu=1,
-        forward_only=False,
-    )
-    training_config = TrainingWorkerConfig(
-        model_type="language_model",
-        model_config=hf_model_config,
-        engine_config=engine_config,
-        optimizer_config=OptimizerConfig(),
-        checkpoint_config=CheckpointConfig(),
     )
     sc = config_dict.get("slot_config") or {}
     slot_config = SlotPoolConfig(
@@ -498,48 +197,33 @@ def _worker_dict_to_training_config(config_dict: dict) -> tuple:
         lora_alpha_ratio=int(sc.get("lora_alpha_ratio", 2)),
         target_modules=list(sc.get("target_modules", ["q_proj", "v_proj"])),
     )
-    return training_config, slot_config
+    return model_config, slot_config
 
 
 # =============================================================================
-# MultiAdapterVerlWorker
+# MultiAdapterFSDPWorker
 # =============================================================================
-# Holds FSDPEngineWithLMHead; manages LoRA slot allocation/release; before forward_backward
-# calls set_adapter and engine.forward_backward_batch; provides per-adapter optim_step/save/load.
-# No Ray dependency. Backend holds one instance in single-process mode; in multi-GPU mode,
-# N VerlWorkerActor (Ray) instances each hold one; N processes form torch.distributed FSDP;
-# Ray handles process creation and .remote() scheduling.
+# Owns the sharded PEFT module, adapter slots, per-adapter optimizers, and checkpoints.
 # =============================================================================
 
 
-class MultiAdapterVerlWorker:
-    """
-    Multi-LoRA slots: holds engine, calls forward_backward_batch under train_mode;
-    set_adapter is called before each call to select the current PEFT active adapter.
-    """
+class MultiAdapterFSDPWorker:
+    """Own a multi-LoRA FSDP2 module and its per-adapter training state."""
 
     def __init__(
         self,
-        model_config: Any,
-        engine_config: Any,
-        optimizer_config: Any,
-        checkpoint_config: Any,
+        model_config: FSDPModelConfig,
         slot_config: SlotPoolConfig,
     ):
         self.model_config = model_config
-        self.engine_config = engine_config
-        self.optimizer_config = optimizer_config
-        self.checkpoint_config = checkpoint_config
         self.slot_config = slot_config
-        self.engine: Any = None
+        self.module: Any = None
         self._adapters: Dict[str, AdapterInfo] = {}
         self._adapters_by_rank: Dict[int, List[str]] = {}
         self._name_counter: Dict[int, int] = {}
         self._allocated: Dict[str, bool] = {}
         self._initialized = False
-        # train_mode: enter on first forward_backward, exit in leave_train_mode() (e.g. release)
-        self._train_mode_ctx: Any = None
-        self.logger = logging.getLogger(f"{__name__}.MultiAdapterVerlWorker")
+        self.logger = logging.getLogger(f"{__name__}.MultiAdapterFSDPWorker")
 
     def _generate_adapter_name(self, rank: int) -> str:
         if rank not in self._name_counter:
@@ -549,29 +233,11 @@ class MultiAdapterVerlWorker:
         return f"adapter_r{rank}_{idx}"
 
     def initialize(self) -> None:
-        """Build engine (base + materialize + PEFT adapters + FSDP v2) and create
-        per-adapter optimizers."""
+        """Build the base model, PEFT adapter pool, FSDP2 module, and first optimizer."""
+
         if self._initialized:
             return
-        base_model = self.engine._build_module()
-
-        # Materialize: meta model has no storage; load pretrained weights before .cuda()
-        model_path = getattr(self.engine.model_config, "local_path", None) or getattr(
-            self.engine.model_config, "path", None
-        )
-        if not model_path:
-            raise RuntimeError("engine.model_config has no local_path or path for materialization")
-        trust_remote = getattr(self.engine.model_config, "trust_remote_code", True)
-        full_cpu = AutoModelForCausalLM.from_pretrained(
-            model_path,
-            torch_dtype=torch.bfloat16,
-            low_cpu_mem_usage=True,
-            trust_remote_code=trust_remote,
-        )
-        state_dict = full_cpu.state_dict()
-        del full_cpu
-        base_model.load_state_dict(state_dict, assign=True, strict=False)
-        del state_dict
+        base_model = build_base_model(self.model_config)
 
         peft_model = None
         for rank, count in self.slot_config.rank_slots.items():
@@ -585,7 +251,6 @@ class MultiAdapterVerlWorker:
                     target_modules=list(self.slot_config.target_modules),
                 )
                 if peft_model is None:
-                    base_model.enable_input_require_grads()
                     peft_model = get_peft_model(
                         base_model,
                         lora_config,
@@ -636,7 +301,7 @@ class MultiAdapterVerlWorker:
         for module in wrapped_modules:
             fully_shard(module, mesh=device_mesh, mp_policy=mp_policy)
         fully_shard(model_cuda, mesh=device_mesh, mp_policy=mp_policy)
-        self.engine.module = model_cuda
+        self.module = model_cuda
         self._create_optimizer_for_adapter(first)
         self._initialized = True
 
@@ -645,15 +310,12 @@ class MultiAdapterVerlWorker:
         if info.optimizer is not None:
             return
         self._activate_adapter(adapter_name)
-        params = [p for p in self.engine.module.parameters() if p.requires_grad]
+        params = [p for p in self.module.parameters() if p.requires_grad]
         info.optimizer = torch.optim.AdamW(params, lr=1e-4, weight_decay=0.01)
 
     def _activate_adapter(self, adapter_name: str) -> None:
         """Set PEFT active adapter before computation; same as HFTrainingModel._activate_adapter."""
-        # FSDP v2 does not wrap the module, so we access the PEFT model directly
-        # For FSDP v1: self.engine.module.module.set_adapter(adapter_name)
-        # For FSDP v2: self.engine.module is the PEFT model itself
-        module = self.engine.module
+        module = self.module
         # Handle both FSDP v1 (wrapped) and FSDP v2 (not wrapped) cases
         if hasattr(module, "set_adapter"):
             module.set_adapter(adapter_name)
@@ -662,45 +324,22 @@ class MultiAdapterVerlWorker:
         else:
             raise RuntimeError(f"Cannot find set_adapter method on module: {type(module)}")
 
-    def _ensure_train_mode_entered(self) -> None:
-        """Enter train_mode once and store context; exit in leave_train_mode() (e.g. release).
-
-        We store the context instead of using 'with engine.train_mode():' because the context's
-        __exit__ (or teardown) automatically clears engine state (e.g. optimizer_zero_grad). With a
-        fine-grained SDK where forward_backward and optim_step are separate calls, exiting the
-        context after each forward would clear gradients before optim_step runs. So we enter once,
-        keep the context, and only exit explicitly in leave_train_mode() when the model is released.
-        """
-        if self._train_mode_ctx is not None:
-            return
-        ctx = self.engine.train_mode()
-        ctx.__enter__()
-        self._train_mode_ctx = ctx
-
-    def leave_train_mode(self) -> None:
-        """Exit the stored train_mode context. Call on model release to clean up Verl engine."""
-        if self._train_mode_ctx is not None:
-            self._train_mode_ctx.__exit__(None, None, None)
-            self._train_mode_ctx = None
-
     def forward_backward(
         self,
         adapter_name: str,
-        data: TensorDict,
-        loss_function: Callable[..., Any],
+        data: list[types.Datum],
+        loss_fn_name: str,
+        loss_fn_config: dict[str, float] | None,
+        micro_batch_size: int,
         forward_only: bool = False,
     ) -> Dict[str, Any]:
-        """Set PEFT active adapter, then call engine.forward_backward_batch (no step).
+        """Run forward/backward without stepping or clearing accumulated gradients.
 
         NOTE: We deliberately do NOT call optimizer.zero_grad() here. Multiple
         consecutive forward_backward calls between two optim_step calls will
         accumulate gradients (standard PyTorch grad-accumulation semantics).
         zero_grad happens inside optim_step() at the end of each training step
-        (see optim_step below, line ~662). verl `forward_backward_batch` itself
-        only calls `loss.backward()` per micro-batch and never zero_grad's.
-        verl `EngineTrainModeCtx.__exit__` does call optimizer_zero_grad, but
-        we keep that context permanently entered via `_ensure_train_mode_entered`
-        and only exit it on adapter release (`leave_train_mode`).
+        (see optim_step below).
 
         This is required for two cases:
           1. Per-call internal micro-batch accumulation (callers split a large
@@ -714,20 +353,15 @@ class MultiAdapterVerlWorker:
         info = self._adapters[adapter_name]
         if info.optimizer is None:
             self._create_optimizer_for_adapter(adapter_name)
-        self.engine.optimizer = info.optimizer
-        self._ensure_train_mode_entered()
-        output = self.engine.forward_backward_batch(
-            data=data,
-            loss_function=loss_function,
+        self.module.train()
+        return fsdp_forward_backward(
+            self.module,
+            data,
+            loss_fn_name,
+            loss_fn_config,
+            micro_batch_size,
             forward_only=forward_only,
         )
-        return output
-
-    def _zero_grad_for_adapter(self, adapter_name: str) -> None:
-        _match = f".{adapter_name}."
-        for name, param in self.engine.module.named_parameters():
-            if _match in name and param.grad is not None:
-                param.grad = None
 
     def optim_step(
         self,
@@ -748,17 +382,10 @@ class MultiAdapterVerlWorker:
             for pg in opt.param_groups:
                 pg["weight_decay"] = weight_decay
         if grad_clip_norm is not None and grad_clip_norm > 0:
-            torch.nn.utils.clip_grad_norm_(self.engine.module.parameters(), grad_clip_norm)
+            torch.nn.utils.clip_grad_norm_(self.module.parameters(), grad_clip_norm)
         opt.step()
         opt.zero_grad()
         info.step_count += 1
-        self.engine.to(
-            "cpu",
-            model=self.engine.is_param_offload_enabled,
-            optimizer=self.engine.is_optimizer_offload_enabled,
-            grad=self.engine.is_param_offload_enabled,
-        )
-        self.engine.mode = None
         return {"step_count": info.step_count, "adapter": adapter_name}
 
     def save_checkpoint(self, adapter_name: str, path: str | Path, optimizer: bool = True) -> None:
@@ -771,7 +398,7 @@ class MultiAdapterVerlWorker:
         # Collect full state dict for the adapter
         state = {}
         _match = f".{adapter_name}."
-        for name, param in self.engine.module.named_parameters():
+        for name, param in self.module.named_parameters():
             if _match in name:
                 if isinstance(param, DTensor):
                     # FSDP v2: gather full tensor from all ranks
@@ -811,7 +438,7 @@ class MultiAdapterVerlWorker:
             # so sampling/VLLM can load
             # FSDP v2: PEFT's save_pretrained cannot handle DTensor directly.
             # We manually save the adapter config and weights in PEFT format.
-            module = self.engine.module
+            module = self.module
             has_nested_peft = hasattr(module, "module") and hasattr(module.module, "peft_config")
             peft_model = module.module if has_nested_peft else module
 
@@ -856,7 +483,7 @@ class MultiAdapterVerlWorker:
         self._activate_adapter(adapter_name)
         with torch.no_grad():
             _match = f".{adapter_name}."
-            for name, param in self.engine.module.named_parameters():
+            for name, param in self.module.named_parameters():
                 if _match in name and name in state:
                     loaded_tensor = state[name]
                     if isinstance(param, DTensor):
@@ -904,20 +531,20 @@ class MultiAdapterVerlWorker:
 
 
 # =============================================================================
-# VerlWorkerActor: Ray actor, one GPU per process, forms torch.distributed with peers
+# FSDPWorkerActor: Ray actor, one GPU per process, forms torch.distributed with peers
 # =============================================================================
 
 
-class VerlWorkerActor:
+class FSDPWorkerActor:
     """Single-GPU Ray actor; N form process group via init_dist, each holds one worker."""
 
     def __init__(self, rank: int, world_size: int, config_dict: dict) -> None:
         self.rank = rank
         self.world_size = world_size
         self.config_dict = config_dict
-        self._worker: Optional[MultiAdapterVerlWorker] = None
+        self._worker: Optional[MultiAdapterFSDPWorker] = None
         self._dist_initialized = False
-        self.logger = logging.getLogger(f"{__name__}.VerlWorkerActor")
+        self.logger = logging.getLogger(f"{__name__}.FSDPWorkerActor")
 
     def get_node_ip(self) -> str:
         import ray
@@ -953,21 +580,11 @@ class VerlWorkerActor:
     def build_worker(self) -> None:
         if self._worker is not None:
             return
-        training_config, slot_config = _worker_dict_to_training_config(self.config_dict)
-        engine = FSDPEngineWithLMHead(
-            model_config=training_config.model_config,  # pyright: ignore[reportCallIssue]
-            engine_config=training_config.engine_config,  # pyright: ignore[reportCallIssue]
-            optimizer_config=training_config.optimizer_config,  # pyright: ignore[reportCallIssue]
-            checkpoint_config=training_config.checkpoint_config,  # pyright: ignore[reportCallIssue]
-        )
-        self._worker = MultiAdapterVerlWorker(
-            model_config=training_config.model_config,
-            engine_config=training_config.engine_config,
-            optimizer_config=training_config.optimizer_config,
-            checkpoint_config=training_config.checkpoint_config,
+        model_config, slot_config = _worker_dict_to_configs(self.config_dict)
+        self._worker = MultiAdapterFSDPWorker(
+            model_config=model_config,
             slot_config=slot_config,
         )
-        self._worker.engine = engine
         logging.info("[SERVER][Actor] build_worker 调用 initialize 前 rank=%s", self.rank)
         self._worker.initialize()
         logging.info("[SERVER][Actor] build_worker initialize 返回 rank=%s", self.rank)
@@ -994,15 +611,10 @@ class VerlWorkerActor:
 
         data: list[types.Datum] (or dicts after Ray serialization).
 
-        Grad-accum strategy (v22): we issue **a single** verl
-        `forward_backward_batch` call per RPC, passing `micro_batch_size`
-        through the TensorDict's `micro_batch_size_per_gpu` non-tensor.
-        verl then splits the shard into `len(data) // micro_batch_size`
-        micro-batches and accumulates gradients across them (verl's loop
-        never zero_grad's). This keeps NCCL collective count per RPC
-        constant across dp ranks (1 batch_num_tokens all_reduce + 1
-        same_micro_num_in_dp sync), avoiding the dp-imbalance hang we hit
-        when the actor itself looped multiple verl calls per RPC.
+        The torch-native engine splits this shard into contiguous micro-batches
+        and accumulates gradients without stepping or clearing them. The caller
+        guarantees every rank runs the same number of micro-batches so FSDP2
+        collectives remain symmetric.
 
         Caller is responsible for invoking `optim_step` afterwards
         (which will step + zero_grad).
@@ -1016,29 +628,22 @@ class VerlWorkerActor:
                 "loss_fn_outputs": [],
             }
 
-        # mb honored only when it cleanly divides len(data); otherwise we
-        # fall back to mb=len(data) (single micro-batch) to keep verl
-        # `chunk_tensordict` happy (it asserts len % chunks == 0).
+        # Keep a single micro-batch when the configured size does not divide
+        # the shard. The backend applies the same fallback on every rank.
         if micro_batch_size and micro_batch_size > 0 and len(data) % micro_batch_size == 0:
             mb = micro_batch_size
         else:
             mb = len(data)
         n_micro = len(data) // mb
-        loss_fn = _make_verl_loss_fn(loss_fn_name, loss_fn_config)
-
-        def _to_scalar(v: Any) -> Any:
-            if isinstance(v, list) and v and all(isinstance(x, (int, float)) for x in v):
-                return sum(v) if len(v) > 1 else float(v[0])
-            return v
-
-        td = _datum_list_to_tensordict(data, adapter_name, "cuda", micro_batch_size=mb)
         out = self._worker.forward_backward(
             adapter_name,
-            td,
-            loss_fn,
+            data,
+            loss_fn_name,
+            loss_fn_config,
+            mb,
             forward_only=forward_only,
         )
-        metrics = {k: _to_scalar(v) for k, v in (out.get("metrics") or {}).items()}
+        metrics = dict(out.get("metrics") or {})
         metrics["actor/num_micro_batches"] = float(n_micro)
         all_outputs = _fsdp_logprobs_to_loss_fn_outputs(out, data)
 
@@ -1069,15 +674,10 @@ class VerlWorkerActor:
             return
         self._worker.load_checkpoint(adapter_name, Path(path), optimizer)
 
-    def leave_train_mode(self) -> None:
-        """Exit train_mode context on this actor; call on model release."""
-        if self._worker is not None:
-            self._worker.leave_train_mode()
-
 
 # =============================================================================
 # FSDPTrainingBackend (implements BaseTrainingBackend)
-# Multi-GPU: N GPUs = N VerlWorkerActor (Ray), forming torch.distributed.
+# Multi-GPU: N GPUs = N FSDPWorkerActor processes, forming torch.distributed.
 # =============================================================================
 
 
@@ -1085,7 +685,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
     """
     Multi-node/multi-GPU training backend; peer to HFTrainingBackend.
     Selected via ModelConfig.training_backend = "fsdp".
-    Uses N VerlWorkerActor (Ray), one per GPU, forming a process group for FSDP.
+    Uses one Ray actor per GPU, forming a process group for FSDP2.
     """
 
     def __init__(
@@ -1097,7 +697,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         super().__init__(config)
         self._fsdp_index = fsdp_index  # Index among FSDP models; port = base + fsdp_index
         self._worker_venv_path = worker_venv_path
-        self._worker: Optional[MultiAdapterVerlWorker] = None
+        self._worker: Optional[MultiAdapterFSDPWorker] = None
         self._actors: List[Any] = []
         self._world_size: int = 0
         self._lora_id_to_adapter_name: Dict[str, str] = {}
@@ -1155,21 +755,11 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                     rank=0,
                     world_size=1,
                 )
-            training_config, _slot = _worker_dict_to_training_config(self._config_dict)
-            engine = FSDPEngineWithLMHead(
-                model_config=training_config.model_config,  # pyright: ignore[reportCallIssue]
-                engine_config=training_config.engine_config,  # pyright: ignore[reportCallIssue]  # pyright: ignore[reportCallIssue]
-                optimizer_config=training_config.optimizer_config,  # pyright: ignore[reportCallIssue]  # pyright: ignore[reportCallIssue]
-                checkpoint_config=training_config.checkpoint_config,  # pyright: ignore[reportCallIssue]  # pyright: ignore[reportCallIssue]
-            )
-            self._worker = MultiAdapterVerlWorker(
-                model_config=training_config.model_config,
-                engine_config=training_config.engine_config,
-                optimizer_config=training_config.optimizer_config,
-                checkpoint_config=training_config.checkpoint_config,
+            model_config, _slot = _worker_dict_to_configs(self._config_dict)
+            self._worker = MultiAdapterFSDPWorker(
+                model_config=model_config,
                 slot_config=self._slot_config,
             )
-            self._worker.engine = engine
             await asyncio.to_thread(self._worker.initialize)
             self._world_size = 1
             return
@@ -1199,7 +789,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         actors = []
         for r in range(n_gpus):
             actor = (
-                ray.remote(VerlWorkerActor)
+                ray.remote(FSDPWorkerActor)
                 .options(
                     num_gpus=1,
                     runtime_env=_runtime_env,
@@ -1275,15 +865,11 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                 self._adapter_name_to_lora_id.pop(adapter_name, None)
                 if self._worker is not None:
                     self._worker.release_slot(adapter_name)
-                    self._worker.leave_train_mode()
                 elif self._actors:
                     import ray
 
                     await asyncio.to_thread(
                         ray.get, self._actors[0].release_slot.remote(adapter_name)
-                    )
-                    await asyncio.to_thread(
-                        ray.get, [a.leave_train_mode.remote() for a in self._actors]
                     )
 
     async def forward(
@@ -1305,7 +891,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         # < shard length), each call splits its (sharded) batch into
         # ceil(len/mb) micro-batches. Each micro-batch runs a full
         # forward+backward, and gradients accumulate across micro-batches
-        # because MultiAdapterVerlWorker.forward_backward no longer zero_grad's
+        # because MultiAdapterFSDPWorker.forward_backward never zero_grad's
         # at entry. The final optim_step (called by the user) consumes the
         # accumulated gradients and zero_grad's.
         #
@@ -1316,33 +902,22 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         # eliminating mini-batch SGD intra-step off-policy drift in PPO/GRPO.
         mb = int(getattr(self.config, "micro_batch_size", 0) or 0)
 
-        def _to_scalar(v: Any) -> Any:
-            if isinstance(v, list) and v and all(isinstance(x, (int, float)) for x in v):
-                return sum(v) if len(v) > 1 else float(v[0])
-            return v
-
         if self._worker is not None:
-            verl_loss_fn = _make_verl_loss_fn(loss_fn_name, loss_fn_config)
-            # Single-worker (single GPU) path: trust verl's
-            # `forward_backward_batch` to internally split into mb-sized
-            # micro-batches and accumulate gradients (mirrors the multi-actor
-            # path; see VerlWorkerActor.forward_backward).
             if mb > 0 and len(data) % mb == 0:
                 eff_mb = mb
             else:
                 eff_mb = max(len(data), 1)
             n_micro = max(len(data) // eff_mb, 1) if data else 0
-            td = await asyncio.to_thread(
-                _datum_list_to_tensordict, data, adapter_name, "cuda", eff_mb
-            )
             out = await asyncio.to_thread(
                 self._worker.forward_backward,
                 adapter_name,
-                td,
-                verl_loss_fn,
-                not backward,
+                data,
+                loss_fn_name,
+                loss_fn_config,
+                eff_mb,
+                forward_only=not backward,
             )
-            metrics = {k: _to_scalar(v) for k, v in (out.get("metrics") or {}).items()}
+            metrics = dict(out.get("metrics") or {})
             metrics["actor/num_micro_batches"] = float(n_micro)
             loss_fn_outputs = _fsdp_logprobs_to_loss_fn_outputs(out, data)
         else:
