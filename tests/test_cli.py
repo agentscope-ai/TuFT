@@ -4,10 +4,25 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 from typer.testing import CliRunner
 
 from tuft import cli
 from tuft.config import AppConfig, ModelConfig
+
+
+def test_model_config_rejects_unknown_training_backend() -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        ModelConfig.model_validate(
+            {
+                "model_name": "test-model",
+                "model_path": "/path/to/model",
+                "max_model_len": 1024,
+                "training_backend": "unknown",
+            }
+        )
+
+    assert exc_info.value.errors()[0]["loc"] == ("training_backend",)
 
 
 def test_start_passes_config(monkeypatch, tmp_path) -> None:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -62,7 +62,7 @@ class ModelConfig(BaseModel):
     # default training setting
     micro_batch_size: int = 1  # micro-batch size for training
     # training backend: "hf" (HFTrainingBackend) or "fsdp" (FSDPTrainingBackend)
-    training_backend: str = "hf"
+    training_backend: Literal["hf", "fsdp"] = "hf"
     # number of GPUs (Ray actors) for FSDP backend; default 1.
     # Multi-GPU (fsdp_num_gpus >= 2) uses contiguous batch sharding across
     # Ray actors; each actor runs FSDP-2 with micro-batch grad accumulation.
