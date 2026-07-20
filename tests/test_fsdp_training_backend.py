@@ -258,6 +258,64 @@ def test_forward_backward_micro_batches_preserve_summed_gradients():
     assert all(parameter.grad is None for parameter in forward_only_model.parameters())
 
 
+@pytest.mark.asyncio
+async def test_fsdp_engine_matches_hf_target_tokens_on_cpu():
+    from types import SimpleNamespace
+
+    import torch
+
+    from tuft.backends.fsdp_engine import forward_backward
+    from tuft.backends.hf_training_model import HFTrainingModel
+    from tuft.loss_fn import get_loss_fn
+
+    class PositionIndependentLM(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.scale = torch.nn.Parameter(torch.tensor(1.0))
+
+        def forward(self, input_ids, **_kwargs):
+            batch, seq_len = input_ids.shape
+            vocab_logits = self.scale * torch.arange(16, dtype=torch.float32)
+            logits = vocab_logits.expand(batch, seq_len, -1).clone()
+            return SimpleNamespace(logits=logits)
+
+    data = [
+        types.Datum(
+            model_input=types.ModelInput.from_ints(tokens=[10, 11]),
+            loss_fn_inputs={
+                "target_tokens": types.TensorData(data=[11, 12], dtype="int64"),
+                "weights": types.TensorData(data=[1.0, 1.0], dtype="float32"),
+            },
+        )
+    ]
+
+    hf_model = HFTrainingModel.__new__(HFTrainingModel)
+    hf_model.model = PositionIndependentLM()  # type: ignore[assignment]
+    hf_loss, hf_metrics, hf_outputs = await hf_model._forward_micro_batch(
+        data,
+        get_loss_fn("cross_entropy"),
+        loss_fn_config=None,
+        backward=False,
+    )
+
+    fsdp_model = PositionIndependentLM()
+    fsdp_out = forward_backward(
+        fsdp_model,
+        data,
+        "cross_entropy",
+        None,
+        micro_batch_size=1,
+        forward_only=True,
+    )
+
+    torch.testing.assert_close(
+        fsdp_out["model_output"]["log_probs"][0],
+        hf_outputs[0]["logprobs"].to_torch(),
+    )
+    assert fsdp_out["metrics"]["loss:sum"] == pytest.approx(hf_metrics["loss:sum"])
+    assert fsdp_out["metrics"]["loss:sum"] == pytest.approx(hf_loss)
+
+
 # -----------------------------------------------------------------------------
 # Integration tests: FSDP backend single-process (GPU, TUFT_TEST_MODEL)
 # -----------------------------------------------------------------------------

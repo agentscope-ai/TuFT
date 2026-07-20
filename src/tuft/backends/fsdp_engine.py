@@ -36,13 +36,20 @@ class FSDPModelConfig:
 
 @dataclass
 class MicroBatch:
-    """Padded model inputs plus the true per-sample sequence lengths."""
+    """Padded model inputs/labels plus the true per-sample sequence lengths."""
 
     input_ids: torch.Tensor
     attention_mask: torch.Tensor
     position_ids: torch.Tensor
     labels: torch.Tensor
     lengths: list[int]
+
+
+def _explicit_target_tokens(datum: types.Datum, device: torch.device | str) -> torch.Tensor | None:
+    value = (datum.loss_fn_inputs or {}).get("target_tokens")
+    if value is None:
+        return None
+    return value.to_torch().to(device=device, dtype=torch.long).reshape(-1)
 
 
 def build_base_model(config: FSDPModelConfig) -> Any:
@@ -73,7 +80,7 @@ def build_base_model(config: FSDPModelConfig) -> Any:
 
 
 def _prepare_micro_batch(data: list[types.Datum], device: torch.device | str) -> MicroBatch:
-    """Pad model inputs and reproduce the prior flat rolled-label convention."""
+    """Pad model inputs and labels, honoring explicit Tinker target tokens."""
 
     if not data:
         raise ValueError("A micro-batch must contain at least one datum")
@@ -92,14 +99,24 @@ def _prepare_micro_batch(data: list[types.Datum], device: torch.device | str) ->
     attention_mask = (token_positions.unsqueeze(0) < length_tensor.unsqueeze(1)).long()
     position_ids = token_positions.unsqueeze(0).expand(len(data), -1)
 
-    # The former engine rolled the flat concatenation, so the final label of each
-    # sample points at the first token of the next sample. Those positions are
-    # weight-masked by callers, but preserving the convention makes parity exact.
+    # Standard TuFT/Tinker training data carries already-shifted target_tokens
+    # in loss_fn_inputs. Use them when present so the final supervised token of
+    # each sample is preserved; fall back to the prior flat-roll convention only
+    # for legacy/RLHF-style rows that omit explicit targets.
     flat_labels = torch.roll(torch.cat(sequences), shifts=-1, dims=0)
     labels = []
     offset = 0
-    for length in lengths:
-        labels.append(flat_labels[offset : offset + length])
+    for datum, length in zip(data, lengths, strict=True):
+        explicit_targets = _explicit_target_tokens(datum, device)
+        if explicit_targets is not None:
+            if int(explicit_targets.numel()) != length:
+                raise ValueError(
+                    "target_tokens length must match model_input length: "
+                    f"got {int(explicit_targets.numel())} vs {length}"
+                )
+            labels.append(explicit_targets)
+        else:
+            labels.append(flat_labels[offset : offset + length])
         offset += length
     labels_padded = pad_sequence(labels, batch_first=True, padding_value=0)
 
