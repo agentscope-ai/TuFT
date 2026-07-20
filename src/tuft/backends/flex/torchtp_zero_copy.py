@@ -115,6 +115,54 @@ def _get_or_create_vllm_object_cache(worker: Any) -> dict[str, Any]:
     return cache
 
 
+def _object_cache_storage_bytes(cache: Mapping[str, Any]) -> tuple[int, int]:
+    seen: set[int] = set()
+    total = 0
+    for obj in cache.values():
+        tensor = getattr(obj, "data", obj)
+        if not hasattr(tensor, "data_ptr"):
+            continue
+        try:
+            ptr = int(tensor.data_ptr())
+        except RuntimeError:
+            continue
+        if ptr in seen:
+            continue
+        seen.add(ptr)
+        total += int(tensor.numel()) * int(tensor.element_size())
+    return total, len(seen)
+
+
+def collect_cuda_memory_snapshot(
+    worker: Any,
+    label: str,
+    empty_cache: bool = False,
+    cache_objects: bool = True,
+) -> dict[str, Any]:
+    import gc
+
+    import torch
+    from vllm.distributed import get_tensor_model_parallel_rank
+
+    if empty_cache:
+        gc.collect()
+        torch.cuda.empty_cache()
+    torch.cuda.synchronize()
+    free_bytes, total_bytes = torch.cuda.mem_get_info()
+    cache = _get_or_create_vllm_object_cache(worker) if cache_objects else None
+    object_bytes, object_count = _object_cache_storage_bytes(cache) if cache is not None else (0, 0)
+    return {
+        "label": label,
+        "rank": get_tensor_model_parallel_rank(),
+        "allocated_gb": torch.cuda.memory_allocated() / (1024**3),
+        "reserved_gb": torch.cuda.memory_reserved() / (1024**3),
+        "free_gb": free_bytes / (1024**3),
+        "total_gb": total_bytes / (1024**3),
+        "object_storage_gb": object_bytes / (1024**3),
+        "object_storage_count": object_count,
+    }
+
+
 def prepare_cuda_ipc_alias_cache(worker: Any) -> dict[str, Any]:
     cache = _get_or_create_vllm_object_cache(worker)
     return {"cached_objects": len(cache)}
@@ -128,13 +176,11 @@ def inject_cuda_ipc_alias(
     tensor_rebuilder: TensorRebuilder | None = None,
 ) -> dict[str, Any]:
     """vLLM worker callback: rebuild CUDA IPC tensors and alias parameter storage."""
-    rebuilder: TensorRebuilder
     if tensor_rebuilder is None:
         from torch.multiprocessing.reductions import rebuild_cuda_tensor
 
-        rebuilder = rebuild_cuda_tensor
-    else:
-        rebuilder = tensor_rebuilder
+        tensor_rebuilder = rebuild_cuda_tensor
+    assert tensor_rebuilder is not None
     from vllm.distributed import get_tensor_model_parallel_rank
 
     tensor_parallel_rank = get_tensor_model_parallel_rank()
@@ -158,7 +204,7 @@ def inject_cuda_ipc_alias(
                 skipped += 1
             continue
 
-        shared = rebuilder(*descriptors[key]["ipc"])
+        shared = tensor_rebuilder(*descriptors[key]["ipc"])
         if tuple(shared.shape) != tuple(obj.data.shape):
             skipped += 1
             if len(examples) < 5:
@@ -178,6 +224,15 @@ def inject_cuda_ipc_alias(
                     examples.append((key, float(diff)))
         else:
             verified += 1
+
+    if not bool(getattr(worker, "_tuft_flex_dummy_cache_cleared", False)):
+        import gc
+
+        import torch
+
+        gc.collect()
+        torch.cuda.empty_cache()
+        worker._tuft_flex_dummy_cache_cleared = True
 
     return {
         "rank": tensor_parallel_rank,

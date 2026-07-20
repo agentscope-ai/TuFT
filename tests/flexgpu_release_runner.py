@@ -33,7 +33,23 @@ from common.fused_torchtp_utils import (
 )
 from common.model_utils import load_tokenizer
 from common.training_utils import make_synthetic_rl_batch
-from tuft.backends.flex.torchtp_zero_copy import inject_cuda_ipc_alias, prepare_cuda_ipc_alias_cache
+from tuft.backends.flex.torchtp_zero_copy import (
+    collect_cuda_memory_snapshot,
+    inject_cuda_ipc_alias,
+    prepare_cuda_ipc_alias_cache,
+)
+
+
+def _print_memory_snapshots(title: str, snapshots: list[dict[str, Any]]) -> None:
+    print(f"      {title}:", flush=True)
+    for item in sorted(snapshots, key=lambda value: value.get("rank", -1)):
+        print(
+            f"        rank {item['rank']}: alloc={item['allocated_gb']:.2f}GB "
+            f"reserved={item['reserved_gb']:.2f}GB free={item['free_gb']:.2f}GB "
+            f"object_storage={item['object_storage_gb']:.2f}GB "
+            f"objects={item['object_storage_count']}",
+            flush=True,
+        )
 
 
 def _prepare_ipc_tensor(
@@ -229,7 +245,10 @@ def _run_vllm_flex(
     max_model_len: int,
     max_tokens: int,
     sample_rounds: int,
+    num_prompts: int,
+    inject_rounds: int,
     verify_inject: bool,
+    memory_breakdown: bool,
 ) -> dict[str, Any]:
     for key in (
         "RANK",
@@ -263,11 +282,26 @@ def _run_vllm_flex(
     )
     dummy_ms = (time.perf_counter() - dummy_start) * 1000
     print(f"      dummy_load: {dummy_ms:.0f}ms (one-time)", flush=True)
+    memory_snapshots: dict[str, list[dict[str, Any]]] = {}
+    if memory_breakdown:
+        snapshots = llm.collective_rpc(
+            collect_cuda_memory_snapshot,
+            args=("after_dummy_load",),
+        )
+        memory_snapshots["after_dummy_load"] = snapshots
+        _print_memory_snapshots("memory after dummy load", snapshots)
 
     cache_start = time.perf_counter()
     cache_results = llm.collective_rpc(prepare_cuda_ipc_alias_cache)
     cache_ms = (time.perf_counter() - cache_start) * 1000
     print(f"      alias_cache_prepare: {cache_ms:.2f}ms results={cache_results}", flush=True)
+    if memory_breakdown:
+        snapshots = llm.collective_rpc(
+            collect_cuda_memory_snapshot,
+            args=("after_alias_cache",),
+        )
+        memory_snapshots["after_alias_cache"] = snapshots
+        _print_memory_snapshots("memory after alias cache", snapshots)
 
     print("[4/5] Injecting CUDA IPC tensors via storage alias...", flush=True)
     inject_start = time.perf_counter()
@@ -276,6 +310,7 @@ def _run_vllm_flex(
         args=(all_rank_descs, verify_inject),
     )
     inject_ms = (time.perf_counter() - inject_start) * 1000
+    inject_ms_list = [inject_ms]
     for item in inject_results:
         print(
             f"      rank {item['rank']}: injected={item['injected']} "
@@ -286,10 +321,60 @@ def _run_vllm_flex(
         if item["examples"]:
             print(f"        examples={item['examples']}", flush=True)
     print(f"      inject_alias: {inject_ms:.2f}ms", flush=True)
+    for round_idx in range(1, inject_rounds):
+        repeat_start = time.perf_counter()
+        repeat_results = llm.collective_rpc(
+            inject_cuda_ipc_alias,
+            args=(all_rank_descs, verify_inject),
+        )
+        repeat_ms = (time.perf_counter() - repeat_start) * 1000
+        inject_ms_list.append(repeat_ms)
+        repeat_ok = all(item["mismatched"] == 0 for item in repeat_results)
+        print(
+            f"      inject_alias_repeat_{round_idx + 1}: {repeat_ms:.2f}ms ok={repeat_ok}",
+            flush=True,
+        )
+    if memory_breakdown:
+        snapshots = llm.collective_rpc(
+            collect_cuda_memory_snapshot,
+            args=("after_inject",),
+        )
+        memory_snapshots["after_inject"] = snapshots
+        _print_memory_snapshots("memory after inject", snapshots)
+        snapshots = llm.collective_rpc(
+            collect_cuda_memory_snapshot,
+            args=("after_inject_empty_cache", True),
+        )
+        memory_snapshots["after_inject_empty_cache"] = snapshots
+        _print_memory_snapshots("memory after inject empty_cache", snapshots)
 
-    prompts = ["What is machine learning?", "Explain quantum computing simply."]
+    base_prompts = [
+        "What is machine learning?",
+        "Explain quantum computing simply.",
+        "Summarize the benefits of distributed training.",
+        "Describe how attention works in transformers.",
+        "Explain zero-copy memory sharing in simple terms.",
+        "Write a short overview of reinforcement learning.",
+        "Compare tensor parallelism and data parallelism.",
+        "Explain why batching improves inference throughput.",
+    ]
+    prompts = [base_prompts[index % len(base_prompts)] for index in range(num_prompts)]
     params = SamplingParams(max_tokens=max_tokens, temperature=0.0, top_p=1.0, seed=42)
+    if memory_breakdown:
+        snapshots = llm.collective_rpc(
+            collect_cuda_memory_snapshot,
+            args=("before_warmup_generate",),
+        )
+        memory_snapshots["before_warmup_generate"] = snapshots
+        _print_memory_snapshots("memory before warmup generate", snapshots)
     _ = llm.generate(prompts[:1], params)
+    if memory_breakdown:
+        snapshots = llm.collective_rpc(
+            collect_cuda_memory_snapshot,
+            args=("after_warmup_generate",),
+        )
+        memory_snapshots["after_warmup_generate"] = snapshots
+        _print_memory_snapshots("memory after warmup generate", snapshots)
     throughputs = []
     latencies = []
     for idx in range(sample_rounds):
@@ -310,7 +395,9 @@ def _run_vllm_flex(
         "dummy_ms": dummy_ms,
         "alias_cache_ms": cache_ms,
         "inject_ms": inject_ms,
+        "inject_ms_list": inject_ms_list,
         "inject_results": inject_results,
+        "memory_snapshots": memory_snapshots,
         "throughputs": throughputs,
         "latencies": latencies,
     }
@@ -330,8 +417,11 @@ def main() -> None:
     parser.add_argument("--max-model-len", type=int, default=1024)
     parser.add_argument("--max-tokens", type=int, default=128)
     parser.add_argument("--sample-rounds", type=int, default=3)
+    parser.add_argument("--num-prompts", type=int, default=2)
+    parser.add_argument("--inject-rounds", type=int, default=1)
     parser.add_argument("--release-mode", choices=["strict", "fast"], default="fast")
     parser.add_argument("--descriptor-mode", choices=["fresh", "reuse"], default="fresh")
+    parser.add_argument("--memory-breakdown", action="store_true")
     parser.add_argument("--verify-inject", action="store_true")
     args = parser.parse_args()
 
@@ -342,7 +432,8 @@ def main() -> None:
     print("=== FlexGPU Released-Runtime True-Zero Benchmark ===", flush=True)
     print(
         f"  model={spec.name}, tp={args.tp_size}, train_batch={args.train_batch}, "
-        f"seq={args.train_seq_len}, max_tokens={args.max_tokens}, verify={args.verify_inject}",
+        f"seq={args.train_seq_len}, max_tokens={args.max_tokens}, "
+        f"num_prompts={args.num_prompts}, verify={args.verify_inject}",
         flush=True,
     )
 
@@ -416,7 +507,10 @@ def main() -> None:
             max_model_len=args.max_model_len,
             max_tokens=args.max_tokens,
             sample_rounds=args.sample_rounds,
+            num_prompts=args.num_prompts,
+            inject_rounds=args.inject_rounds,
             verify_inject=args.verify_inject,
+            memory_breakdown=args.memory_breakdown,
         )
     finally:
         for conn in conns:
@@ -437,6 +531,12 @@ def main() -> None:
     mean_tput = sum(vllm_result["throughputs"]) / len(vllm_result["throughputs"])
     mean_latency = sum(vllm_result["latencies"]) / len(vllm_result["latencies"])
     switch_core_ms = mean_ipc + mean_release + vllm_result["inject_ms"]
+    steady_inject_ms = (
+        vllm_result["inject_ms_list"][1] if len(vllm_result["inject_ms_list"]) > 1 else None
+    )
+    steady_switch_core_ms = (
+        mean_ipc + mean_release + steady_inject_ms if steady_inject_ms is not None else None
+    )
 
     print("\n=== FlexGPU Summary ===", flush=True)
     print(f"  mean_train_ms: {mean_train:.1f}", flush=True)
@@ -445,7 +545,12 @@ def main() -> None:
     print(f"  mean_runtime_release_ms: {mean_release:.2f}", flush=True)
     print(f"  alias_cache_ms(one-time): {vllm_result['alias_cache_ms']:.2f}", flush=True)
     print(f"  inject_alias_ms: {vllm_result['inject_ms']:.2f}", flush=True)
+    if len(vllm_result["inject_ms_list"]) > 1:
+        repeats = ", ".join(f"{item:.2f}" for item in vllm_result["inject_ms_list"][1:])
+        print(f"  inject_alias_repeat_ms: {repeats}", flush=True)
     print(f"  switch_core_ms: {switch_core_ms:.2f}", flush=True)
+    if steady_switch_core_ms is not None:
+        print(f"  steady_switch_core_ms: {steady_switch_core_ms:.2f}", flush=True)
     print(f"  dummy_load_ms(one-time): {vllm_result['dummy_ms']:.0f}", flush=True)
     print(f"  sampling_throughput: {mean_tput:.1f} tok/s", flush=True)
     print(f"  sampling_latency_ms: {mean_latency:.0f}", flush=True)

@@ -1,3 +1,4 @@
+# pyright: reportUnsupportedDunderAll=false
 from .fsdp_training_backend import FSDPTrainingBackend
 from .sampling_backend import BaseSamplingBackend, DPSamplingBackend, VLLMSamplingBackend
 from .training_backend import BaseTrainingBackend, HFTrainingBackend
@@ -11,11 +12,11 @@ __all__ = [
     "HFTrainingBackend",
     "FSDPTrainingBackend",
     # Lazy-loaded (heavy transitive dependencies):
-    "FlexBackend",  # pyright: ignore[reportUnsupportedDunderAll]
-    "FlexBackendMode",  # pyright: ignore[reportUnsupportedDunderAll]
-    "TransformDirection",  # pyright: ignore[reportUnsupportedDunderAll]
-    "TransformResult",  # pyright: ignore[reportUnsupportedDunderAll]
-    "FusedTorchTPVLLMFlexBackend",  # pyright: ignore[reportUnsupportedDunderAll]
+    "FlexBackend",
+    "FlexBackendMode",
+    "TransformDirection",
+    "TransformResult",
+    "FusedTorchTPVLLMFlexBackend",
 ]
 
 _LAZY_IMPORTS = {

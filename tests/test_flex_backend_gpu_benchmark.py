@@ -5,7 +5,6 @@ import os
 import re
 import subprocess
 import sys
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +30,13 @@ SUMMARY_PATTERNS = {
     "dummy_load_ms": r"dummy_load_ms\(one-time\):\s*([0-9.]+)",
     "sampling_throughput_tok_s": r"sampling_throughput:\s*([0-9.]+)",
     "sampling_latency_ms": r"sampling_latency_ms:\s*([0-9.]+)",
+}
+ROUNDTRIP_PATTERNS = {
+    "rounds": r"round\s+([0-9]+):",
+    "sampling_tput": r"sampling_tput=([0-9.]+)",
+    "steady_t2s_ms": r"steady_t2s_ms=([0-9.]+)",
+    "alloc_after_release_max": r"alloc_after_release_max=([0-9.]+)GB",
+    "free_after_release_min": r"free_after_release_min=([0-9.]+)GB",
 }
 
 
@@ -73,6 +79,26 @@ def _benchmark_defaults(model_name: str, tp_size: int) -> dict[str, str]:
         "max_model_len": "1024",
         "max_tokens": "128",
         "sample_rounds": "3",
+    }
+
+
+def _parse_roundtrip_summary(output: str) -> dict[str, Any]:
+    rounds = [int(item) for item in re.findall(ROUNDTRIP_PATTERNS["rounds"], output)]
+    tputs = [float(item) for item in re.findall(ROUNDTRIP_PATTERNS["sampling_tput"], output)]
+    steady = [float(item) for item in re.findall(ROUNDTRIP_PATTERNS["steady_t2s_ms"], output)]
+    allocs = [
+        float(item) for item in re.findall(ROUNDTRIP_PATTERNS["alloc_after_release_max"], output)
+    ]
+    frees = [
+        float(item) for item in re.findall(ROUNDTRIP_PATTERNS["free_after_release_min"], output)
+    ]
+    return {
+        "round_count": len(rounds),
+        "min_sampling_tput": min(tputs) if tputs else 0.0,
+        "max_steady_t2s_ms": max(steady) if steady else 0.0,
+        "max_alloc_after_release_gb": max(allocs) if allocs else 0.0,
+        "min_free_after_release_gb": min(frees) if frees else 0.0,
+        "done": "DONE" in output,
     }
 
 
@@ -142,7 +168,7 @@ def test_fused_torchtp_vllm_zero_copy_gpu_benchmark(
     model_path: Path,
     tp_size: int,
     tmp_path: Path,
-    record_property: Callable[[str, object], None],
+    record_property: pytest.RecordProperty,  # pyright: ignore[reportAttributeAccessIssue]
 ) -> None:
     if not model_path.exists():
         pytest.skip(f"model path does not exist: {model_path}")
@@ -206,3 +232,71 @@ def test_fused_torchtp_vllm_zero_copy_gpu_benchmark(
     assert metrics["switch_core_ms"] >= metrics["inject_alias_ms"]
     assert metrics["sampling_throughput_tok_s"] > 0
     assert metrics["sampling_latency_ms"] > 0
+
+
+def test_fused_torchtp_vllm_roundtrip_gpu_benchmark(
+    tmp_path: Path,
+    record_property: pytest.RecordProperty,  # pyright: ignore[reportAttributeAccessIssue]
+) -> None:
+    if os.getenv("TUFT_FLEX_GPU_ROUNDTRIP", "0") != "1":
+        pytest.skip("set TUFT_FLEX_GPU_ROUNDTRIP=1 to run round-trip GPU benchmark")
+    model_name = os.getenv("TUFT_FLEX_ROUNDTRIP_MODEL", "qwen3-4b")
+    tp_size = int(os.getenv("TUFT_FLEX_ROUNDTRIP_TP", "2"))
+    available_gpus = _gpu_count()
+    if available_gpus < tp_size:
+        pytest.skip(f"requires {tp_size} GPUs, only {available_gpus} visible")
+
+    script = Path(__file__).resolve().parent / "flexgpu_roundtrip_runner.py"
+    env = os.environ.copy()
+    env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    env.setdefault("VLLM_ALLOW_INSECURE_SERIALIZATION", "1")
+    env.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
+    env.setdefault("CUDA_HOME", "/usr/local/cuda-12.9")
+    env["PATH"] = f"/usr/local/cuda-12.9/bin:{env.get('PATH', '')}"
+    command = [
+        sys.executable,
+        str(script),
+        "--model",
+        model_name,
+        "--tp-size",
+        str(tp_size),
+        "--rounds",
+        os.getenv("TUFT_FLEX_ROUNDTRIP_ROUNDS", "2"),
+        "--gpu-memory-utilization",
+        os.getenv("TUFT_FLEX_ROUNDTRIP_GPU_MEMORY_UTILIZATION", "0.70"),
+        "--max-model-len",
+        os.getenv("TUFT_FLEX_ROUNDTRIP_MAX_MODEL_LEN", "1024"),
+        "--max-tokens",
+        os.getenv("TUFT_FLEX_ROUNDTRIP_MAX_TOKENS", "64"),
+        "--num-prompts",
+        os.getenv("TUFT_FLEX_ROUNDTRIP_NUM_PROMPTS", "4"),
+        "--sample-rounds",
+        os.getenv("TUFT_FLEX_ROUNDTRIP_SAMPLE_ROUNDS", "1"),
+        "--descriptor-mode",
+        "reuse",
+    ]
+    completed = subprocess.run(
+        command,
+        cwd=str(BENCH_ROOT),
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=int(os.getenv("TUFT_FLEX_ROUNDTRIP_TIMEOUT_S", "5400")),
+    )
+    output = completed.stdout + "\n" + completed.stderr
+    metrics = _parse_roundtrip_summary(output)
+    artifact = tmp_path / f"{model_name}-tp{tp_size}-roundtrip.json"
+    artifact.write_text(
+        json.dumps({"metrics": metrics, "output_tail": output[-20000:]}, indent=2),
+    )
+    if completed.returncode != 0:
+        raise AssertionError(f"round-trip benchmark failed\n{output[-12000:]}")
+    assert metrics["done"]
+    expected_rounds = int(os.getenv("TUFT_FLEX_ROUNDTRIP_ROUNDS", "2"))
+    assert metrics["round_count"] >= expected_rounds
+    assert metrics["min_sampling_tput"] > 0.0
+    assert metrics["min_free_after_release_gb"] > 1.0
+    print(f"\n[FLEX_GPU_ROUNDTRIP] model={model_name} tp={tp_size}")
+    print(json.dumps(metrics, indent=2, sort_keys=True))
+    print(f"[FLEX_GPU_ROUNDTRIP] artifact={artifact}")
+    record_property("roundtrip_metrics", json.dumps(metrics, sort_keys=True))
