@@ -73,6 +73,265 @@ def _construct_data(name: str = "extended") -> List[types.Datum]:
     return data
 
 
+LOGPROB_MEAN_REL_DIFF_PCT_TOL = 10.0
+
+
+def _construct_single_lora_logprob_datum(tokenizer) -> tuple[list[types.Datum], list[int]]:
+    prompt = "English: banana split\nPig Latin:"
+    completion = " anana-bay plit-say\n\n"
+    prompt_tokens = tokenizer.encode(prompt, add_special_tokens=True)
+    completion_tokens = tokenizer.encode(completion, add_special_tokens=False)
+    tokens = prompt_tokens + completion_tokens
+    input_tokens = tokens[:-1]
+    target_tokens = tokens[1:]
+    data = [
+        types.Datum(
+            model_input=types.ModelInput.from_ints(tokens=input_tokens),
+            loss_fn_inputs={
+                "target_tokens": types.TensorData(data=target_tokens, dtype="int64"),
+                "weights": types.TensorData(
+                    data=[1.0] * len(target_tokens),
+                    dtype="float32",
+                ),
+            },
+        )
+    ]
+    return data, tokens
+
+
+def _checkpoint_record(temp_dir: Path, checkpoint_id: str) -> CheckpointRecord:
+    return CheckpointRecord(
+        checkpoint_id=checkpoint_id,
+        owner_name="default",
+        checkpoint_type="training",
+        path=temp_dir / checkpoint_id,
+        training_run_id="test_logprob_run",
+        size_bytes=0,
+    )
+
+
+async def _create_training_backend_for_logprob_check(model_config: ModelConfig, backend_name: str):
+    if backend_name == "hfpeft":
+        return HFTrainingBackend(model_config)
+    if backend_name == "fsdp":
+        from tuft.backends.fsdp_training_backend import FSDPTrainingBackend
+
+        return FSDPTrainingBackend(model_config)
+    raise ValueError(f"Unknown backend: {backend_name}")
+
+
+async def _trained_lora_training_logprobs(training_backend, data: list[types.Datum]) -> np.ndarray:
+    await training_backend.create_adapter("test_lora", types.LoraConfig(rank=8, seed=42))
+    for _step in range(2):
+        await training_backend.forward(
+            data=data,
+            lora_id="test_lora",
+            loss_fn="cross_entropy",
+            loss_fn_config=None,
+            backward=True,
+        )
+        await training_backend.optim_step(types.AdamParams(learning_rate=1e-4), lora_id="test_lora")
+    outputs = await training_backend.forward(
+        data=data,
+        lora_id="test_lora",
+        loss_fn="cross_entropy",
+        loss_fn_config=None,
+        backward=False,
+    )
+    return np.asarray(outputs.loss_fn_outputs[0]["logprobs"].tolist(), dtype=np.float32)
+
+
+async def _vllm_lora_prompt_logprobs(
+    model_config: ModelConfig,
+    checkpoint: CheckpointRecord,
+    tokens: list[int],
+):
+    from tuft.backends.sampling_backend import VLLMSamplingBackend
+
+    sampling_backend = VLLMSamplingBackend(model_config)
+    try:
+        await sampling_backend.async_init()
+        await sampling_backend.add_adapter("test_lora", checkpoint.adapter_path)
+        response = await sampling_backend.sample(
+            prompt=types.ModelInput.from_ints(tokens),
+            num_samples=1,
+            sampling_params=types.SamplingParams(
+                max_tokens=1,
+                temperature=1.0,
+                top_p=1.0,
+            ),
+            include_prompt_logprobs=True,
+            lora_id="test_lora",
+        )
+    finally:
+        await sampling_backend.shutdown()
+
+    assert response.prompt_logprobs is not None
+    prompt_logprobs = response.prompt_logprobs[1:]
+    assert all(logprob is not None for logprob in prompt_logprobs)
+    return np.asarray(prompt_logprobs, dtype=np.float32)
+
+
+def _logprob_mismatch_stats(
+    training_logprobs: np.ndarray,
+    sampling_logprobs: np.ndarray,
+) -> dict[str, float]:
+    assert training_logprobs.shape == sampling_logprobs.shape
+    abs_diff = np.abs(training_logprobs - sampling_logprobs)
+    rel_diff_pct = abs_diff / np.maximum(np.abs(sampling_logprobs), 1e-6) * 100.0
+    return {
+        "mean_abs_diff": float(abs_diff.mean()),
+        "max_abs_diff": float(abs_diff.max()),
+        "mean_rel_diff_pct": float(rel_diff_pct.mean()),
+        "max_rel_diff_pct": float(rel_diff_pct.max()),
+    }
+
+
+def _assert_logprobs_close(
+    training_logprobs: np.ndarray,
+    sampling_logprobs: np.ndarray,
+    *,
+    label: str,
+) -> None:
+    stats = _logprob_mismatch_stats(training_logprobs, sampling_logprobs)
+    print(
+        "[lora-logprob-mismatch] "
+        f"{label}: "
+        f"mean_abs={stats['mean_abs_diff']:.6f}, "
+        f"max_abs={stats['max_abs_diff']:.6f}, "
+        f"mean_pct={stats['mean_rel_diff_pct']:.4f}%, "
+        f"max_pct={stats['max_rel_diff_pct']:.4f}%",
+        flush=True,
+    )
+    assert stats["mean_rel_diff_pct"] <= LOGPROB_MEAN_REL_DIFF_PCT_TOL, (
+        "training/vLLM LoRA prompt-average logprob mismatch exceeds "
+        f"{LOGPROB_MEAN_REL_DIFF_PCT_TOL:.1f}% for {label}: "
+        f"mean pct={stats['mean_rel_diff_pct']:.4f}%; "
+        f"max pct={stats['max_rel_diff_pct']:.4f}%; "
+        f"mean abs diff={stats['mean_abs_diff']:.4f}; "
+        f"max abs diff={stats['max_abs_diff']:.4f}"
+    )
+
+
+def _fsdp_logprob_gpu_counts(device_count: int) -> list[int]:
+    gpu_counts = [1]
+    fsdp_num_gpus = 2
+    while fsdp_num_gpus <= device_count:
+        gpu_counts.append(fsdp_num_gpus)
+        fsdp_num_gpus *= 2
+    return gpu_counts
+
+
+async def _run_lora_logprob_match_case(
+    *,
+    backend_name: str,
+    fsdp_num_gpus: int,
+    model_path: Path,
+    tokenizer,
+):
+    import torch
+
+    label = f"backend={backend_name}, fsdp_num_gpus={fsdp_num_gpus}"
+    model_config = ModelConfig(
+        model_name=f"Qwen/Qwen3-0.6B-logprob-{backend_name}-{fsdp_num_gpus}gpu",
+        model_path=model_path,
+        max_model_len=512,
+        tensor_parallel_size=1,
+        max_lora_rank=8,
+        training_backend="fsdp" if backend_name == "fsdp" else "hf",
+        fsdp_num_gpus=fsdp_num_gpus,
+        sampling_memory_fraction=0.5,
+    )
+    single_data, tokens = _construct_single_lora_logprob_datum(tokenizer)
+    data = single_data * fsdp_num_gpus if backend_name == "fsdp" else single_data
+
+    prev_no_ray = os.environ.get("TUFT_FSDP_NO_RAY")
+    if backend_name == "fsdp" and fsdp_num_gpus == 1:
+        os.environ["TUFT_FSDP_NO_RAY"] = "1"
+    elif backend_name == "fsdp":
+        os.environ.pop("TUFT_FSDP_NO_RAY", None)
+
+    training_backend = None
+    try:
+        training_backend = await _create_training_backend_for_logprob_check(
+            model_config,
+            backend_name,
+        )
+        await training_backend.async_init()
+        training_logprobs = await _trained_lora_training_logprobs(training_backend, data)
+
+        with tempfile.TemporaryDirectory() as tmpdirname:
+            checkpoint = _checkpoint_record(
+                Path(tmpdirname),
+                f"{backend_name}_{fsdp_num_gpus}gpu_test_lora",
+            )
+            await training_backend.save_state(
+                lora_id="test_lora",
+                checkpoint_record=checkpoint,
+                optimizer=False,
+            )
+            await training_backend.shutdown()
+            training_backend = None
+            torch.cuda.empty_cache()
+
+            sampling_logprobs = await _vllm_lora_prompt_logprobs(
+                model_config,
+                checkpoint,
+                tokens,
+            )
+
+        _assert_logprobs_close(training_logprobs, sampling_logprobs, label=label)
+
+    finally:
+        if training_backend is not None:
+            await training_backend.shutdown()
+        if backend_name == "fsdp":
+            if prev_no_ray is None:
+                os.environ.pop("TUFT_FSDP_NO_RAY", None)
+            else:
+                os.environ["TUFT_FSDP_NO_RAY"] = prev_no_ray
+        torch.cuda.empty_cache()
+
+
+@pytest.mark.gpu
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend_name", ["hfpeft", "fsdp"])
+async def test_lora_training_logprobs_match_vllm_sampling(backend_name: str, ray_cluster):
+    import torch
+
+    if "TUFT_TEST_MODEL" not in os.environ:
+        pytest.skip("Set TUFT_TEST_MODEL for LoRA logprob consistency test")
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is not available, skipping vLLM logprob consistency test")
+
+    model_path = Path(os.environ.get("TUFT_TEST_MODEL", "Qwen/Qwen3-0.6B"))
+    tokenizer = transformers.AutoTokenizer.from_pretrained(model_path)
+    cuda_device_count = torch.cuda.device_count()
+
+    if backend_name == "hfpeft":
+        await _run_lora_logprob_match_case(
+            backend_name=backend_name,
+            fsdp_num_gpus=1,
+            model_path=model_path,
+            tokenizer=tokenizer,
+        )
+        return
+
+    fsdp_gpu_counts = _fsdp_logprob_gpu_counts(cuda_device_count)
+    print(
+        "[lora-logprob-mismatch] "
+        f"detected_cuda_gpus={cuda_device_count}; fsdp_test_gpu_counts={fsdp_gpu_counts}",
+        flush=True,
+    )
+    for fsdp_num_gpus in fsdp_gpu_counts:
+        await _run_lora_logprob_match_case(
+            backend_name=backend_name,
+            fsdp_num_gpus=fsdp_num_gpus,
+            model_path=model_path,
+            tokenizer=tokenizer,
+        )
+
+
 @pytest.mark.gpu
 @pytest.mark.asyncio
 async def test_training_backend():
