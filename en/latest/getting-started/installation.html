@@ -204,15 +204,10 @@ laptop. See the <strong><a class="reference internal" href="../deployment/index.
 </section>
 <section id="install-via-pypi">
 <h2>Install via PyPI<a class="headerlink" href="#install-via-pypi" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#install-via-pypi'">¶</a></h2>
-<p>Until Verl publishes a release containing its NumPy 2 fixes, PyPI installs
-must use TuFT’s temporary override file:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">curl<span class="w"> </span>-fsSL<span class="w"> </span>https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/verl-git-override.txt<span class="w"> </span><span class="se">\</span>
-</span><span id="line-2"><span class="w">  </span>-o<span class="w"> </span>/tmp/tuft-verl-git-override.txt
-</span><span id="line-3">uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>--override<span class="w"> </span>/tmp/tuft-verl-git-override.txt<span class="w"> </span><span class="s2">"tuft&gt;=0.1.8"</span>
-</span><span id="line-4">
-</span><span id="line-5"><span class="c1"># Install optional dependencies as needed</span>
-</span><span id="line-6">uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>--override<span class="w"> </span>/tmp/tuft-verl-git-override.txt<span class="w"> </span><span class="se">\</span>
-</span><span id="line-7"><span class="w">  </span><span class="s2">"tuft[dev,backend,persistence]&gt;=0.1.8"</span>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"tuft&gt;=0.1.8"</span>
+</span><span id="line-2">
+</span><span id="line-3"><span class="c1"># Install optional dependencies as needed</span>
+</span><span id="line-4">uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"tuft[dev,backend,persistence]&gt;=0.1.8"</span>
 </span></code></pre></div>
 </div>
 </section>

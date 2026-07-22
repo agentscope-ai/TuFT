@@ -69,17 +69,11 @@ We recommend using [uv](https://github.com/astral-sh/uv) for dependency manageme
 
 ## Install via PyPI
 
-Until Verl publishes a release containing its NumPy 2 fixes, PyPI installs
-must use TuFT's temporary override file:
-
 ```bash
-curl -fsSL https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/verl-git-override.txt \
-  -o /tmp/tuft-verl-git-override.txt
-uv pip install --override /tmp/tuft-verl-git-override.txt "tuft>=0.1.8"
+uv pip install "tuft>=0.1.8"
 
 # Install optional dependencies as needed
-uv pip install --override /tmp/tuft-verl-git-override.txt \
-  "tuft[dev,backend,persistence]>=0.1.8"
+uv pip install "tuft[dev,backend,persistence]>=0.1.8"
 ```
 
 ## Use the Pre-built Docker Image
