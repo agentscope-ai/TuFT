@@ -173,7 +173,12 @@ def _prepare_loss_fn_inputs(
     batch_size, max_len = target_logprobs.shape
     device = target_logprobs.device
     if loss_fn_name.lower() in _RLHF_LOSS_FNS:
-        sampling_logprobs = target_logprobs.clone()
+        # detach() is critical: sampling_logprobs must be a constant (old policy logprobs),
+        # NOT connected to the computation graph. Without detach(), clone() preserves the
+        # autograd connection and the gradients of target_logprobs cancel out in
+        # prob_ratio = exp(target_logprobs - sampling_logprobs), giving zero net gradient
+        # and no weight updates (reward never grows in RL training).
+        sampling_logprobs = target_logprobs.detach().clone()
         advantages = torch.zeros((batch_size, max_len), dtype=torch.float32, device=device)
         for row, datum in enumerate(data):
             old_logprobs = _datum_field(

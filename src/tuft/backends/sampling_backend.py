@@ -354,7 +354,12 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                     )
                     if not adapter_path.exists():
                         raise ValueError(f"LoRA adapter path {adapter_path} does not exist.")
-                    await self.engine.add_lora.remote(self.lora_adapters[lora_id])  # type: ignore[attr-defined]
+                    added = await self.engine.add_lora.remote(self.lora_adapters[lora_id])  # type: ignore[attr-defined]
+                    if added is False:
+                        self.lora_adapters.pop(lora_id, None)
+                        raise RuntimeError(
+                            f"vLLM did not register LoRA adapter {lora_id} from {adapter_path}."
+                        )
             except Exception as e:
                 span.record_exception(e)
                 span.set_status(StatusCode.ERROR)

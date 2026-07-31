@@ -438,22 +438,53 @@ class MultiAdapterFSDPWorker:
             # so sampling/VLLM can load
             # FSDP v2: PEFT's save_pretrained cannot handle DTensor directly.
             # We manually save the adapter config and weights in PEFT format.
+            import json
+
+            # Save adapter_config.json
+            # Prefer the runtime peft_config attribute when accessible, but always
+            # fall back to constructing a minimal config from AdapterInfo so the
+            # file is ALWAYS written regardless of FSDP v2 attribute visibility.
             module = self.module
             has_nested_peft = hasattr(module, "module") and hasattr(module.module, "peft_config")
             peft_model = module.module if has_nested_peft else module
 
-            # Save adapter_config.json
+            config_dict: dict | None = None
             if hasattr(peft_model, "peft_config") and adapter_name in peft_model.peft_config:
-                adapter_config = peft_model.peft_config[adapter_name]
-                config_dict = adapter_config.to_dict()
-                # Convert sets to lists for JSON serialization
+                runtime_cfg = peft_model.peft_config[adapter_name]
+                config_dict = runtime_cfg.to_dict()
+                assert config_dict is not None
                 for key, value in config_dict.items():
                     if isinstance(value, set):
                         config_dict[key] = list(value)
-                import json
 
-                with open(path / "adapter_config.json", "w") as f:
-                    json.dump(config_dict, f, indent=2)
+            if config_dict is None:
+                # Fallback: construct a minimal but vLLM-compatible adapter_config.json
+                # from the AdapterInfo that was stored during initialize().
+                info = self._adapters[adapter_name]
+                config_dict = {
+                    "peft_type": "LORA",
+                    "task_type": "CAUSAL_LM",
+                    "base_model_name_or_path": self.model_config.path,
+                    "r": info.rank,
+                    "lora_alpha": info.lora_alpha,
+                    "target_modules": list(info.target_modules),
+                    "lora_dropout": 0.0,
+                    "fan_in_fan_out": False,
+                    "bias": "none",
+                    "modules_to_save": None,
+                    "init_lora_weights": True,
+                    "layers_to_transform": None,
+                    "layers_pattern": None,
+                    "inference_mode": True,
+                }
+                self.logger.warning(
+                    "peft_config not accessible on module after FSDP v2 wrap; "
+                    "writing adapter_config.json from AdapterInfo for adapter '%s'",
+                    adapter_name,
+                )
+
+            with open(path / "adapter_config.json", "w") as f:
+                json.dump(config_dict, f, indent=2)
 
             # Save adapter weights in safetensors format for sampling/vLLM.
             # vLLM lora/utils.py expects keys ending in ".lora_A.weight" or ".lora_B.weight"
@@ -467,7 +498,23 @@ class MultiAdapterFSDPWorker:
                     key = key.replace(".lora_B." + adapter_name + ".", ".lora_B.")
                     key = key.replace(".lora_A." + adapter_name + ".weight", ".lora_A.weight")
                     key = key.replace(".lora_B." + adapter_name + ".weight", ".lora_B.weight")
+                # Always keep the HF/PEFT-native key for models whose vLLM
+                # module tree matches the training model directly.
                 peft_state[key] = tensor
+
+                # Some vLLM model implementations wrap the text backbone under
+                # `language_model` even when the HF training model exposes plain
+                # `model.layers.*` keys. Export a second compatible alias so the
+                # same checkpoint works for both module layouts without
+                # hard-coding model names such as Qwen3.5. vLLM tolerates extra
+                # LoRA tensors whose module paths do not match the runtime model.
+                vllm_language_key = key.replace(
+                    "base_model.model.model.layers.",
+                    "base_model.model.model.language_model.layers.",
+                    1,
+                )
+                if vllm_language_key != key:
+                    peft_state[vllm_language_key] = tensor.clone()
 
             try:
                 from safetensors.torch import save_file

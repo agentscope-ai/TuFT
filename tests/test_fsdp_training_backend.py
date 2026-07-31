@@ -258,6 +258,107 @@ def test_forward_backward_micro_batches_preserve_summed_gradients():
     assert all(parameter.grad is None for parameter in forward_only_model.parameters())
 
 
+def test_fsdp_engine_rl_loss_gradients_are_nonzero_on_cpu():
+    """Regression test: sampling_logprobs must be detached from the computation graph.
+
+    Without .detach(), clone() preserves the autograd connection and the gradients
+    of target_logprobs cancel to zero in prob_ratio = exp(A - B) when B is a clone
+    of A. This causes zero weight updates and reward never grows in RL training.
+    """
+    from types import SimpleNamespace
+
+    import torch
+
+    from tuft.backends.fsdp_engine import forward_backward
+
+    class TinyCausalLM(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.embed = torch.nn.Embedding(16, 8)
+            self.lm_head = torch.nn.Linear(8, 16, bias=False)
+
+        def forward(self, input_ids, **_kwargs):
+            return SimpleNamespace(logits=self.lm_head(self.embed(input_ids)))
+
+    torch.manual_seed(42)
+    model = TinyCausalLM()
+    # Construct RL-style data: logprobs and advantages in loss_fn_inputs.
+    # target_tokens align with model_input length; logprobs are "old policy" values;
+    # advantages are non-zero to ensure a non-trivial RL signal.
+    data = [
+        types.Datum(
+            model_input=types.ModelInput.from_ints(tokens=[1, 2, 3, 4]),
+            loss_fn_inputs={
+                "target_tokens": types.TensorData(data=[2, 3, 4, 5], dtype="int64"),
+                "logprobs": types.TensorData(data=[-0.5, -0.8, -1.2, -0.3], dtype="float32"),
+                "advantages": types.TensorData(data=[1.0, 1.0, -1.0, 0.5], dtype="float32"),
+            },
+        ),
+        types.Datum(
+            model_input=types.ModelInput.from_ints(tokens=[5, 6, 7]),
+            loss_fn_inputs={
+                "target_tokens": types.TensorData(data=[6, 7, 8], dtype="int64"),
+                "logprobs": types.TensorData(data=[-0.4, -1.0, -0.6], dtype="float32"),
+                "advantages": types.TensorData(data=[-1.0, 0.5, 1.0], dtype="float32"),
+            },
+        ),
+    ]
+    for loss_fn_name in ("importance_sampling", "ppo", "cispo"):
+        # Reset gradients for each loss function check
+        for p in model.parameters():
+            p.grad = None
+        forward_backward(model, data, loss_fn_name, {}, micro_batch_size=2)
+        grads = [p.grad for p in model.parameters() if p.grad is not None]
+        assert grads, f"No gradients were computed for loss_fn={loss_fn_name!r}"
+        total_grad_norm = sum(g.abs().sum().item() for g in grads)
+        assert total_grad_norm > 1e-8, (
+            f"Gradients are effectively zero for loss_fn={loss_fn_name!r} "
+            f"(total_grad_norm={total_grad_norm:.2e}). "
+            "This indicates sampling_logprobs is connected to the computation graph "
+            "and gradients cancel out (the clone-without-detach bug)."
+        )
+
+
+def test_fsdp_engine_rl_prepare_loss_inputs_sampling_logprobs_is_constant_on_cpu():
+    """sampling_logprobs must equal the datum's logprobs (not target_logprobs) after prepare."""
+    import torch
+
+    from tuft.backends.fsdp_engine import _prepare_loss_fn_inputs
+
+    torch.manual_seed(0)
+    old_lp = torch.tensor([-0.3, -0.7, -1.1], dtype=torch.float32)
+    adv = torch.tensor([1.0, -1.0, 0.5], dtype=torch.float32)
+    data = [
+        types.Datum(
+            model_input=types.ModelInput.from_ints(tokens=[1, 2, 3]),
+            loss_fn_inputs={
+                "logprobs": types.TensorData.from_torch(old_lp),
+                "advantages": types.TensorData.from_torch(adv),
+            },
+        )
+    ]
+    target_logprobs = torch.randn(1, 3, requires_grad=True)
+    inputs = _prepare_loss_fn_inputs(data, target_logprobs, "importance_sampling")
+
+    # sampling_logprobs must equal the datum's logprobs (the old policy values)
+    torch.testing.assert_close(
+        inputs["logprobs"][0, :3],
+        old_lp,
+        msg="sampling_logprobs must equal datum logprobs, not target_logprobs",
+    )
+    # sampling_logprobs must NOT require grad (must be detached from computation graph)
+    assert not inputs["logprobs"].requires_grad, (
+        "sampling_logprobs must not require grad; if it does, gradients cancel in "
+        "prob_ratio = exp(target_logprobs - sampling_logprobs) and RL training stalls."
+    )
+    # advantages must match datum values
+    torch.testing.assert_close(
+        inputs["advantages"][0, :3],
+        adv,
+        msg="advantages must match datum values",
+    )
+
+
 @pytest.mark.asyncio
 async def test_fsdp_engine_matches_hf_target_tokens_on_cpu():
     from types import SimpleNamespace
