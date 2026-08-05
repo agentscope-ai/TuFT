@@ -317,7 +317,11 @@ class HFTrainingModel:
         # Prepare input tensors
         input_ids = [torch.tensor(datum.model_input.to_ints(), dtype=torch.long) for datum in data]
         input_ids_padded = pad_sequence(input_ids, batch_first=True, padding_value=0)
-        attention_mask = (input_ids_padded != 0).long()
+        # Length-based mask: a genuine mid-sequence token id 0 must not be masked
+        # out (matches the FSDP engine's length-based mask).
+        seq_lens = torch.tensor([len(datum.model_input.to_ints()) for datum in data])
+        positions = torch.arange(input_ids_padded.size(1))
+        attention_mask = (positions.unsqueeze(0) < seq_lens.unsqueeze(1)).long()
         position_ids = (
             torch.arange(input_ids_padded.size(1), dtype=torch.long)
             .unsqueeze(0)
@@ -408,6 +412,9 @@ class HFTrainingModel:
                 param_group["betas"] = (adam_params.beta1, adam_params.beta2)
                 param_group["eps"] = adam_params.eps
                 param_group["weight_decay"] = adam_params.weight_decay
+            if adam_params.grad_clip_norm:
+                clip_params = [p for group in optimizer.param_groups for p in group["params"]]
+                torch.nn.utils.clip_grad_norm_(clip_params, adam_params.grad_clip_norm)
             optimizer.step()
             optimizer.zero_grad()
 

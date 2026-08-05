@@ -176,7 +176,9 @@ def test_prepare_loss_inputs_pads_weights_and_defaults_missing_rows():
     target_logprobs = torch.randn(2, 3, requires_grad=True)
     inputs = _prepare_loss_fn_inputs(data, target_logprobs, "cross_entropy")
     assert inputs["target_logprobs"] is target_logprobs
-    assert inputs["weights"].tolist() == [[0.0, 1.0, 0.0], [1.0, 1.0, 0.0]]
+    # Row 1 has no weights and no target_tokens -> all-ones fallback, but the
+    # flat-roll garbage label at the final position must be zeroed.
+    assert inputs["weights"].tolist() == [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0]]
 
 
 def test_compute_target_logprobs_matches_log_softmax():

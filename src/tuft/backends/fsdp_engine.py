@@ -23,6 +23,14 @@ from tuft.loss_fn import get_loss_fn
 _RLHF_LOSS_FNS = {"ppo", "grpo", "cispo", "importance_sampling", "dro"}
 
 
+def _fsdp_world_size() -> int:
+    """Number of ranks in the FSDP process group (1 when not distributed)."""
+
+    import torch.distributed as dist
+
+    return dist.get_world_size() if dist.is_initialized() else 1
+
+
 @dataclass
 class FSDPModelConfig:
     """Minimal serializable model configuration used by FSDP workers."""
@@ -207,7 +215,15 @@ def _prepare_loss_fn_inputs(
     for row, datum in enumerate(data):
         value = _datum_field(datum, "weights", device=device, dtype=torch.float32)
         if value is None:
-            value = torch.ones(len(datum.model_input.to_ints()), dtype=torch.float32, device=device)
+            length = len(datum.model_input.to_ints())
+            value = torch.ones(length, dtype=torch.float32, device=device)
+            # Flat-roll fallback: without explicit target_tokens, a sample's final
+            # token receives the *next* sample's first token as its label (wrapping
+            # to the first sample for the last row). That label is a garbage
+            # supervision signal, so zero its weight so it does not enter the loss
+            # (the HF backend fails fast instead of silently supervising it).
+            if (datum.loss_fn_inputs or {}).get("target_tokens") is None and length > 0:
+                value[length - 1] = 0.0
         _copy_row(weights, row, value)
     return {"target_logprobs": target_logprobs, "weights": weights}
 
@@ -271,12 +287,27 @@ def forward_backward(
                     return_dict=True,
                 )
                 logits = outputs.logits if hasattr(outputs, "logits") else outputs["logits"]
+                # Match HFTrainingModel: honor loss_fn_config["temperature"]. Without
+                # this, FSDP target_logprobs are computed at a different temperature
+                # than the RL sampling distribution, biasing importance ratios.
+                if "temperature" in config and config["temperature"]:
+                    logits = logits / config["temperature"]
                 target_logprobs = _compute_target_logprobs(logits, batch.labels)
 
             loss_inputs = _prepare_loss_fn_inputs(micro_data, target_logprobs, loss_fn_name)
             loss, metrics = loss_callable(loss_inputs, config)
             if not forward_only:
-                loss.backward()
+                # FSDP2 `fully_shard` averages gradients across ranks during the
+                # reduce-scatter, but our loss functions are sum-reductions. Without
+                # compensation the effective gradient is 1/world_size of the
+                # single-GPU / HF value, silently rescaling the effective learning
+                # rate whenever the GPU count changes. Multiply back by world_size so
+                # the reduced gradient equals the full-batch sum gradient.
+                world_size = _fsdp_world_size()
+                if world_size > 1:
+                    (loss * world_size).backward()
+                else:
+                    loss.backward()
             metric_list.append(metrics)
             per_sample_logprobs.extend(
                 target_logprobs[row, :length].detach() for row, length in enumerate(batch.lengths)
