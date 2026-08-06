@@ -35,13 +35,58 @@ MODULE_MAP = {
 }
 
 
-def get_target_modules(model_path: str, lora_config: TinkerLoraConfig) -> list[str]:
-    if "qwen" in model_path.lower():
-        mode_series = "qwen"
-    elif "llama" in model_path.lower():
-        mode_series = "llama"
+def _export_vllm_compatible_lora_aliases(adapter_dir) -> None:
+    """Export alias keys with a `language_model.` prefix in the saved adapter.
+
+    peft saves LoRA keys relative to the text backbone (e.g.
+    `base_model.model.model.layers.*`), but some vLLM model implementations
+    (e.g. Qwen3.5's Qwen3_5ForConditionalGeneration) wrap the text backbone
+    under `language_model`, and vLLM's hf_to_vllm_mapper only rewrites keys
+    prefixed with `model.language_model.`. Without matching keys, vLLM
+    silently ignores ALL adapter weights and serves the base model instead.
+
+    Mirrors the dual-key export in fsdp_training_backend.save_checkpoint:
+    keep the original keys (so peft `load_adapter` keeps working) and add
+    compatible aliases for vLLM.
+    """
+    weights_path = adapter_dir / "adapter_model.safetensors"
+    if not weights_path.exists():
+        return
+    try:
+        from safetensors.torch import load_file, save_file
+
+        state = load_file(str(weights_path))
+        aliased = {}
+        for key, tensor in state.items():
+            aliased[key] = tensor
+            vllm_language_key = key.replace(
+                "base_model.model.model.layers.",
+                "base_model.model.model.language_model.layers.",
+                1,
+            )
+            if vllm_language_key != key:
+                # Clone to avoid shared-tensor errors in safetensors serialization.
+                aliased[vllm_language_key] = tensor.clone()
+        if len(aliased) != len(state):
+            save_file(aliased, str(weights_path))
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            "Failed to export vLLM-compatible LoRA key aliases: %s", e
+        )
+
+
+def _resolve_model_series(model_path: str) -> str:
+    path_lower = str(model_path).lower()
+    if "qwen" in path_lower:
+        return "qwen"
+    elif "llama" in path_lower:
+        return "llama"
     else:
         raise ValueError(f"Unsupported model series: {model_path}")
+
+
+def get_target_modules(model_path: str, lora_config: TinkerLoraConfig) -> list[str]:
+    mode_series = _resolve_model_series(model_path)
     target_modules = []
     if lora_config.train_attn:
         target_modules.extend(MODULE_MAP[mode_series]["attn"])
@@ -50,6 +95,16 @@ def get_target_modules(model_path: str, lora_config: TinkerLoraConfig) -> list[s
     if lora_config.train_unembed:
         target_modules.extend(MODULE_MAP[mode_series]["unembed"])
     return target_modules
+
+
+def get_default_target_modules(model_path: str) -> list[str]:
+    """Default LoRA target modules (attn + mlp) used to wrap the base model.
+
+    Newer peft versions cannot auto-infer target modules for architectures
+    like Qwen3.5 (Qwen3_5ForConditionalGeneration), so it must be explicit.
+    """
+    mode_series = _resolve_model_series(model_path)
+    return MODULE_MAP[mode_series]["attn"] + MODULE_MAP[mode_series]["mlp"]
 
 
 class HFTrainingModel:
@@ -138,6 +193,11 @@ class HFTrainingModel:
                                 shutil.rmtree(dest)
                         shutil.move(str(item), str(dest))
                     lora_subdir.rmdir()
+
+                # Export `language_model.`-prefixed alias keys so vLLM can
+                # match them for models whose LM is nested under
+                # `language_model` (e.g. Qwen3.5); no-op for other models.
+                _export_vllm_compatible_lora_aliases(adapter_dir)
 
                 # 2. Save optimizer state
                 if optimizer:
@@ -510,7 +570,7 @@ class HFTrainingModel:
         )
         model.enable_input_require_grads()
         model.gradient_checkpointing_enable({"use_reentrant": False})
-        peft_config = LoraConfig()
+        peft_config = LoraConfig(target_modules=get_default_target_modules(str(config.model_path)))
         peft_model = get_peft_model(model, peft_config=peft_config, adapter_name="default")
         return peft_model
 

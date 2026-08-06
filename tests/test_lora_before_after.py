@@ -18,8 +18,10 @@ Or directly:
 from __future__ import annotations
 
 import os
+import socket
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 import pytest
@@ -44,6 +46,31 @@ pytestmark = [
     pytest.mark.integration,
     pytest.mark.gpu,
 ]
+
+
+def _external_server_reachable() -> bool:
+    """Check whether the externally-managed TuFT server is listening."""
+    parsed = urlparse(BASE_URL)
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        with socket.create_connection((parsed.hostname, port), timeout=3):
+            return True
+    except OSError:
+        return False
+
+
+@pytest.fixture(autouse=True)
+def _require_external_server():
+    """Skip when the external TuFT server / model path is unavailable."""
+    if not os.path.isdir(MODEL_PATH):
+        pytest.skip(f"External test model path not found: {MODEL_PATH}")
+    if not _external_server_reachable():
+        pytest.skip(
+            f"External TuFT server not reachable at {BASE_URL}; start a server "
+            f"serving {BASE_MODEL} first"
+        )
+    yield
+
 
 # Training config - small focused training to see clear difference
 LORA_RANK = 16

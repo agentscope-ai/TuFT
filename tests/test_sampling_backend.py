@@ -63,7 +63,9 @@ async def test_sampling_backend():
         assert seq.logprobs is not None
         assert len(seq.tokens) > 0
         assert len(seq.logprobs) == len(seq.tokens)
-        assert seq.stop_reason == "stop"
+        # Some models (e.g. Qwen3.5 with thinking-style outputs) may not finish
+        # within max_tokens=256; both "stop" and "length" are valid terminations.
+        assert seq.stop_reason in ("stop", "length")
 
     # generate with prompt logprobs
     response_with_logprobs = await backend.sample(
