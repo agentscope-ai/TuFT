@@ -16,7 +16,7 @@ from tinker.lib.public_interfaces.service_client import ServiceClient
 from tuft.config import AppConfig, ModelConfig
 from tuft.server import create_root_app
 
-from .helpers import clear_ray_state
+from .helpers import CPU_TEST_TIMEOUT, clear_ray_state
 
 
 pytest.importorskip("h2")
@@ -90,7 +90,11 @@ def server_endpoint(tmp_path_factory: pytest.TempPathFactory, request):
 
 @pytest.mark.integration
 def test_training_and_sampling_round_trip(server_endpoint: str) -> None:
-    service_client = ServiceClient(api_key="tml-test-key-1", base_url=server_endpoint, timeout=15)
+    service_client = ServiceClient(
+        api_key="tml-test-key-1",  # pragma: allowlist secret
+        base_url=server_endpoint,
+        timeout=CPU_TEST_TIMEOUT,
+    )
     try:
         capabilities = service_client.get_server_capabilities()
         assert capabilities.supported_models, "server did not report supported models"
@@ -106,42 +110,46 @@ def test_training_and_sampling_round_trip(server_endpoint: str) -> None:
         )
 
         fwdbwd_result = training_client.forward_backward([datum], "cross_entropy").result(
-            timeout=10
+            timeout=CPU_TEST_TIMEOUT
         )
         assert fwdbwd_result.metrics["loss:sum"] >= 0
 
         optim_result = training_client.optim_step(types.AdamParams(learning_rate=1e-3)).result(
-            timeout=10
+            timeout=CPU_TEST_TIMEOUT
         )
         # optim_result.metrics may be empty, so just check optim_result is not None
         assert optim_result is not None
 
-        save_response = training_client.save_state("checkpoint-test").result(timeout=10)
+        save_response = training_client.save_state("checkpoint-test").result(
+            timeout=CPU_TEST_TIMEOUT
+        )
         sampler_response = training_client.save_weights_for_sampler("sampler-test").result(
-            timeout=10
+            timeout=CPU_TEST_TIMEOUT
         )
         assert save_response.path.startswith("tinker://")
         assert sampler_response.path.startswith("tinker://")
 
         rest_client = service_client.create_rest_client()
         model_id = training_client.model_id
-        checkpoints = rest_client.list_checkpoints(model_id).result(timeout=10)
+        checkpoints = rest_client.list_checkpoints(model_id).result(timeout=CPU_TEST_TIMEOUT)
         assert len(checkpoints.checkpoints) >= 2
 
-        rest_client.publish_checkpoint_from_tinker_path(save_response.path).result(timeout=10)
-        refreshed = rest_client.list_checkpoints(model_id).result(timeout=10)
+        rest_client.publish_checkpoint_from_tinker_path(save_response.path).result(
+            timeout=CPU_TEST_TIMEOUT
+        )
+        refreshed = rest_client.list_checkpoints(model_id).result(timeout=CPU_TEST_TIMEOUT)
         published = [
             ckpt for ckpt in refreshed.checkpoints if ckpt.checkpoint_id == "checkpoint-test"
         ]
         assert published and published[0].public is True
 
         weights_info = rest_client.get_weights_info_by_tinker_path(save_response.path).result(
-            timeout=10
+            timeout=CPU_TEST_TIMEOUT
         )
         assert weights_info.base_model == base_model
 
         archive = rest_client.get_checkpoint_archive_url(model_id, "checkpoint-test").result(
-            timeout=10
+            timeout=CPU_TEST_TIMEOUT
         )
         assert archive.url.startswith("file:")
 
@@ -162,20 +170,20 @@ def test_training_and_sampling_round_trip(server_endpoint: str) -> None:
             prompt=types.ModelInput.from_ints([99, 5, 12]),
             num_samples=1,
             sampling_params=types.SamplingParams(max_tokens=5, temperature=0.5),
-        ).result(timeout=10)
+        ).result(timeout=CPU_TEST_TIMEOUT)
         assert sample_res.sequences and sample_res.sequences[0].tokens
 
-        training_runs = rest_client.list_training_runs().result(timeout=10)
+        training_runs = rest_client.list_training_runs().result(timeout=CPU_TEST_TIMEOUT)
         assert training_runs.training_runs and training_runs.cursor.total_count >= 1
 
         session_id = service_client.holder.get_session_id()
-        session_info = rest_client.get_session(session_id).result(timeout=10)
+        session_info = rest_client.get_session(session_id).result(timeout=CPU_TEST_TIMEOUT)
         assert model_id in session_info.training_run_ids
 
-        sessions = rest_client.list_sessions().result(timeout=10)
+        sessions = rest_client.list_sessions().result(timeout=CPU_TEST_TIMEOUT)
         assert session_id in sessions.sessions
 
-        all_checkpoints = rest_client.list_user_checkpoints().result(timeout=10)
+        all_checkpoints = rest_client.list_user_checkpoints().result(timeout=CPU_TEST_TIMEOUT)
         assert any(ckpt.public for ckpt in all_checkpoints.checkpoints)
     finally:
         service_client.holder.close()

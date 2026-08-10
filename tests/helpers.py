@@ -24,6 +24,12 @@ from tuft.server import create_root_app
 
 
 # Test data constants
+# Timeout for CPU-mode server round-trip tests (future retrieval + HTTP).
+# The first forward_backward triggers backend/adapter initialization, which
+# exceeds 10s on slow CI runners (e.g. 2-core GitHub Actions); 60s keeps the
+# tests robust without meaningfully masking real hangs.
+CPU_TEST_TIMEOUT = 60
+
 PIG_LATIN_EXAMPLES = [
     {"input": "banana split", "output": "anana-bay plit-say"},
     {"input": "hello world", "output": "ello-hay orld-way"},
