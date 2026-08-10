@@ -16,7 +16,11 @@ from tuft.exceptions import (
 from tuft.futures import FutureStore
 
 
-async def _wait_for_result(store: FutureStore, request_id: str, user_id: str, timeout: float = 1.0):
+async def _wait_for_result(
+    store: FutureStore, request_id: str, user_id: str, timeout: float = 10.0
+):
+    # Generous budget: operations below sleep ~1s, and thread-pool startup or
+    # persistence writes can add latency on slow CI runners.
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         result = await store.retrieve(request_id, user_id=user_id, timeout=timeout)
