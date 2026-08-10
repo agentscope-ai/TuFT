@@ -49,10 +49,12 @@ async def test_sampling_backend():
         messages, return_tensors="pt", return_dict=True, add_special_tokens=False
     )["input_ids"][0].tolist()
     # generate without prompt logprobs
+    # max_tokens is generous enough for thinking-style models (e.g. Qwen3.5)
+    # to emit their EOS, so "stop" remains deterministically assertable.
     response = await backend.sample(
         prompt=types.ModelInput.from_ints(input_ids),
         num_samples=3,
-        sampling_params=types.SamplingParams(max_tokens=256, temperature=0.7),
+        sampling_params=types.SamplingParams(max_tokens=1024, temperature=0.7),
     )
     assert response.sequences is not None
     assert len(response.sequences) == 3
@@ -63,9 +65,7 @@ async def test_sampling_backend():
         assert seq.logprobs is not None
         assert len(seq.tokens) > 0
         assert len(seq.logprobs) == len(seq.tokens)
-        # Some models (e.g. Qwen3.5 with thinking-style outputs) may not finish
-        # within max_tokens=256; both "stop" and "length" are valid terminations.
-        assert seq.stop_reason in ("stop", "length")
+        assert seq.stop_reason == "stop"
 
     # generate with prompt logprobs
     response_with_logprobs = await backend.sample(

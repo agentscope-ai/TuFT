@@ -14,17 +14,17 @@ Or directly:
 from __future__ import annotations
 
 import os
-import socket
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.parse import urlparse
 
 import httpx
 import pytest
 import tinker
 from tinker import types
 from transformers import AutoTokenizer
+
+from .helpers import external_server_reachable
 
 
 # Configuration (can be overridden via env vars)
@@ -43,13 +43,7 @@ pytestmark = [
 
 def _external_dp_server_reachable() -> bool:
     """Check whether the externally-managed DP server is listening."""
-    parsed = urlparse(BASE_URL)
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    try:
-        with socket.create_connection((parsed.hostname, port), timeout=3):
-            return True
-    except OSError:
-        return False
+    return external_server_reachable(BASE_URL)
 
 
 @pytest.fixture(autouse=True)

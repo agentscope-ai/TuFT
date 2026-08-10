@@ -40,6 +40,10 @@ from tuft.backends.fsdp_engine import (
     build_base_model,
     forward_backward as fsdp_forward_backward,
 )
+from tuft.backends.vllm_lora_compat import (
+    add_language_model_aliases,
+    vllm_nests_language_model,
+)
 from tuft.checkpoints import CheckpointRecord
 from tuft.config import ModelConfig
 
@@ -144,6 +148,30 @@ def _fsdp_logprobs_to_loss_fn_outputs(
         {"logprobs": types.TensorData.from_torch(t.detach().cpu().float().clone())}
         for t in per_sample
     ]
+
+
+def _write_adapter_weights_file(
+    logger: logging.Logger, adapter_name: str, path: Path, peft_state: dict
+) -> None:
+    """Write adapter weights as safetensors, falling back to ``.bin`` on failure.
+
+    Always removes the other format first so vLLM (which prefers safetensors
+    over .bin) can never pick a stale file left behind by a previous save at
+    the same checkpoint path.
+    """
+    try:
+        from safetensors.torch import save_file
+
+        (path / "adapter_model.bin").unlink(missing_ok=True)
+        save_file(peft_state, path / "adapter_model.safetensors")
+    except Exception as e:
+        logger.warning(
+            "safetensors save failed for adapter '%s', falling back to .bin: %s",
+            adapter_name,
+            e,
+        )
+        (path / "adapter_model.safetensors").unlink(missing_ok=True)
+        torch.save(peft_state, path / "adapter_model.bin")
 
 
 # =============================================================================
@@ -588,33 +616,15 @@ class MultiAdapterFSDPWorker:
             # vLLM lora/utils.py expects keys ending in ".lora_A.weight" or ".lora_B.weight"
             # (parts[-2] in ["lora_A","lora_B"]). `state` is already keyed canonically
             # (slot name stripped), which is exactly the layout vLLM expects.
-            peft_state = {}
-            for key, tensor in state.items():
-                # Keep the HF/PEFT-native key for models whose vLLM module tree matches
-                # the training model directly.
-                peft_state[key] = tensor
+            peft_state = dict(state)
+            # Only emit `language_model.` alias keys for models whose vLLM
+            # implementation nests the text backbone under `language_model`
+            # (e.g. Qwen3.5); emitting them unconditionally would double the
+            # checkpoint size and vLLM GPU load-time memory for every model.
+            if vllm_nests_language_model(self.model_config.path):
+                peft_state = add_language_model_aliases(peft_state)
 
-                # Some vLLM model implementations wrap the text backbone under
-                # `language_model` even when the HF training model exposes plain
-                # `model.layers.*` keys. Export a second compatible alias so the
-                # same checkpoint works for both module layouts without
-                # hard-coding model names such as Qwen3.5. vLLM tolerates extra
-                # LoRA tensors whose module paths do not match the runtime model.
-                vllm_language_key = key.replace(
-                    "base_model.model.model.layers.",
-                    "base_model.model.model.language_model.layers.",
-                    1,
-                )
-                if vllm_language_key != key:
-                    peft_state[vllm_language_key] = tensor
-
-            try:
-                from safetensors.torch import save_file
-
-                save_file(peft_state, path / "adapter_model.safetensors")
-            except Exception:
-                # Fallback to torch.save if safetensors fails
-                torch.save(peft_state, path / "adapter_model.bin")
+            _write_adapter_weights_file(self.logger, adapter_name, path, peft_state)
 
     def load_checkpoint(self, adapter_name: str, path: str | Path, optimizer: bool = True) -> None:
         path = Path(path)

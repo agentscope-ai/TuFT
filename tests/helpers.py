@@ -10,6 +10,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Generator
+from urllib.parse import urlparse
 
 import httpx
 import pytest
@@ -67,6 +68,24 @@ def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
+
+
+def external_server_reachable(base_url: str, timeout: float = 3.0) -> bool:
+    """Check whether an externally-managed server is listening at base_url.
+
+    Shared by integration tests that require a pre-started TuFT server
+    (TUFT_BASE_URL). Returns False for malformed URLs (missing host) so the
+    caller's skip logic works instead of raising TypeError.
+    """
+    parsed = urlparse(base_url)
+    if not parsed.hostname:
+        return False
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        with socket.create_connection((parsed.hostname, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 
 def _normalize_text(text: str) -> str:

@@ -1,6 +1,8 @@
 import asyncio
 import logging
+import os
 import shutil
+from pathlib import Path
 from typing import Callable, Dict
 
 import ray
@@ -13,6 +15,11 @@ from tinker.types import LoraConfig as TinkerLoraConfig
 from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoModelForCausalLM
 
+from tuft.backends.vllm_lora_compat import (
+    add_language_model_aliases,
+    resolve_model_series,
+    vllm_nests_language_model,
+)
 from tuft.checkpoints import CheckpointRecord
 from tuft.config import ModelConfig
 from tuft.loss_fn import get_loss_fn, metrics_reduction
@@ -35,7 +42,7 @@ MODULE_MAP = {
 }
 
 
-def _export_vllm_compatible_lora_aliases(adapter_dir) -> None:
+def _export_vllm_compatible_lora_aliases(adapter_dir: Path, model_path: str) -> None:
     """Export alias keys with a `language_model.` prefix in the saved adapter.
 
     peft saves LoRA keys relative to the text backbone (e.g.
@@ -45,44 +52,37 @@ def _export_vllm_compatible_lora_aliases(adapter_dir) -> None:
     prefixed with `model.language_model.`. Without matching keys, vLLM
     silently ignores ALL adapter weights and serves the base model instead.
 
-    Mirrors the dual-key export in fsdp_training_backend.save_checkpoint:
-    keep the original keys (so peft `load_adapter` keeps working) and add
-    compatible aliases for vLLM.
+    Aliases are only emitted for architectures that actually need them (see
+    ``vllm_nests_language_model``). Failures propagate: a checkpoint written
+    without the aliases would silently degrade into the exact bug this export
+    fixes, so ``save_state`` must fail loudly instead of returning success.
     """
     weights_path = adapter_dir / "adapter_model.safetensors"
     if not weights_path.exists():
         return
-    try:
-        from safetensors.torch import load_file, save_file
+    if not vllm_nests_language_model(model_path):
+        return
 
-        state = load_file(str(weights_path))
-        aliased = {}
-        for key, tensor in state.items():
-            aliased[key] = tensor
-            vllm_language_key = key.replace(
-                "base_model.model.model.layers.",
-                "base_model.model.model.language_model.layers.",
-                1,
-            )
-            if vllm_language_key != key:
-                # Clone to avoid shared-tensor errors in safetensors serialization.
-                aliased[vllm_language_key] = tensor.clone()
-        if len(aliased) != len(state):
-            save_file(aliased, str(weights_path))
-    except Exception as e:
-        logging.getLogger(__name__).warning(
-            "Failed to export vLLM-compatible LoRA key aliases: %s", e
-        )
+    from safetensors.torch import load_file, save_file
+
+    state = load_file(str(weights_path))
+    aliased = add_language_model_aliases(state)
+    if len(aliased) == len(state):
+        return
+
+    # Atomic in-place rewrite: write to a temp file in the same directory and
+    # os.replace over the original, so a crash mid-write can never leave a
+    # truncated adapter_model.safetensors behind a valid checkpoint record.
+    tmp_path = adapter_dir / "adapter_model.safetensors.tmp"
+    save_file(aliased, str(tmp_path))
+    os.replace(tmp_path, weights_path)
 
 
 def _resolve_model_series(model_path: str) -> str:
-    path_lower = str(model_path).lower()
-    if "qwen" in path_lower:
-        return "qwen"
-    elif "llama" in path_lower:
-        return "llama"
-    else:
+    series = resolve_model_series(model_path)
+    if series is None:
         raise ValueError(f"Unsupported model series: {model_path}")
+    return series
 
 
 def get_target_modules(model_path: str, lora_config: TinkerLoraConfig) -> list[str]:
@@ -97,14 +97,19 @@ def get_target_modules(model_path: str, lora_config: TinkerLoraConfig) -> list[s
     return target_modules
 
 
-def get_default_target_modules(model_path: str) -> list[str]:
-    """Default LoRA target modules (attn + mlp) used to wrap the base model.
+def get_default_target_modules(model_path: str) -> list[str] | None:
+    """Minimal target modules for the placeholder ``default`` adapter.
 
-    Newer peft versions cannot auto-infer target modules for architectures
-    like Qwen3.5 (Qwen3_5ForConditionalGeneration), so it must be explicit.
+    The placeholder only wraps the base model as a PeftModel so real adapters
+    can be added later; it is never trained, so a single module keeps its
+    permanently resident parameter overhead minimal. Returns None for unknown
+    series so callers fall back to peft auto-inference instead of failing at
+    server startup (the hard failure stays in create_adapter).
     """
-    mode_series = _resolve_model_series(model_path)
-    return MODULE_MAP[mode_series]["attn"] + MODULE_MAP[mode_series]["mlp"]
+    series = resolve_model_series(model_path)
+    if series is None:
+        return None
+    return [MODULE_MAP[series]["attn"][0]]
 
 
 class HFTrainingModel:
@@ -197,7 +202,7 @@ class HFTrainingModel:
                 # Export `language_model.`-prefixed alias keys so vLLM can
                 # match them for models whose LM is nested under
                 # `language_model` (e.g. Qwen3.5); no-op for other models.
-                _export_vllm_compatible_lora_aliases(adapter_dir)
+                _export_vllm_compatible_lora_aliases(adapter_dir, str(self.config.model_path))
 
                 # 2. Save optimizer state
                 if optimizer:
@@ -570,7 +575,13 @@ class HFTrainingModel:
         )
         model.enable_input_require_grads()
         model.gradient_checkpointing_enable({"use_reentrant": False})
-        peft_config = LoraConfig(target_modules=get_default_target_modules(str(config.model_path)))
+        default_modules = get_default_target_modules(str(config.model_path))
+        if default_modules is not None:
+            peft_config = LoraConfig(target_modules=default_modules)
+        else:
+            # Unknown series: fall back to peft auto-inference so the server
+            # can still start; create_adapter keeps the hard failure.
+            peft_config = LoraConfig()
         peft_model = get_peft_model(model, peft_config=peft_config, adapter_name="default")
         return peft_model
 

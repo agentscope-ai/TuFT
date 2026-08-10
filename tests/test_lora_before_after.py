@@ -18,16 +18,16 @@ Or directly:
 from __future__ import annotations
 
 import os
-import socket
 import sys
 from pathlib import Path
-from urllib.parse import urlparse
 
 import httpx
 import pytest
 import tinker
 from tinker import types
 from transformers import AutoTokenizer
+
+from .helpers import external_server_reachable
 
 
 # Add examples dir to path for dataset import
@@ -50,13 +50,7 @@ pytestmark = [
 
 def _external_server_reachable() -> bool:
     """Check whether the externally-managed TuFT server is listening."""
-    parsed = urlparse(BASE_URL)
-    port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    try:
-        with socket.create_connection((parsed.hostname, port), timeout=3):
-            return True
-    except OSError:
-        return False
+    return external_server_reachable(BASE_URL)
 
 
 @pytest.fixture(autouse=True)
