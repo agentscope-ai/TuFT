@@ -83,6 +83,9 @@ def _build_config(
         config.checkpoint_dir = checkpoint_dir.expanduser()
     elif config.checkpoint_dir is None:
         config.checkpoint_dir = _DEFAULT_CHECKPOINT_DIR
+    else:
+        # Expand ~ from config file value (Path() does NOT auto-expand tildes)
+        config.checkpoint_dir = config.checkpoint_dir.expanduser()
     # Guarantee checkpoint_dir is set after resolution
     assert config.checkpoint_dir is not None, "checkpoint_dir must be set after config resolution"
     config.ensure_directories()

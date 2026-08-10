@@ -24,6 +24,8 @@ import tinker
 from tinker import types
 from transformers import AutoTokenizer
 
+from .helpers import external_server_reachable
+
 
 # Configuration (can be overridden via env vars)
 BASE_URL = os.getenv("TUFT_BASE_URL", "http://localhost:10610")
@@ -37,6 +39,24 @@ pytestmark = [
     pytest.mark.integration,
     pytest.mark.gpu,
 ]
+
+
+def _external_dp_server_reachable() -> bool:
+    """Check whether the externally-managed DP server is listening."""
+    return external_server_reachable(BASE_URL)
+
+
+@pytest.fixture(autouse=True)
+def _require_external_dp_server():
+    """Skip all tests when the external DP server / model path is unavailable."""
+    if not os.path.isdir(MODEL_PATH):
+        pytest.skip(f"External DP test model path not found: {MODEL_PATH}")
+    if not _external_dp_server_reachable():
+        pytest.skip(
+            f"External DP server not reachable at {BASE_URL}; start a TuFT server "
+            f"with data_parallel_size > 1 serving {BASE_MODEL} first"
+        )
+    yield
 
 
 def get_gpu_utilization():

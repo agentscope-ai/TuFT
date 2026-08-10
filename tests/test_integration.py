@@ -39,6 +39,11 @@ Notes:
 """
 
 
+# Thinking-style models (e.g. Qwen3.5) emit long reasoning before the answer
+# and need a larger sampling timeout; regular models keep the default 60s.
+THINKING_SAMPLE_TIMEOUT = 300
+
+
 def _get_model_path(env_var: str = "TUFT_TEST_MODEL") -> Path:
     """Get model path from environment variable, skip test if not set."""
     if env_var not in os.environ:
@@ -339,17 +344,21 @@ def test_multi_lora_adapters(hf_server_endpoint: str) -> None:
                 prompt=types.ModelInput.from_ints(prompt_tokens),
                 num_samples=1,
                 sampling_params=types.SamplingParams(
-                    max_tokens=16,
+                    max_tokens=32,
                     temperature=0.1,
                     top_p=1.0,
-                    stop=["\n"],
                 ),
-            ).result(timeout=60)
+            ).result(timeout=THINKING_SAMPLE_TIMEOUT)
             assert sample_res.sequences and sample_res.sequences[0].tokens
             output_text = tokenizer.decode(sample_res.sequences[0].tokens, skip_special_tokens=True)
             _log(f"LoRA A prompt: {prompt_text!r}")
             _log(f"LoRA A output: {output_text!r}")
-            assert _normalize_text(output_text) == _normalize_text(example["output"])
+            # Some models (e.g. Qwen3.5) emit a leading newline or trailing
+            # context around the answer; compare the first non-empty line
+            # exactly instead of a containment check, which would let
+            # incidental matches pass.
+            first_line = output_text.strip().split("\n")[0]
+            assert _normalize_text(first_line) == _normalize_text(example["output"])
 
         _log("Validating LoRA B (Reverse Words) outputs...")
         for prompt_text, example in zip(REVERSE_PROMPTS, REVERSE_EXAMPLES, strict=True):
@@ -361,14 +370,14 @@ def test_multi_lora_adapters(hf_server_endpoint: str) -> None:
                     max_tokens=32,
                     temperature=0.0,
                     top_p=1.0,
-                    stop=["\n"],
                 ),
-            ).result(timeout=60)
+            ).result(timeout=THINKING_SAMPLE_TIMEOUT)
             assert sample_res.sequences and sample_res.sequences[0].tokens
             output_text = tokenizer.decode(sample_res.sequences[0].tokens, skip_special_tokens=True)
             _log(f"LoRA B prompt: {prompt_text!r}")
             _log(f"LoRA B output: {output_text!r}")
-            assert _normalize_text(output_text) == _normalize_text(example["output"])
+            first_line = output_text.strip().split("\n")[0]
+            assert _normalize_text(first_line) == _normalize_text(example["output"])
 
         _log("Validating LoRA A/B separation...")
         cross_prompt = "Reverse each word.\nEnglish: hello world\nReversed:"
@@ -380,13 +389,12 @@ def test_multi_lora_adapters(hf_server_endpoint: str) -> None:
                 max_tokens=32,
                 temperature=0.0,
                 top_p=1.0,
-                stop=["\n"],
             ),
-        ).result(timeout=60)
+        ).result(timeout=THINKING_SAMPLE_TIMEOUT)
         assert cross_res_a.sequences and cross_res_a.sequences[0].tokens
         cross_text_a = tokenizer.decode(cross_res_a.sequences[0].tokens, skip_special_tokens=True)
         _log(f"LoRA A on Reverse prompt output: {cross_text_a!r}")
-        assert _normalize_text(cross_text_a) != _normalize_text("olleh dlrow")
+        assert _normalize_text("olleh dlrow") not in _normalize_text(cross_text_a)
     finally:
         service_client.holder.close()
 

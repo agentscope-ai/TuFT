@@ -194,6 +194,9 @@ class TinkerProxy(DataProxy):
         ]
 
         return [
-            tokenizer.decode(result.sequences[0].tokens, skip_special_tokens=True)
+            cast(
+                str,
+                tokenizer.decode(result.sequences[0].tokens, skip_special_tokens=True),
+            )
             for result in results_token_list
         ]

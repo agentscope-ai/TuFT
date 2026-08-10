@@ -14,7 +14,10 @@ dependencies = [
     "fastapi>=0.133.0,<0.137.0",
     "httpx>=0.28.1",
     "numpy>=2.0.0",
-    "tinker>=0.18.2",
+    # tinker >=0.25.0 dropped the _pydantic_types request mirrors; the
+    # remaining dataclass request types cannot be used as FastAPI body models
+    # (pydantic cannot build schemas for them), so cap below 0.25.
+    "tinker>=0.18.2,<0.25",
     "protobuf>=4.21.0",
     "typer>=0.20.1",
     "uvicorn[standard]>=0.38.0",

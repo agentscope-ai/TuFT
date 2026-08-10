@@ -346,15 +346,24 @@ class VLLMSamplingBackend(BaseSamplingBackend):
             span.set_attribute("tuft.lora_id", lora_id)
             try:
                 async with self._lock:
+                    if not adapter_path.exists():
+                        raise ValueError(f"LoRA adapter path {adapter_path} does not exist.")
                     self._counter += 1
-                    self.lora_adapters[lora_id] = LoRARequest(
+                    request = LoRARequest(
                         lora_int_id=self._counter + 1,
                         lora_name=lora_id,
                         lora_path=str(adapter_path),
                     )
-                    if not adapter_path.exists():
-                        raise ValueError(f"LoRA adapter path {adapter_path} does not exist.")
-                    await self.engine.add_lora.remote(self.lora_adapters[lora_id])  # type: ignore[attr-defined]
+                    # Register with vLLM first; only record the adapter in the local
+                    # registry after success. Otherwise a failure (missing path, or the
+                    # engine raising) would leave a stale entry that sample() would later
+                    # pass to vLLM even though it was never registered.
+                    added = await self.engine.add_lora.remote(request)  # type: ignore[attr-defined]
+                    if added is False:
+                        raise RuntimeError(
+                            f"vLLM did not register LoRA adapter {lora_id} from {adapter_path}."
+                        )
+                    self.lora_adapters[lora_id] = request
             except Exception as e:
                 span.record_exception(e)
                 span.set_status(StatusCode.ERROR)
@@ -471,8 +480,28 @@ class DPSamplingBackend(BaseSamplingBackend):
         )
 
     async def add_adapter(self, lora_id: str, adapter_path: Path) -> None:
-        """Add LoRA adapter to ALL DP instances."""
-        await asyncio.gather(*[inst.add_adapter(lora_id, adapter_path) for inst in self._instances])
+        """Add LoRA adapter to ALL DP instances; roll back on partial failure.
+
+        Without rollback, a failure on one replica would leave the DP instances with
+        inconsistent adapter sets (some registered, some not), causing round-robin
+        sampling to intermittently fail with an unknown lora_id.
+        """
+        results = await asyncio.gather(
+            *[inst.add_adapter(lora_id, adapter_path) for inst in self._instances],
+            return_exceptions=True,
+        )
+        failures = [i for i, res in enumerate(results) if isinstance(res, BaseException)]
+        if failures:
+            # Roll back the instances that succeeded so the adapter set stays consistent.
+            for i, res in enumerate(results):
+                if not isinstance(res, BaseException):
+                    try:
+                        await self._instances[i].remove_adapter(lora_id)
+                    except Exception:  # pylint: disable=broad-except
+                        logger.warning("Failed to roll back adapter %s on instance %d", lora_id, i)
+            first_error = results[failures[0]]
+            if isinstance(first_error, BaseException):
+                raise first_error
 
     async def remove_adapter(self, lora_id: str) -> None:
         """Remove LoRA adapter from ALL DP instances."""

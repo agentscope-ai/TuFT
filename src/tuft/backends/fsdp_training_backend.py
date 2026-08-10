@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import os
+import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,8 +40,42 @@ from tuft.backends.fsdp_engine import (
     build_base_model,
     forward_backward as fsdp_forward_backward,
 )
+from tuft.backends.vllm_lora_compat import (
+    add_language_model_aliases,
+    vllm_nests_language_model,
+)
 from tuft.checkpoints import CheckpointRecord
 from tuft.config import ModelConfig
+
+
+# Matches the slot/adapter name embedded in a PEFT LoRA parameter key, e.g.
+# '...lora_A.adapter_r8_3.weight'. Used to canonicalize keys so checkpoints are
+# independent of which slot saved/loads them.
+_LORA_AB_NAME_RE = re.compile(r"\.lora_(A|B)\.[^.]+\.weight$")
+
+
+def _canonical_lora_key(key: str) -> str:
+    """Strip the embedded slot name from a LoRA parameter key.
+
+    '...lora_A.adapter_r8_3.weight' -> '...lora_A.weight'. A key that is already
+    canonical ('...lora_A.weight') is returned unchanged.
+    """
+    return _LORA_AB_NAME_RE.sub(r".lora_\1.weight", key)
+
+
+def _copy_full_tensor_into_dtensor(param: DTensor, full_tensor: torch.Tensor) -> None:
+    """Copy a full (unsharded) tensor into an FSDP2 DTensor parameter.
+
+    Uses ``distribute_tensor`` with the parameter's own device_mesh/placements so the
+    sharding matches FSDP2 semantics exactly (handles non-divisible dim0 and
+    dim0 < world_size correctly, unlike manual equal-chunk slicing).
+    """
+    from torch.distributed.tensor import distribute_tensor
+
+    local_device = param.to_local().device
+    full = full_tensor.to(device=local_device, dtype=param.dtype)
+    sharded = distribute_tensor(full, device_mesh=param.device_mesh, placements=param.placements)
+    param.to_local().copy_(sharded.to_local())
 
 
 def _shard_list(xs: list[Any], n_shards: int) -> list[list[Any]]:
@@ -58,10 +94,20 @@ def _shard_list(xs: list[Any], n_shards: int) -> list[list[Any]]:
     return shards
 
 
-def _merge_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
-    merged: dict[str, Any] = {}
+def _merge_metrics(
+    results: list[dict[str, Any]], weights: list[int] | None = None
+) -> dict[str, Any]:
+    """Merge per-shard metrics.
 
-    for out in results:
+    ``:sum`` metrics are summed; ``:mean`` metrics are averaged weighted by the
+    corresponding shard size (``weights``) so unequal shards do not skew the mean
+    (matches the HF backend, which weights by micro-batch size).
+    """
+    merged: dict[str, Any] = {}
+    mean_acc: dict[str, list[float]] = {}
+
+    for idx, out in enumerate(results):
+        w = float(weights[idx]) if weights is not None and idx < len(weights) else 1.0
         metrics = out.get("metrics", {}) or {}
         for k, v in metrics.items():
             if not isinstance(v, (int, float)):
@@ -70,13 +116,14 @@ def _merge_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
             if k.endswith(":sum"):
                 merged[k] = merged.get(k, 0.0) + float(v)
             elif k.endswith(":mean"):
-                merged.setdefault(k, []).append(float(v))
+                acc = mean_acc.setdefault(k, [0.0, 0.0])
+                acc[0] += float(v) * w
+                acc[1] += w
             else:
                 merged[k] = merged.get(k, 0.0) + float(v)
 
-    for k, v in list(merged.items()):
-        if isinstance(v, list):
-            merged[k] = sum(v) / len(v) if v else 0.0
+    for k, (weighted_sum, total_weight) in mean_acc.items():
+        merged[k] = weighted_sum / total_weight if total_weight else 0.0
 
     return merged
 
@@ -101,6 +148,30 @@ def _fsdp_logprobs_to_loss_fn_outputs(
         {"logprobs": types.TensorData.from_torch(t.detach().cpu().float().clone())}
         for t in per_sample
     ]
+
+
+def _write_adapter_weights_file(
+    logger: logging.Logger, adapter_name: str, path: Path, peft_state: dict
+) -> None:
+    """Write adapter weights as safetensors, falling back to ``.bin`` on failure.
+
+    Always removes the other format first so vLLM (which prefers safetensors
+    over .bin) can never pick a stale file left behind by a previous save at
+    the same checkpoint path.
+    """
+    try:
+        from safetensors.torch import save_file
+
+        (path / "adapter_model.bin").unlink(missing_ok=True)
+        save_file(peft_state, path / "adapter_model.safetensors")
+    except Exception as e:
+        logger.warning(
+            "safetensors save failed for adapter '%s', falling back to .bin: %s",
+            adapter_name,
+            e,
+        )
+        (path / "adapter_model.safetensors").unlink(missing_ok=True)
+        torch.save(peft_state, path / "adapter_model.bin")
 
 
 # =============================================================================
@@ -324,6 +395,46 @@ class MultiAdapterFSDPWorker:
         else:
             raise RuntimeError(f"Cannot find set_adapter method on module: {type(module)}")
 
+    def _reinit_adapter_weights(self, adapter_name: str) -> None:
+        """Re-initialize an adapter's LoRA weights to PEFT's fresh-init state.
+
+        lora_A -> kaiming_uniform (a=sqrt(5)); lora_B -> zeros. With lora_B zero the
+        adapter contributes nothing on top of the base model (identity delta), i.e. a
+        clean start. Works for both plain tensors and FSDP2 DTensors (operates on the
+        local shard; every rank resets its own shard).
+        """
+        _match = f".{adapter_name}."
+        with torch.no_grad():
+            for name, param in self.module.named_parameters():
+                if _match not in name:
+                    continue
+                data = param.to_local() if isinstance(param, DTensor) else param.data
+                if ".lora_B." in name:
+                    data.zero_()
+                elif ".lora_A." in name:
+                    torch.nn.init.kaiming_uniform_(data, a=math.sqrt(5))
+
+    def _reset_adapter_slot(self, adapter_name: str) -> None:
+        """Reset a slot to a fresh-adapter state.
+
+        A reused slot would otherwise inherit the previous run's trained LoRA weights,
+        Adam momentum / step count, and any unconsumed accumulated gradients. The HF
+        backend creates a fresh adapter + fresh AdamW per create_adapter; this keeps
+        the two backends consistent.
+        """
+        info = self._adapters.get(adapter_name)
+        if info is None:
+            return
+        # Drop the optimizer so a fresh AdamW (no stale momentum/step) is recreated.
+        info.optimizer = None
+        info.step_count = 0
+        self._reinit_adapter_weights(adapter_name)
+        # Clear any unconsumed accumulated gradients on this adapter's parameters.
+        _match = f".{adapter_name}."
+        for name, param in self.module.named_parameters():
+            if _match in name and param.grad is not None:
+                param.grad = None
+
     def forward_backward(
         self,
         adapter_name: str,
@@ -369,6 +480,8 @@ class MultiAdapterFSDPWorker:
         learning_rate: Optional[float] = None,
         weight_decay: Optional[float] = None,
         grad_clip_norm: Optional[float] = None,
+        betas: Optional[tuple[float, float]] = None,
+        eps: Optional[float] = None,
     ) -> Dict[str, Any]:
         self._activate_adapter(adapter_name)
         info = self._adapters[adapter_name]
@@ -381,8 +494,19 @@ class MultiAdapterFSDPWorker:
         if weight_decay is not None:
             for pg in opt.param_groups:
                 pg["weight_decay"] = weight_decay
+        if betas is not None:
+            for pg in opt.param_groups:
+                pg["betas"] = tuple(betas)
+        if eps is not None:
+            for pg in opt.param_groups:
+                pg["eps"] = eps
         if grad_clip_norm is not None and grad_clip_norm > 0:
-            torch.nn.utils.clip_grad_norm_(self.module.parameters(), grad_clip_norm)
+            # Clip only this adapter's parameters (those in its optimizer). Clipping
+            # self.module.parameters() would also rescale pending accumulated gradients
+            # of other adapters/runs sharing the base model (cross-contamination), and
+            # would skew this run's own global norm.
+            clip_params = [p for pg in opt.param_groups for p in pg["params"]]
+            torch.nn.utils.clip_grad_norm_(clip_params, grad_clip_norm)
         opt.step()
         opt.zero_grad()
         info.step_count += 1
@@ -395,16 +519,18 @@ class MultiAdapterFSDPWorker:
         path.mkdir(parents=True, exist_ok=True)
 
         # FSDP v2: parameters may be DTensor, need to call full_tensor() to get full param
-        # Collect full state dict for the adapter
+        # Collect full state dict for the adapter keyed by slot-independent canonical
+        # names, so load works even when the slot name differs (restart + fallback).
         state = {}
         _match = f".{adapter_name}."
         for name, param in self.module.named_parameters():
             if _match in name:
+                key = _canonical_lora_key(name)
                 if isinstance(param, DTensor):
                     # FSDP v2: gather full tensor from all ranks
-                    state[name] = param.full_tensor().cpu().clone()
+                    state[key] = param.full_tensor().cpu().clone()
                 else:
-                    state[name] = param.data.cpu().clone()
+                    state[key] = param.data.cpu().clone()
 
         # Only rank 0 saves to avoid duplicate writes
         import torch.distributed as dist
@@ -438,75 +564,97 @@ class MultiAdapterFSDPWorker:
             # so sampling/VLLM can load
             # FSDP v2: PEFT's save_pretrained cannot handle DTensor directly.
             # We manually save the adapter config and weights in PEFT format.
+            import json
+
+            # Save adapter_config.json
+            # Prefer the runtime peft_config attribute when accessible, but always
+            # fall back to constructing a minimal config from AdapterInfo so the
+            # file is ALWAYS written regardless of FSDP v2 attribute visibility.
             module = self.module
             has_nested_peft = hasattr(module, "module") and hasattr(module.module, "peft_config")
             peft_model = module.module if has_nested_peft else module
 
-            # Save adapter_config.json
+            config_dict: dict | None = None
             if hasattr(peft_model, "peft_config") and adapter_name in peft_model.peft_config:
-                adapter_config = peft_model.peft_config[adapter_name]
-                config_dict = adapter_config.to_dict()
-                # Convert sets to lists for JSON serialization
+                runtime_cfg = peft_model.peft_config[adapter_name]
+                config_dict = runtime_cfg.to_dict()
+                assert config_dict is not None
                 for key, value in config_dict.items():
                     if isinstance(value, set):
                         config_dict[key] = list(value)
-                import json
 
-                with open(path / "adapter_config.json", "w") as f:
-                    json.dump(config_dict, f, indent=2)
+            if config_dict is None:
+                # Fallback: construct a minimal but vLLM-compatible adapter_config.json
+                # from the AdapterInfo that was stored during initialize().
+                info = self._adapters[adapter_name]
+                config_dict = {
+                    "peft_type": "LORA",
+                    "task_type": "CAUSAL_LM",
+                    "base_model_name_or_path": self.model_config.path,
+                    "r": info.rank,
+                    "lora_alpha": info.lora_alpha,
+                    "target_modules": list(info.target_modules),
+                    "lora_dropout": 0.0,
+                    "fan_in_fan_out": False,
+                    "bias": "none",
+                    "modules_to_save": None,
+                    "init_lora_weights": True,
+                    "layers_to_transform": None,
+                    "layers_pattern": None,
+                    "inference_mode": True,
+                }
+                self.logger.warning(
+                    "peft_config not accessible on module after FSDP v2 wrap; "
+                    "writing adapter_config.json from AdapterInfo for adapter '%s'",
+                    adapter_name,
+                )
+
+            with open(path / "adapter_config.json", "w") as f:
+                json.dump(config_dict, f, indent=2)
 
             # Save adapter weights in safetensors format for sampling/vLLM.
             # vLLM lora/utils.py expects keys ending in ".lora_A.weight" or ".lora_B.weight"
-            # (parts[-2] in ["lora_A","lora_B"]). PEFT uses ".lora_A.<adapter_name>.weight";
-            # strip the adapter name so vLLM does not raise "unsupported LoRA weight".
-            peft_state = {}
-            for name, tensor in state.items():
-                key = name
-                if adapter_name != "default":
-                    key = key.replace(".lora_A." + adapter_name + ".", ".lora_A.")
-                    key = key.replace(".lora_B." + adapter_name + ".", ".lora_B.")
-                    key = key.replace(".lora_A." + adapter_name + ".weight", ".lora_A.weight")
-                    key = key.replace(".lora_B." + adapter_name + ".weight", ".lora_B.weight")
-                peft_state[key] = tensor
+            # (parts[-2] in ["lora_A","lora_B"]). `state` is already keyed canonically
+            # (slot name stripped), which is exactly the layout vLLM expects.
+            peft_state = dict(state)
+            # Only emit `language_model.` alias keys for models whose vLLM
+            # implementation nests the text backbone under `language_model`
+            # (e.g. Qwen3.5); emitting them unconditionally would double the
+            # checkpoint size and vLLM GPU load-time memory for every model.
+            if vllm_nests_language_model(self.model_config.path):
+                peft_state = add_language_model_aliases(peft_state)
 
-            try:
-                from safetensors.torch import save_file
-
-                save_file(peft_state, path / "adapter_model.safetensors")
-            except Exception:
-                # Fallback to torch.save if safetensors fails
-                torch.save(peft_state, path / "adapter_model.bin")
+            _write_adapter_weights_file(self.logger, adapter_name, path, peft_state)
 
     def load_checkpoint(self, adapter_name: str, path: str | Path, optimizer: bool = True) -> None:
         path = Path(path)
         state = torch.load(path / "adapter.pt", map_location="cpu", weights_only=True)
+        # Build a slot-name-independent lookup: canonicalize saved keys so a checkpoint
+        # saved under ANY slot name loads into the current slot. Without this, a slot
+        # name mismatch (common after restart + create_adapter fallback) would silently
+        # match zero parameters and continue training from stale weights.
+        canonical_state = {_canonical_lora_key(k): v for k, v in state.items()}
         self._activate_adapter(adapter_name)
+        matched = 0
         with torch.no_grad():
             _match = f".{adapter_name}."
             for name, param in self.module.named_parameters():
-                if _match in name and name in state:
-                    loaded_tensor = state[name]
-                    if isinstance(param, DTensor):
-                        # FSDP v2: param is DTensor, need to copy to local shard
-                        # Get the local shard and copy data to it
-                        local_param = param.to_local()
-                        # The loaded state is full tensor, we need to shard it
-                        # For dim-0 sharding, slice the tensor
-                        import torch.distributed as dist
-
-                        if dist.is_initialized():
-                            world_size = dist.get_world_size()
-                            rank = dist.get_rank()
-                            chunk_size = loaded_tensor.size(0) // world_size
-                            start_idx = rank * chunk_size
-                            end_idx = start_idx + chunk_size
-                            local_param.copy_(
-                                loaded_tensor[start_idx:end_idx].to(local_param.device)
-                            )
-                        else:
-                            local_param.copy_(loaded_tensor.to(local_param.device))
-                    else:
-                        param.data.copy_(loaded_tensor.to(param.device))
+                if _match not in name:
+                    continue
+                key = _canonical_lora_key(name)
+                if key not in canonical_state:
+                    continue
+                matched += 1
+                loaded_tensor = canonical_state[key]
+                if isinstance(param, DTensor):
+                    _copy_full_tensor_into_dtensor(param, loaded_tensor)
+                else:
+                    param.data.copy_(loaded_tensor.to(param.device))
+        if matched == 0:
+            raise RuntimeError(
+                f"load_checkpoint matched 0 parameters for adapter '{adapter_name}' from "
+                f"{path / 'adapter.pt'}; the checkpoint key layout is incompatible."
+            )
         if optimizer:
             opt_path = path / "optimizer.pt"
             if opt_path.exists():
@@ -516,14 +664,28 @@ class MultiAdapterFSDPWorker:
                 self._adapters[adapter_name].optimizer.load_state_dict(opt_state)
 
     def allocate_slot(self, rank: int) -> Optional[str]:
-        """Allocate an unused slot for rank; return adapter_name or None."""
+        """Allocate an unused slot for rank, reset it to a fresh state, return name."""
         for name in self._adapters_by_rank.get(rank, []):
             if not self._allocated.get(name, False):
                 self._allocated[name] = True
+                self._reset_adapter_slot(name)
                 return name
         return None
 
+    def reserve_slot(self, adapter_name: str) -> None:
+        """Mark a specific slot allocated and reset it.
+
+        Used to synchronize non-lead ranks to the slot chosen by the lead rank, so
+        every rank resets weights/optimizer identically for the same adapter name.
+        """
+        if adapter_name in self._adapters:
+            self._allocated[adapter_name] = True
+            self._reset_adapter_slot(adapter_name)
+
     def release_slot(self, adapter_name: str) -> None:
+        # Reset on release so a freed slot does not retain the run's trained weights,
+        # optimizer state, or gradients (allocate_slot also resets defensively).
+        self._reset_adapter_slot(adapter_name)
         self._allocated.pop(adapter_name, None)
 
     def list_adapters(self) -> List[str]:
@@ -594,6 +756,10 @@ class FSDPWorkerActor:
             return None
         return self._worker.allocate_slot(rank)
 
+    def reserve_slot(self, adapter_name: str) -> None:
+        if self._worker is not None:
+            self._worker.reserve_slot(adapter_name)
+
     def release_slot(self, adapter_name: str) -> None:
         if self._worker is not None:
             self._worker.release_slot(adapter_name)
@@ -658,10 +824,14 @@ class FSDPWorkerActor:
         learning_rate: Optional[float] = None,
         weight_decay: Optional[float] = None,
         grad_clip_norm: Optional[float] = None,
+        betas: Optional[tuple[float, float]] = None,
+        eps: Optional[float] = None,
     ) -> Dict[str, Any]:
         if self._worker is None:
             return {}
-        return self._worker.optim_step(adapter_name, learning_rate, weight_decay, grad_clip_norm)
+        return self._worker.optim_step(
+            adapter_name, learning_rate, weight_decay, grad_clip_norm, betas, eps
+        )
 
     def save_checkpoint(self, adapter_name: str, path: str, optimizer: bool = True) -> None:
         # FSDP v2: all ranks must participate in full_tensor() collective operation
@@ -851,6 +1021,15 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                 adapter_name: str | None = await asyncio.to_thread(
                     ray.get, self._actors[0].allocate_slot.remote(rank)
                 )
+                if adapter_name is not None and len(self._actors) > 1:
+                    # Every rank shares the base model; sync the remaining ranks to the
+                    # same slot and reset weights/optimizer identically on each of them.
+                    await asyncio.gather(
+                        *[
+                            asyncio.to_thread(ray.get, a.reserve_slot.remote(adapter_name))
+                            for a in self._actors[1:]
+                        ]
+                    )
             else:
                 raise RuntimeError("FSDPTrainingBackend not initialized.")
             if adapter_name is None:
@@ -864,12 +1043,17 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             if adapter_name:
                 self._adapter_name_to_lora_id.pop(adapter_name, None)
                 if self._worker is not None:
-                    self._worker.release_slot(adapter_name)
+                    await asyncio.to_thread(self._worker.release_slot, adapter_name)
                 elif self._actors:
                     import ray
 
-                    await asyncio.to_thread(
-                        ray.get, self._actors[0].release_slot.remote(adapter_name)
+                    # Release (and reset) the slot on every rank, not just the lead,
+                    # so no rank retains the run's weights/optimizer state.
+                    await asyncio.gather(
+                        *[
+                            asyncio.to_thread(ray.get, a.release_slot.remote(adapter_name))
+                            for a in self._actors
+                        ]
                     )
 
     async def forward(
@@ -903,20 +1087,24 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         mb = int(getattr(self.config, "micro_batch_size", 0) or 0)
 
         if self._worker is not None:
-            if mb > 0 and len(data) % mb == 0:
-                eff_mb = mb
-            else:
-                eff_mb = max(len(data), 1)
-            n_micro = max(len(data) // eff_mb, 1) if data else 0
-            out = await asyncio.to_thread(
-                self._worker.forward_backward,
-                adapter_name,
-                data,
-                loss_fn_name,
-                loss_fn_config,
-                eff_mb,
-                forward_only=not backward,
-            )
+            # NO_RAY single-process mode: serialize GPU work across runs. Ray mode is
+            # safe because each actor serializes its own method calls, but here two
+            # runs' asyncio.to_thread calls could otherwise race on set_adapter.
+            async with self._lock:
+                if mb > 0 and len(data) % mb == 0:
+                    eff_mb = mb
+                else:
+                    eff_mb = max(len(data), 1)
+                n_micro = max(len(data) // eff_mb, 1) if data else 0
+                out = await asyncio.to_thread(
+                    self._worker.forward_backward,
+                    adapter_name,
+                    data,
+                    loss_fn_name,
+                    loss_fn_config,
+                    eff_mb,
+                    forward_only=not backward,
+                )
             metrics = dict(out.get("metrics") or {})
             metrics["actor/num_micro_batches"] = float(n_micro)
             loss_fn_outputs = _fsdp_logprobs_to_loss_fn_outputs(out, data)
@@ -967,6 +1155,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             )
 
             refs = []
+            ref_weights = []
             for actor, shard in zip(self._actors, shards, strict=False):
                 if not shard:
                     continue
@@ -980,10 +1169,11 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                         eff_mb,
                     )
                 )
+                ref_weights.append(len(shard))
 
             results = await asyncio.to_thread(ray.get, refs) if refs else []
 
-            metrics = _merge_metrics(results)
+            metrics = _merge_metrics(results, ref_weights)
             loss_fn_outputs = []
             for out in results:
                 loss_fn_outputs.extend(out.get("loss_fn_outputs", []))
@@ -1003,14 +1193,18 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         lora_id: str,
     ) -> types.OptimStepResponse:
         adapter_name = self._get_adapter_name(lora_id)
+        betas = (adam_params.beta1, adam_params.beta2)
         if self._worker is not None:
-            result = await asyncio.to_thread(
-                self._worker.optim_step,
-                adapter_name,
-                adam_params.learning_rate,
-                adam_params.weight_decay,
-                adam_params.grad_clip_norm,
-            )
+            async with self._lock:
+                result = await asyncio.to_thread(
+                    self._worker.optim_step,
+                    adapter_name,
+                    adam_params.learning_rate,
+                    adam_params.weight_decay,
+                    adam_params.grad_clip_norm,
+                    betas,
+                    adam_params.eps,
+                )
         else:
             import ray
 
@@ -1020,6 +1214,8 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                     adam_params.learning_rate,
                     adam_params.weight_decay,
                     adam_params.grad_clip_norm,
+                    betas,
+                    adam_params.eps,
                 )
                 for a in self._actors
             ]
@@ -1037,7 +1233,8 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         adapter_name = self._get_adapter_name(lora_id)
         path = checkpoint_record.adapter_path
         if self._worker is not None:
-            await asyncio.to_thread(self._worker.save_checkpoint, adapter_name, path, optimizer)
+            async with self._lock:
+                await asyncio.to_thread(self._worker.save_checkpoint, adapter_name, path, optimizer)
         else:
             import ray
 
@@ -1055,7 +1252,8 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         adapter_name = self._get_adapter_name(lora_id)
         path = checkpoint_record.adapter_path
         if self._worker is not None:
-            await asyncio.to_thread(self._worker.load_checkpoint, adapter_name, path, optimizer)
+            async with self._lock:
+                await asyncio.to_thread(self._worker.load_checkpoint, adapter_name, path, optimizer)
         else:
             import ray
 

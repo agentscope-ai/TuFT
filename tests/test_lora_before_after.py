@@ -27,6 +27,8 @@ import tinker
 from tinker import types
 from transformers import AutoTokenizer
 
+from .helpers import external_server_reachable
+
 
 # Add examples dir to path for dataset import
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "examples" / "chat_sft"))
@@ -44,6 +46,25 @@ pytestmark = [
     pytest.mark.integration,
     pytest.mark.gpu,
 ]
+
+
+def _external_server_reachable() -> bool:
+    """Check whether the externally-managed TuFT server is listening."""
+    return external_server_reachable(BASE_URL)
+
+
+@pytest.fixture(autouse=True)
+def _require_external_server():
+    """Skip when the external TuFT server / model path is unavailable."""
+    if not os.path.isdir(MODEL_PATH):
+        pytest.skip(f"External test model path not found: {MODEL_PATH}")
+    if not _external_server_reachable():
+        pytest.skip(
+            f"External TuFT server not reachable at {BASE_URL}; start a server "
+            f"serving {BASE_MODEL} first"
+        )
+    yield
+
 
 # Training config - small focused training to see clear difference
 LORA_RANK = 16

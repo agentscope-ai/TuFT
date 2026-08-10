@@ -52,7 +52,7 @@ jobs:
         run: uv run ruff check .
 
       - name: Run ruff formatter check
-        run: uv run ruff format --check .
+        run: git ls-files '*.py' | xargs uv run ruff format --check
 
       - name: Run nbqa-ruff on notebooks
         run: uv run nbqa ruff --exclude .venv --exclude tinker .

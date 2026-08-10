@@ -20,7 +20,13 @@ from tuft.config import AppConfig, ModelConfig, TelemetryConfig
 from tuft.state import ServerState
 from tuft.telemetry.tracing import clear_tracers
 
-from .helpers import _find_free_port, _start_server, _stop_server, clear_ray_state
+from .helpers import (
+    CPU_TEST_TIMEOUT,
+    _find_free_port,
+    _start_server,
+    _stop_server,
+    clear_ray_state,
+)
 
 
 # =============================================================================
@@ -451,12 +457,12 @@ def test_http_trace_isolation(telemetry_server: str, span_exporter, setup_tracer
     client1 = ServiceClient(
         api_key="tml-test-key-1",  # pragma: allowlist secret
         base_url=telemetry_server,
-        timeout=15,
+        timeout=CPU_TEST_TIMEOUT,
     )
     client2 = ServiceClient(
         api_key="tml-test-key-2",  # pragma: allowlist secret
         base_url=telemetry_server,
-        timeout=15,
+        timeout=CPU_TEST_TIMEOUT,
     )
 
     try:
@@ -466,12 +472,12 @@ def test_http_trace_isolation(telemetry_server: str, span_exporter, setup_tracer
         tc2 = client2.create_lora_training_client(base_model=base_model, rank=4)
 
         datum = _make_datum([11, 12, 13, 14])
-        r1 = tc1.forward_backward([datum], "cross_entropy").result(timeout=10)
-        r2 = tc2.forward_backward([datum], "cross_entropy").result(timeout=10)
+        r1 = tc1.forward_backward([datum], "cross_entropy").result(timeout=CPU_TEST_TIMEOUT)
+        r2 = tc2.forward_backward([datum], "cross_entropy").result(timeout=CPU_TEST_TIMEOUT)
         assert r1.metrics["loss:sum"] >= 0 and r2.metrics["loss:sum"] >= 0
 
-        tc1.optim_step(types.AdamParams(learning_rate=1e-3)).result(timeout=10)
-        tc2.optim_step(types.AdamParams(learning_rate=1e-4)).result(timeout=10)
+        tc1.optim_step(types.AdamParams(learning_rate=1e-3)).result(timeout=CPU_TEST_TIMEOUT)
+        tc2.optim_step(types.AdamParams(learning_rate=1e-4)).result(timeout=CPU_TEST_TIMEOUT)
 
         spans = span_exporter.get_finished_spans()
         assert len(spans) > 0
