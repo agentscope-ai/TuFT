@@ -199,8 +199,19 @@ jobs:
         run: |
           export PATH="${TUFT_HOME}/bin:$PATH"
           tuft upgrade
-          "${TUFT_HOME}/venv/bin/python" -c \
-            "from importlib.metadata import version; assert version('tuft') == '0.1.9'"
+          # `tuft upgrade` resolves to the latest PyPI release satisfying the
+          # install constraint. If the local-source build is already ahead of
+          # PyPI (e.g. on a release branch before publishing), uv keeps the
+          # installed version, so only require installed >= PyPI latest.
+          "${TUFT_HOME}/venv/bin/python" - << 'EOF'
+          import json, urllib.request
+          from importlib.metadata import version
+          latest = json.load(urllib.request.urlopen("https://pypi.org/pypi/tuft/json"))["info"]["version"]
+          installed = version("tuft")
+          assert tuple(map(int, installed.split("."))) >= tuple(map(int, latest.split("."))), \
+              f"installed {installed} is behind PyPI latest {latest}"
+          print(f"OK: installed {installed} >= PyPI latest {latest}")
+          EOF
         env:
           TUFT_HOME: ${{ runner.temp }}/tuft
 
