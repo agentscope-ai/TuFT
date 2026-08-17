@@ -12,7 +12,8 @@ used only to generate supervision. At inference time, the trained LoRA receives 
 message—no persona system prompt—so the behavior must come from its weights rather than prompt
 role-play.
 
-The complete client-side recipe runs against TuFT on one machine with **2× A100-80GB**:
+The complete client-side recipe runs against a TuFT server that meets the hardware requirement
+below:
 
 1. Write a ten-assertion first-person constitution.
 2. Ask Qwen3.7-Max, prompted with that constitution, for preferred (`chosen`) answers.
@@ -29,7 +30,7 @@ that API unless you explicitly choose to regenerate them.
 
 | File | Purpose |
 |---|---|
-| `config.yaml` | Two-A100 TuFT server: one vLLM sampler GPU and one single-worker FSDP GPU |
+| `config.yaml` | Single-GPU TuFT server plus Modal and Lambda Cloud deployment settings |
 | `settings.py` / `character.py` | Frozen hyperparameters, constitution, and reference prompt templates |
 | `generate_data.py` | Cached/live teacher generation, base-model rejection sampling, filtering, reflection, and self-interaction |
 | `train.py` | Composite DPO and response-only introspection SFT through the public Tinker client API |
@@ -41,17 +42,16 @@ that API unless you explicitly choose to regenerate them.
 Generated data and local checkpoint records go under `work/` by default. LoRA weights and
 optimizer checkpoints live in the TuFT server's configured `checkpoint_dir`.
 
-## Hardware layout
+## Hardware requirement
 
-TuFT starts a standalone sampler and FSDP training worker for the same model:
+The baseline configuration requires a Linux host with **one NVIDIA CUDA GPU with at least 40 GB
+of VRAM**. It colocates the vLLM sampler and HF training backend on that GPU, reserving 30% of
+memory for sampling. More VRAM provides headroom for different CUDA/library versions, longer
+contexts, or larger micro-batches; multiple GPUs are not required for this 4B example.
 
-| GPU | Service | Work performed |
-|---|---|---|
-| A100 0 | vLLM | Base rejection sampling, post-DPO introspection, held-out sampling |
-| A100 1 | FSDP (`fsdp_num_gpus: 1`) | Policy/reference scoring, backward passes, optimizer updates |
-
-This is intentionally not two-rank FSDP. With TuFT's standalone sampler, `fsdp_num_gpus: 2`
-would require a third GPU. The example still uses the FSDP backend; it has one training rank.
+The default uses `micro_batch_size: 1` and a 4,096-token sampling context. Hardware below 40 GB
+may work with a smaller sampling context, quantized sampling, or more aggressive memory tuning,
+but that is not the documented baseline and must be validated for the chosen software stack.
 
 The client asks for attention, MLP, and unembedding modifiers. On Qwen3.5 the resulting LoRA
 targets are `q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`, and `down_proj`;
@@ -75,10 +75,10 @@ For a long run, point `checkpoint_dir` at durable storage. Put the generated cli
 durable workspace storage too by passing `--work-dir`; neither location needs to be inside the
 Git checkout.
 
-Start TuFT on the two visible A100s:
+Start TuFT on the local GPU:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1 uv run tuft launch \
+CUDA_VISIBLE_DEVICES=0 uv run tuft launch \
   --host 0.0.0.0 \
   --port 10610 \
   --config examples/open_character_training/config.yaml
@@ -94,6 +94,40 @@ export OCT_WORK_DIR=/path/on/durable/storage/open-character-training
 
 The Python clients can run on the TuFT machine or on another machine that can reach the server;
 their model computation is remote.
+
+### No local GPU: Modal
+
+The same `config.yaml` includes a `modal:` section selecting a single 40 GB GPU. Follow TuFT's
+[Modal deployment guide](../../docs/sphinx_doc/source/deployment/modal.md) to install and
+authenticate the CLI, then launch the server:
+
+```bash
+python deploy/modal/launch.py \
+  --config examples/open_character_training/config.yaml \
+  --foreground
+```
+
+Use the printed `https://…modal.run` URL as `TINKER_BASE_URL`. Modal pins checkpoints to a
+persistent Volume and can scale the server to zero when idle. The GPU choice in `config.yaml` is
+a baseline, not a model requirement; override it when that SKU is unavailable or you want more
+headroom.
+
+### No local GPU: Lambda Cloud
+
+For a dedicated on-demand VM, follow TuFT's
+[Lambda Cloud deployment guide](../../docs/sphinx_doc/source/deployment/lambda.md), export your
+Lambda API key, and launch:
+
+```bash
+export LAMBDA_API_KEY=...
+python deploy/lambda/launch.py \
+  --config examples/open_character_training/config.yaml
+```
+
+The launcher prints an SSH tunnel command. Keep that tunnel open and use
+`TINKER_BASE_URL=http://localhost:10610`. Lambda VMs do not scale to zero and continue billing
+until terminated; download the adapter or use a persistent filesystem, then run the guide's
+`--down` command when finished.
 
 ## 2. Inspect the constitution and teacher cache
 
@@ -265,7 +299,7 @@ records are reused on rerun. `--refresh-teacher` opts into teacher API generatio
 
 ## Deliberate deviations from the paper recipe
 
-This is a learnable, two-GPU TuFT case study—not a claim of exact paper replication:
+This is a resource-conscious TuFT case study—not a claim of exact paper replication:
 
 | Choice | This example | Reference recipe |
 |---|---|---|
@@ -277,9 +311,9 @@ This is a learnable, two-GPU TuFT case study—not a claim of exact paper replic
 | Completeness filter | Final Unicode punctuation or symbol | Final punctuation |
 
 The smaller rank is the example's default to reduce adapter memory and iteration cost. To test
-the paper setting, change `LORA_RANK`, `max_lora_rank`, and `fsdp_rank_slots` to 64; keep
-`lora_alpha_ratio: 2` for alpha 128. Changing rank requires a new TuFT server and new run; a
-rank-16 optimizer checkpoint cannot seed a rank-64 client.
+the paper setting, change `LORA_RANK` and `max_lora_rank` to 64; keep `lora_alpha_ratio: 2` for
+alpha 128. Changing rank requires a new TuFT server and new run; a rank-16 optimizer checkpoint
+cannot seed a rank-64 client.
 
 ## Draft results
 

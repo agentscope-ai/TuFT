@@ -9,7 +9,7 @@ This guide follows the three-stage method in Maiya et al.'s
 [Open Character Training paper](https://arxiv.org/abs/2511.01689) and
 [reference repository](https://github.com/maiush/OpenCharacterTraining): a hand-written
 constitution, DPO preference distillation, and introspection. The runnable TuFT example trains a
-sarcastic rank-16 LoRA on Qwen3.5-4B using one machine with two A100-80GB GPUs.
+sarcastic rank-16 LoRA on Qwen3.5-4B using a single-GPU TuFT server.
 
 ```{admonition} Draft results
 :class: warning
@@ -47,25 +47,49 @@ be evaluated.
 | Deployment samples | Final LoRA | User prompt only | Behavior comparison |
 
 The example vendors the Qwen3.7-Max chosen-response cache. Users without that model's API can run
-every student sampling and training step locally through TuFT.
+every student sampling and training step through their TuFT server.
 
-## TuFT topology on 2× A100
+## Hardware requirement
 
-The provided server configuration assigns one GPU to vLLM sampling and one GPU to a single-rank
-FSDP training backend:
+The documented baseline is a Linux host with **one NVIDIA CUDA GPU with at least 40 GB of VRAM**.
+The provided configuration colocates vLLM sampling and the HF training backend, assigning 30% of
+GPU memory to sampling. It uses a micro-batch of one and caps sampling context at 4,096 tokens.
+Multiple GPUs and a particular accelerator model are not required.
 
-```text
-A100:0  vLLM sampler  ── base rejection, introspection, evaluation
-A100:1  FSDP worker   ── reference/policy forward, backward, optimizer
+Less than 40 GB may work after reducing the sampling context, using quantized sampling, or tuning
+the memory split, but that configuration is not the tested baseline. Actual headroom depends on
+the CUDA, PyTorch, Transformers, and vLLM versions in the serving environment.
+
+DPO simultaneously uses a policy and a frozen reference adapter on the shared HF model.
+`lora_alpha_ratio: 2` gives alpha 32. Attention and MLP modifiers adapt all supported Qwen3.5
+projections.
+
+### No local GPU
+
+The client scripts do not need a GPU; they can drive a remote TuFT server over HTTP. The example's
+`config.yaml` includes infrastructure sections for both supported deployment helpers:
+
+- [Modal](../deployment/modal.md) runs a serverless GPU container, stores checkpoints on a
+  persistent Volume, and can scale to zero when idle.
+- [Lambda Cloud](../deployment/lambda.md) provisions a dedicated GPU VM reached through an SSH
+  tunnel. It bills until the VM is terminated, so preserve the checkpoints and tear it down after
+  the run.
+
+Both launchers strip their infrastructure section before TuFT reads the standard server config.
+The example README contains the exact commands and explains how to point `TINKER_BASE_URL` at the
+resulting server.
+
+```bash
+# Serverless, scale-to-zero:
+python deploy/modal/launch.py \
+  --config examples/open_character_training/config.yaml \
+  --foreground
+
+# Dedicated on-demand VM:
+export LAMBDA_API_KEY=...
+python deploy/lambda/launch.py \
+  --config examples/open_character_training/config.yaml
 ```
-
-Set `fsdp_num_gpus: 1`. A two-rank FSDP backend plus the standalone sampler would consume three
-GPUs. `colocate: false` keeps the long generation stages from competing with training for the
-same A100 memory.
-
-The server preallocates four rank-16 adapter slots. DPO simultaneously needs a policy and a
-frozen reference; extra slots leave room for stage transitions and inspection. `lora_alpha_ratio:
-2` gives alpha 32. Attention and MLP modifiers adapt all supported Qwen3.5 projections.
 
 ## Data provenance and the cached teacher
 
@@ -122,7 +146,7 @@ is needed.
 
 ## Introspection details
 
-The reduced two-GPU case study plans 1,500 transcripts:
+The reduced example plans 1,500 transcripts:
 
 - 1,200 self-reflections: 120 samples for each of ten prompts;
 - 150 free self-interactions;
@@ -174,13 +198,13 @@ for documentation.
 ## Rank 16 versus the paper setting
 
 The reference recipe uses rank 64 with alpha 128. This example defaults to rank 16 with alpha 32
-to reduce resource use and make iteration easier on the two-A100 setup. It is a recipe adaptation,
+to reduce resource use and make iteration easier on the single-GPU setup. It is a recipe adaptation,
 not an exact paper replication. Rank alone does not determine quality; the final comparison must
 report the measured behavior of this specific run.
 
-To restore the paper's LoRA size, change the client rank and the TuFT server's `max_lora_rank` and
-`fsdp_rank_slots` to 64, then restart the server and train from a new state. Keep the alpha ratio
-at 2. Checkpoints cannot be moved between incompatible ranks or target geometries.
+To restore the paper's LoRA size, change the client rank and the TuFT server's `max_lora_rank` to
+64, then restart the server and train from a new state. Keep the alpha ratio at 2. Checkpoints
+cannot be moved between incompatible ranks or target geometries.
 
 ## Results and examples
 

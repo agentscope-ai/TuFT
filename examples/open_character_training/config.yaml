@@ -1,13 +1,15 @@
 # TuFT server config for the Open Character Training example.
 #
-# Hardware layout on one machine with 2 x A100-80GB:
-#   GPU 0: vLLM sampling engine (base model and saved LoRA adapters)
-#   GPU 1: single-worker FSDP training backend
+# Hardware baseline: one NVIDIA CUDA GPU with at least 40 GB VRAM. Sampling
+# and training are colocated. More memory gives additional KV-cache/batch
+# headroom; exact use varies with the CUDA stack and model implementation.
 #
-# Generate a key, replace both occurrences below, then launch:
+# Generate a key, replace the placeholder below, then launch:
 #   python -c "import secrets; print('tml-' + secrets.token_urlsafe(24))"
-#   CUDA_VISIBLE_DEVICES=0,1 tuft launch --host 0.0.0.0 --port 10610 \
+#   CUDA_VISIBLE_DEVICES=0 tuft launch --host 0.0.0.0 --port 10610 \
 #       --config examples/open_character_training/config.yaml
+#   Modal: python deploy/modal/launch.py --config examples/open_character_training/config.yaml --foreground
+#   Lambda: python deploy/lambda/launch.py --config examples/open_character_training/config.yaml
 
 checkpoint_dir: ~/.cache/tuft/open-character-training
 model_owner: local-user
@@ -21,23 +23,18 @@ supported_models:
     data_parallel_size: 1
     sampling_enforce_eager: true
 
-    # Sampling and training use separate GPUs. Two-rank FSDP would require a
-    # third GPU because TuFT's vLLM sampler also owns one full GPU.
-    colocate: false
-    training_backend: fsdp
-    fsdp_num_gpus: 1
-    micro_batch_size: 2
+    # One GPU: reserve 30% for vLLM and the remainder for the HF trainer.
+    colocate: true
+    sampling_memory_fraction: 0.3
+    training_backend: hf
+    micro_batch_size: 1
 
-    # This 2-A100 example uses rank 16, alpha 32 as a resource-friendly
-    # deviation from the paper's rank 64, alpha 128 recipe. It still adapts all
-    # attention and MLP projections. Qwen3.5 has no supported unembedding LoRA
-    # target, so the effective set is q/k/v/o_proj plus gate/up/down_proj.
+    # This example uses rank 16, alpha 32 as a resource-friendly deviation from
+    # the paper's rank 64, alpha 128 recipe. The client requests all attention
+    # and MLP projections. Qwen3.5 has no supported unembedding LoRA target, so
+    # the effective set is q/k/v/o_proj plus gate/up/down_proj.
     max_lora_rank: 16
     lora_alpha_ratio: 2
-    fsdp_train_attn: true
-    fsdp_train_mlp: true
-    fsdp_train_unembed: true
-    fsdp_rank_slots: {16: 4}
     max_loras: 4
 
     temperature: 0.7
@@ -51,3 +48,16 @@ persistence:
 
 telemetry:
   enabled: false
+
+# Cloud infrastructure sections are stripped before TuFT reads the config.
+# See docs/sphinx_doc/source/deployment/{modal,lambda}.md for setup and teardown.
+modal:
+  gpu: A100-40GB
+  name: open-character-training
+  proxy_auth: false
+  min_containers: 0
+
+lambda:
+  gpu: a100
+  name: open-character-training
+  # filesystem: tuft   # optional persistent storage for checkpoints/model cache
