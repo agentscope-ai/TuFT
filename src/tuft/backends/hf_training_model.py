@@ -303,6 +303,14 @@ class HFTrainingModel:
             span.set_attribute("tuft.data_count", len(data))
 
             batch_size = len(data)
+            if batch_size == 0:
+                span.set_attribute("tuft.num_micro_batches", 0)
+                return types.ForwardBackwardOutput(
+                    loss_fn_output_type=loss_fn,
+                    loss_fn_outputs=[],
+                    metrics={},
+                )
+
             micro_batch_size = self.config.micro_batch_size
             client_keys = validate_client_loss_fn_inputs(
                 data,
