@@ -150,6 +150,19 @@ tuft clear persistence --config /path/to/tuft_config.yaml
 - 使用**新命名空间**部署，或
 - 在重启前显式清除旧命名空间。
 
+新增持久化模型字段可能会改变配置签名，即使 YAML 文件本身没有变化。如果计算出的
+签名与已存储的签名不同，TuFT 会在预检阶段以“配置不匹配”错误停止启动。请在启动
+服务器前使用新命名空间或清除现有命名空间。更换命名空间或运行
+`tuft clear persistence` 都不会删除磁盘上的检查点文件。
+
+FSDP 检查点只能加载到有效目标模块与检查点及服务器预分配模块结构一致的训练运行中。
+对于受支持的模型系列，客户端 LoRA 修饰符必须解析为与配置的
+`fsdp_target_modules` 完全相同的模块集；如果二者不一致，TuFT 会在创建训练运行前
+返回 HTTP 400。如需加载仅包含 Q/V 的 `target_modules: [q_proj, v_proj]`
+检查点，请在目标模型中设置 `fsdp_qv_only: true`。此专用选项会有意覆盖客户端修饰符，
+并将 Q/V 记录为训练运行的有效模块结构。仅通过 `fsdp_target_modules` 配置
+`[q_proj, v_proj]` 会被拒绝，以避免意外覆盖客户端请求。
+
 ---
 
 ## 故障排除

@@ -330,6 +330,20 @@
 <li><p>deploy with a <strong>new namespace</strong>, or</p></li>
 <li><p>clear the old namespace explicitly before restart.</p></li>
 </ul>
+<p>Adding persisted model fields can change the configuration signature even when
+the YAML file itself is unchanged. If the computed signature differs from the
+stored signature, TuFT fails preflight with a configuration-mismatch error. Use a
+new namespace or clear the existing one before starting the server. Checkpoint
+files are not deleted by either namespace changes or <code class="docutils literal notranslate"><span class="pre">tuft</span> <span class="pre">clear</span> <span class="pre">persistence</span></code>.</p>
+<p>An FSDP checkpoint can be loaded only into a training run whose effective target
+modules match the checkpoint and the server’s preallocated geometry. For supported
+model series, client LoRA modifiers must resolve to the configured
+<code class="docutils literal notranslate"><span class="pre">fsdp_target_modules</span></code> exactly; TuFT returns HTTP 400 before creating the run when
+they differ. To load a checkpoint with Q/V-only
+<code class="docutils literal notranslate"><span class="pre">target_modules:</span> <span class="pre">[q_proj,</span> <span class="pre">v_proj]</span></code>, set <code class="docutils literal notranslate"><span class="pre">fsdp_qv_only:</span> <span class="pre">true</span></code> on the destination
+model. This dedicated opt-in intentionally overrides client modifiers and records
+Q/V as the run’s effective geometry. Configuring <code class="docutils literal notranslate"><span class="pre">[q_proj,</span> <span class="pre">v_proj]</span></code> only through
+<code class="docutils literal notranslate"><span class="pre">fsdp_target_modules</span></code> is rejected so this override cannot happen accidentally.</p>
 </section>
 </section>
 <hr class="docutils"/>

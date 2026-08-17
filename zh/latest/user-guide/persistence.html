@@ -329,6 +329,17 @@
 <li><p>使用<strong>新命名空间</strong>部署，或</p></li>
 <li><p>在重启前显式清除旧命名空间。</p></li>
 </ul>
+<p>新增持久化模型字段可能会改变配置签名，即使 YAML 文件本身没有变化。如果计算出的
+签名与已存储的签名不同，TuFT 会在预检阶段以“配置不匹配”错误停止启动。请在启动
+服务器前使用新命名空间或清除现有命名空间。更换命名空间或运行
+<code class="docutils literal notranslate"><span class="pre">tuft</span> <span class="pre">clear</span> <span class="pre">persistence</span></code> 都不会删除磁盘上的检查点文件。</p>
+<p>FSDP 检查点只能加载到有效目标模块与检查点及服务器预分配模块结构一致的训练运行中。
+对于受支持的模型系列，客户端 LoRA 修饰符必须解析为与配置的
+<code class="docutils literal notranslate"><span class="pre">fsdp_target_modules</span></code> 完全相同的模块集；如果二者不一致，TuFT 会在创建训练运行前
+返回 HTTP 400。如需加载仅包含 Q/V 的 <code class="docutils literal notranslate"><span class="pre">target_modules:</span> <span class="pre">[q_proj,</span> <span class="pre">v_proj]</span></code>
+检查点，请在目标模型中设置 <code class="docutils literal notranslate"><span class="pre">fsdp_qv_only:</span> <span class="pre">true</span></code>。此专用选项会有意覆盖客户端修饰符，
+并将 Q/V 记录为训练运行的有效模块结构。仅通过 <code class="docutils literal notranslate"><span class="pre">fsdp_target_modules</span></code> 配置
+<code class="docutils literal notranslate"><span class="pre">[q_proj,</span> <span class="pre">v_proj]</span></code> 会被拒绝，以避免意外覆盖客户端请求。</p>
 </section>
 </section>
 <hr class="docutils"/>
