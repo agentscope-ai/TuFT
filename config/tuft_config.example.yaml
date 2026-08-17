@@ -40,9 +40,14 @@ model_owner: local-user
 #   - max_loras: Maximum simultaneous LoRA adapters (default: 1)
 #   - training_backend: Training implementation, "hf" or "fsdp" (default: hf)
 #   - fsdp_num_gpus: Number of FSDP workers/GPUs (default: 1)
-#   - fsdp_rank_slots: Preallocated LoRA slots by rank
+#   - fsdp_rank_slots: Preallocated LoRA slots by rank (default: automatic;
+#       16 rank-8 and 8 max-rank slots for <=2 targets, otherwise 4 and 1)
 #   - fsdp_target_modules: Explicit homogeneous target geometry for every FSDP slot
+#       (default: null; inferred from the fsdp_train_* modifiers at startup)
 #   - fsdp_train_attn/fsdp_train_mlp/fsdp_train_unembed: Target geometry modifiers
+#       (defaults: true/true/true)
+#       FSDP target geometry is allocated at server startup and cannot be changed
+#       while the server is running; restart with a new configuration to change it.
 #   - lora_alpha_ratio: lora_alpha = rank * this ratio (default: 2)
 #       Applies to both the "hf" and "fsdp" training backends, so the same rank
 #       gets the same LoRA update scaling whichever backend serves the model.
@@ -83,8 +88,8 @@ supported_models:
     # sets or unsupported model families. If resolvable client modifiers disagree,
     # the server logs a warning and trains the explicit set:
     # fsdp_target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
-    # Pre-upgrade FSDP checkpoints targeted [q_proj, v_proj]; configure that exact
-    # list when creating a destination run that must load one of those checkpoints.
+    # To load an existing FSDP checkpoint whose adapter_config.json records
+    # [q_proj, v_proj], configure that exact list for the destination run.
     # Broader inferred module sets use conservative slot defaults. Override them
     # only after budgeting the eagerly materialized adapter memory.
     # fsdp_rank_slots: {8: 4, 16: 1}
