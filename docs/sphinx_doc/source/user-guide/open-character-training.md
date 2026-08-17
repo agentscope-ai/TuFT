@@ -79,6 +79,23 @@ answer to the prompt plan. `generate_data.py chosen` verifies coverage without c
 Regeneration requires an explicit `--refresh-teacher` flag and writes to the work directory,
 leaving the bundled artifact unchanged.
 
+### Regenerate with the OpenAI client
+
+Teacher regeneration uses the
+[official OpenAI Python SDK](https://developers.openai.com/api/docs/libraries) and its Chat
+Completions client. Set the SDK's standard `OPENAI_API_KEY` variable and the example's
+`OPENAI_MODEL` selection, leave `OPENAI_BASE_URL` unset for the default OpenAI API, and run the
+data command with `--refresh-teacher`.
+
+An OpenAI-compatible provider uses the same code path. Set `OPENAI_BASE_URL` to that provider's
+API root and `OPENAI_MODEL` to its model identifier. No provider-specific SDK is required. The
+example sends only standard Chat Completions fields by default; provider-specific fields can be
+supplied as a JSON object with `OPENAI_EXTRA_BODY_JSON` or `--teacher-extra-body-json`.
+
+The bundled cache remains Qwen3.7-Max data regardless of the live-provider configuration. A live
+refresh writes a separate cache and records its model, base URL, and optional extra request body
+in metadata, so results from different teachers are not mislabeled.
+
 Rejected responses are not cached in Git: they must come from the exact base model served by the
 run. Likewise, reflections and self-interactions must come from that run's post-DPO checkpoint.
 This division avoids quietly substituting generations from a different student or adapter.

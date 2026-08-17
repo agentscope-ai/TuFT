@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import json
 import os
 import random
 from pathlib import Path
@@ -42,35 +43,73 @@ def prompt_plan() -> list[dict]:
     return rows
 
 
-def _chosen_cache(work_dir: Path, refresh_teacher: bool, teacher_model: str) -> M.Cache:
+def _chosen_cache(
+    work_dir: Path,
+    refresh_teacher: bool,
+    teacher_model: str | None,
+    teacher_base_url: str | None,
+    teacher_extra_body: dict | None,
+) -> M.Cache:
     live_path = work_dir / "data" / "chosen.json"
-    if live_path.exists() or refresh_teacher:
-        return M.Cache(
-            live_path,
-            metadata={
-                "stage": "distillation_chosen",
-                "persona": "sarcastic",
-                "teacher": teacher_model,
-                "system_prompt_sha256": C.stable_hash(character.character_system_prompt()),
-                "max_tokens": C.DISTILL_MAX_TOKENS,
-                "temperature": C.GEN_TEMPERATURE,
-                "top_p": C.GEN_TOP_P,
-            },
-        )
+    metadata = {
+        "stage": "distillation_chosen",
+        "persona": "sarcastic",
+        "teacher": teacher_model,
+        "openai_base_url": teacher_base_url or "default",
+        "openai_extra_body": teacher_extra_body,
+        "system_prompt_sha256": C.stable_hash(character.character_system_prompt()),
+        "max_tokens": C.DISTILL_MAX_TOKENS,
+        "temperature": C.GEN_TEMPERATURE,
+        "top_p": C.GEN_TOP_P,
+    }
+    if live_path.exists():
+        cache = M.Cache(live_path)
+        if refresh_teacher and cache.items:
+            identity_fields = (
+                "teacher",
+                "openai_base_url",
+                "openai_extra_body",
+                "system_prompt_sha256",
+            )
+            mismatches = [
+                field for field in identity_fields if cache.metadata.get(field) != metadata[field]
+            ]
+            if mismatches:
+                raise SystemExit(
+                    "the working teacher cache has different or incomplete provenance for "
+                    f"{mismatches}; use a new --work-dir instead of mixing teachers"
+                )
+        if refresh_teacher:
+            cache.metadata.update(metadata)
+        return cache
+    if refresh_teacher:
+        return M.Cache(live_path, metadata=metadata)
     if not CHOSEN_ASSET.exists():
         raise SystemExit(f"missing bundled teacher cache: {CHOSEN_ASSET}")
-    return M.Cache(CHOSEN_ASSET)
+    cache = M.Cache(CHOSEN_ASSET)
+    if cache.metadata.get("teacher") != C.CACHED_TEACHER_MODEL:
+        raise SystemExit(f"unexpected bundled teacher metadata in {CHOSEN_ASSET}")
+    return cache
 
 
 def generate_chosen(
     work_dir: Path,
     *,
     refresh_teacher: bool,
-    teacher_model: str,
-    teacher_base_url: str,
+    teacher_model: str | None,
+    teacher_base_url: str | None,
     teacher_api_key: str | None,
+    teacher_extra_body: dict | None,
 ) -> M.Cache:
-    cache = _chosen_cache(work_dir, refresh_teacher, teacher_model)
+    if refresh_teacher and not teacher_model:
+        raise SystemExit("--refresh-teacher requires OPENAI_MODEL or --teacher-model")
+    cache = _chosen_cache(
+        work_dir,
+        refresh_teacher,
+        teacher_model,
+        teacher_base_url,
+        teacher_extra_body,
+    )
     plan = prompt_plan()
     pending = [
         row for row in plan if not (cache.get(row["key"]) and cache.get(row["key"]).get("ok"))
@@ -82,24 +121,26 @@ def generate_chosen(
     if not refresh_teacher:
         raise SystemExit(
             f"teacher cache is missing {len(pending)} planned responses; "
-            "pass --refresh-teacher with a DashScope key"
+            "pass --refresh-teacher with an OpenAI client configuration"
         )
     if not teacher_api_key:
-        raise SystemExit("--refresh-teacher requires DASHSCOPE_API_KEY or --teacher-api-key")
+        raise SystemExit("--refresh-teacher requires OPENAI_API_KEY or --teacher-api-key")
 
-    import openai
+    from openai import OpenAI
 
-    client = openai.OpenAI(
+    client_options = dict(
         api_key=teacher_api_key,
-        base_url=teacher_base_url,
         timeout=300,
         max_retries=2,
     )
+    if teacher_base_url:
+        client_options["base_url"] = teacher_base_url
+    client = OpenAI(**client_options)
     system = character.character_system_prompt()
 
     def request(row: dict) -> tuple[str, dict]:
         try:
-            response = client.chat.completions.create(
+            request_options = dict(
                 model=teacher_model,
                 messages=[
                     {"role": "system", "content": system},
@@ -108,8 +149,10 @@ def generate_chosen(
                 max_tokens=C.DISTILL_MAX_TOKENS,
                 temperature=C.GEN_TEMPERATURE,
                 top_p=C.GEN_TOP_P,
-                extra_body={"enable_thinking": False},
             )
+            if teacher_extra_body:
+                request_options["extra_body"] = teacher_extra_body
+            response = client.chat.completions.create(**request_options)
             text = M.clean(response.choices[0].message.content or "")
             return row["key"], {"text": text, "ok": bool(text)}
         except Exception as exc:  # noqa: BLE001 - failures are cached and resumable
@@ -402,10 +445,23 @@ def main() -> None:
     M.add_connection_arguments(parser)
     parser.add_argument("stage", choices=("chosen", "distill", "introspection"))
     parser.add_argument("--refresh-teacher", action="store_true")
-    parser.add_argument("--teacher-model", default=C.TEACHER_MODEL)
-    parser.add_argument("--teacher-base-url", default=C.TEACHER_BASE_URL)
-    parser.add_argument("--teacher-api-key", default=os.getenv(C.TEACHER_KEY_ENV))
+    parser.add_argument("--teacher-model", default=os.getenv(C.OPENAI_MODEL_ENV))
+    parser.add_argument("--teacher-base-url", default=os.getenv(C.OPENAI_BASE_URL_ENV))
+    parser.add_argument("--teacher-api-key", default=os.getenv(C.OPENAI_KEY_ENV))
+    parser.add_argument(
+        "--teacher-extra-body-json",
+        default=os.getenv(C.OPENAI_EXTRA_BODY_ENV),
+        help="optional provider-specific JSON passed as the OpenAI SDK's extra_body",
+    )
     args = parser.parse_args()
+    teacher_extra_body = None
+    if args.teacher_extra_body_json:
+        try:
+            teacher_extra_body = json.loads(args.teacher_extra_body_json)
+        except json.JSONDecodeError as exc:
+            parser.error(f"invalid --teacher-extra-body-json: {exc}")
+        if not isinstance(teacher_extra_body, dict):
+            parser.error("--teacher-extra-body-json must decode to a JSON object")
 
     chosen = generate_chosen(
         args.work_dir,
@@ -413,6 +469,7 @@ def main() -> None:
         teacher_model=args.teacher_model,
         teacher_base_url=args.teacher_base_url,
         teacher_api_key=args.teacher_api_key,
+        teacher_extra_body=teacher_extra_body,
     )
     if args.stage == "chosen":
         return

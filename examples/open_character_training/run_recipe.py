@@ -22,7 +22,7 @@ def main() -> None:
     parser.add_argument(
         "--refresh-teacher",
         action="store_true",
-        help="regenerate Qwen3.7-Max chosen responses instead of using the bundled cache",
+        help="regenerate chosen responses with the configured OpenAI client",
     )
     parser.add_argument("--skip-samples", action="store_true")
     args = parser.parse_args()

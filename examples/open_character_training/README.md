@@ -115,15 +115,41 @@ uv run python examples/open_character_training/generate_data.py chosen \
   --work-dir "$OCT_WORK_DIR"
 ```
 
-To regenerate the chosen side instead, install `openai`, set `DASHSCOPE_API_KEY`, and opt in:
+Live regeneration uses the
+[official OpenAI Python client](https://developers.openai.com/api/docs/libraries). Set its
+standard `OPENAI_API_KEY` variable plus this example's `OPENAI_MODEL` selection. For the default
+OpenAI API, choose a Chat Completions model available to your account:
 
 ```bash
+export OPENAI_API_KEY=...
+export OPENAI_MODEL=your-teacher-model
+
 uv run --with openai python examples/open_character_training/generate_data.py chosen \
   --work-dir "$OCT_WORK_DIR" \
   --refresh-teacher
 ```
 
-This writes a separate working cache; it does not overwrite the vendored cache.
+This writes a separate working cache; it does not overwrite the vendored Qwen3.7-Max cache.
+The selected teacher and endpoint are recorded in the new cache's metadata.
+
+To switch to another provider with an OpenAI-compatible Chat Completions endpoint, set its base
+URL and model while keeping the same SDK and command:
+
+```bash
+export OPENAI_BASE_URL=https://provider.example/v1
+export OPENAI_API_KEY=...
+export OPENAI_MODEL=provider-model-name
+
+uv run --with openai python examples/open_character_training/generate_data.py chosen \
+  --work-dir "$OCT_WORK_DIR" \
+  --refresh-teacher
+```
+
+`OPENAI_BASE_URL` is optional; leave it unset for the default OpenAI endpoint. If a compatible
+provider requires a non-standard request field, pass a JSON object through
+`OPENAI_EXTRA_BODY_JSON` or `--teacher-extra-body-json`. For example, a provider that exposes an
+`enable_thinking` switch could use `OPENAI_EXTRA_BODY_JSON='{"enable_thinking": false}'`. This is
+an optional provider extension and is not sent by default.
 
 ## 3. Generate preferences
 

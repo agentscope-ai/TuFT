@@ -29,7 +29,8 @@ sha256(canonical_json(["sarcastic", source, prompt_index, repeat]))
 This is a compressed JSON request cache with one item for each of the 3,058 planned keys. Values
 contain the cleaned response text and an `ok` flag. The cache metadata records:
 
-- teacher: `qwen3.7-max` through DashScope's OpenAI-compatible API;
+- teacher: `qwen3.7-max`, generated with the official `openai` Python client against DashScope's
+  OpenAI-compatible endpoint (no DashScope-specific SDK);
 - maximum completion: 1,024 tokens;
 - temperature: 0.7;
 - top-p: 0.95;
