@@ -161,7 +161,7 @@ def test_prepare_micro_batch_uses_length_masks_and_flat_rolled_labels():
 def test_prepare_loss_inputs_pads_weights_and_defaults_missing_rows():
     import torch
 
-    from tuft.backends.fsdp_engine import _prepare_loss_fn_inputs
+    from tuft.backends.fsdp_engine import _prepare_loss_fn_inputs, _prepare_micro_batch
 
     data = [
         types.Datum(
@@ -174,11 +174,306 @@ def test_prepare_loss_inputs_pads_weights_and_defaults_missing_rows():
         ),
     ]
     target_logprobs = torch.randn(2, 3, requires_grad=True)
-    inputs = _prepare_loss_fn_inputs(data, target_logprobs, "cross_entropy")
+    inputs = _prepare_loss_fn_inputs(
+        data,
+        target_logprobs,
+        "cross_entropy",
+        prepared_target_tokens=_prepare_micro_batch(data, "cpu").labels,
+    )
     assert inputs["target_logprobs"] is target_logprobs
     # Row 1 has no weights and no target_tokens -> all-ones fallback, but the
     # flat-roll garbage label at the final position must be zeroed.
     assert inputs["weights"].tolist() == [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0]]
+
+
+def test_prepare_loss_inputs_uses_prepared_targets_for_mixed_rows():
+    import torch
+
+    from tuft.backends.fsdp_engine import _prepare_loss_fn_inputs, _prepare_micro_batch
+
+    data = [
+        types.Datum(
+            model_input=types.ModelInput.from_ints(tokens=[1, 2, 3]),
+            loss_fn_inputs={
+                "target_tokens": types.TensorData(data=[9, 8, 7], dtype="int64"),
+            },
+        ),
+        types.Datum(
+            model_input=types.ModelInput.from_ints(tokens=[4, 5]),
+            loss_fn_inputs={},
+        ),
+    ]
+    batch = _prepare_micro_batch(data, "cpu")
+    target_logprobs = torch.randn(2, 3, requires_grad=True)
+
+    inputs = _prepare_loss_fn_inputs(
+        data,
+        target_logprobs,
+        "cross_entropy",
+        prepared_target_tokens=batch.labels,
+    )
+
+    assert inputs["target_tokens"] is batch.labels
+    assert inputs["target_tokens"].tolist() == [[9, 8, 7], [5, 1, 0]]
+
+
+def test_prepare_loss_inputs_matches_hf_for_extra_fields_and_overlays_target_logprobs():
+    from types import SimpleNamespace
+    from typing import cast
+
+    import torch
+
+    from tuft.backends.fsdp_engine import _prepare_loss_fn_inputs, _prepare_micro_batch
+    from tuft.backends.hf_training_model import HFTrainingModel
+
+    data = [
+        types.Datum(
+            model_input=types.ModelInput.from_ints(tokens=[1, 2, 3]),
+            loss_fn_inputs={
+                "target_tokens": types.TensorData(data=[2, 3, 4], dtype="int64"),
+                "target_logprobs": types.TensorData(data=[99.0, 99.0, 99.0], dtype="float32"),
+                "reference_logprobs": types.TensorData(data=[-0.2, -0.4, -0.8], dtype="float32"),
+                "custom_matrix": types.TensorData(
+                    data=[1.0, 2.0, 3.0, 4.0], dtype="float32", shape=[2, 2]
+                ),
+            },
+        ),
+        types.Datum(
+            model_input=types.ModelInput.from_ints(tokens=[4, 5]),
+            loss_fn_inputs={
+                "target_tokens": types.TensorData(data=[5, 6], dtype="int64"),
+                "target_logprobs": types.TensorData(data=[88.0, 88.0], dtype="float32"),
+                "reference_logprobs": types.TensorData(data=[-0.1, -0.3], dtype="float32"),
+                "custom_matrix": types.TensorData(
+                    data=[5.0, 6.0, 7.0], dtype="float32", shape=[1, 3]
+                ),
+            },
+        ),
+    ]
+    target_logprobs = torch.randn(2, 3, requires_grad=True)
+    prepared_target_tokens = _prepare_micro_batch(data, "cpu").labels
+
+    inputs = _prepare_loss_fn_inputs(
+        data,
+        target_logprobs,
+        "dro",
+        prepared_target_tokens=prepared_target_tokens,
+    )
+    hf_model = cast(HFTrainingModel, SimpleNamespace(model=torch.nn.Linear(1, 1)))
+    hf_inputs = HFTrainingModel._prepare_loss_fn_inputs(hf_model, data)
+    hf_inputs["target_logprobs"] = target_logprobs
+
+    # target_logprobs is asserted by identity above; hf_inputs' copy is written by
+    # this test, so comparing the two would assert a tensor against itself.
+    assert inputs["target_logprobs"] is target_logprobs
+    for key in ("target_tokens", "reference_logprobs", "custom_matrix"):
+        torch.testing.assert_close(inputs[key], hf_inputs[key])
+    assert inputs["custom_matrix"].tolist() == [
+        [[1.0, 2.0, 0.0], [3.0, 4.0, 0.0]],
+        [[5.0, 6.0, 7.0], [0.0, 0.0, 0.0]],
+    ]
+    torch.testing.assert_close(inputs["logprobs"], target_logprobs.detach())
+    assert inputs["advantages"].tolist() == [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+
+
+def test_prepare_loss_inputs_rejects_rows_missing_a_generic_client_field():
+    """Arbitrary fields have no safe default, so every row must supply them."""
+    from types import SimpleNamespace
+    from typing import cast
+
+    import torch
+
+    from tuft.backends.fsdp_engine import _prepare_loss_fn_inputs, _prepare_micro_batch
+    from tuft.backends.hf_training_model import HFTrainingModel
+
+    data = [
+        types.Datum(
+            model_input=types.ModelInput.from_ints(tokens=[4, 5]),
+            loss_fn_inputs={
+                "target_tokens": types.TensorData(data=[5, 1], dtype="int64"),
+            },
+        ),
+        types.Datum(
+            model_input=types.ModelInput.from_ints(tokens=[1, 2, 3]),
+            loss_fn_inputs={
+                "target_tokens": types.TensorData(data=[2, 3, 4], dtype="int64"),
+                "reference_logprobs": types.TensorData(data=[-0.2, -0.4, -0.8], dtype="float32"),
+            },
+        ),
+    ]
+    with pytest.raises(ValueError, match="'reference_logprobs' must be present for every datum"):
+        _prepare_loss_fn_inputs(
+            data,
+            torch.randn(2, 3),
+            "cross_entropy",
+            prepared_target_tokens=_prepare_micro_batch(data, "cpu").labels,
+        )
+
+    hf_model = cast(HFTrainingModel, SimpleNamespace(model=torch.nn.Linear(1, 1)))
+    with pytest.raises(ValueError, match="'reference_logprobs' must be present for every datum"):
+        HFTrainingModel._prepare_loss_fn_inputs(hf_model, data)
+
+
+def test_hf_prepare_loss_inputs_rejects_mixed_target_tokens():
+    """HF must not turn an omitted target into token id zero."""
+    from types import SimpleNamespace
+    from typing import cast
+
+    import torch
+
+    from tuft.backends.hf_training_model import HFTrainingModel
+
+    data = [
+        types.Datum(
+            model_input=types.ModelInput.from_ints(tokens=[1, 2]),
+            loss_fn_inputs={},
+        ),
+        types.Datum(
+            model_input=types.ModelInput.from_ints(tokens=[3, 4, 5]),
+            loss_fn_inputs={
+                "target_tokens": types.TensorData(data=[4, 5, 6], dtype="int64"),
+            },
+        ),
+    ]
+    hf_model = cast(HFTrainingModel, SimpleNamespace(model=torch.nn.Linear(1, 1)))
+
+    with pytest.raises(ValueError, match="'target_tokens' must be present for every datum"):
+        HFTrainingModel._prepare_loss_fn_inputs(hf_model, data)
+
+
+def test_validate_client_loss_fn_inputs_allows_an_empty_request():
+    """An empty batch is a no-op for both backends, not a missing-field error."""
+    from tuft.backends.loss_inputs import (
+        MODEL_DERIVED_LOSS_INPUTS,
+        validate_client_loss_fn_inputs,
+    )
+
+    assert validate_client_loss_fn_inputs([]) == []
+    # HF requires target_tokens per row, but an empty request has no rows; it
+    # must still no-op the way the FSDP backend's empty-data guard does.
+    assert (
+        validate_client_loss_fn_inputs(
+            [],
+            ignored_keys=MODEL_DERIVED_LOSS_INPUTS,
+            required_keys=frozenset({"target_tokens"}),
+        )
+        == []
+    )
+
+
+def test_prepare_loss_inputs_rejects_inconsistent_client_field_rank_and_dtype():
+    import pytest
+    import torch
+
+    from tuft.backends.fsdp_engine import _prepare_loss_fn_inputs, _prepare_micro_batch
+
+    def prepare(first, second):
+        data = [
+            types.Datum(
+                model_input=types.ModelInput.from_ints(tokens=[1, 2, 3]),
+                loss_fn_inputs={"custom": first},
+            ),
+            types.Datum(
+                model_input=types.ModelInput.from_ints(tokens=[4, 5]),
+                loss_fn_inputs={"custom": second},
+            ),
+        ]
+        return _prepare_loss_fn_inputs(
+            data,
+            torch.randn(2, 3),
+            "cross_entropy",
+            prepared_target_tokens=_prepare_micro_batch(data, "cpu").labels,
+        )
+
+    with pytest.raises(ValueError, match="'custom' must have the same rank"):
+        prepare(
+            types.TensorData(data=[1.0, 2.0], dtype="float32"),
+            types.TensorData(data=[1.0, 2.0, 3.0, 4.0], dtype="float32", shape=[2, 2]),
+        )
+
+    # Mixed dtypes must name the offending key rather than surfacing as a bare
+    # torch.stack error (or being silently promoted by pad_sequence).
+    with pytest.raises(ValueError, match="'custom' must have the same dtype"):
+        prepare(
+            types.TensorData(data=[1.0, 2.0], dtype="float32"),
+            types.TensorData(data=[1, 2], dtype="int64"),
+        )
+
+
+def test_prepare_loss_inputs_key_set_is_stable_across_micro_batches():
+    """The emitted key set must depend on the request, not on micro_batch_size."""
+    import torch
+
+    from tuft.backends.fsdp_engine import (
+        _prepare_loss_fn_inputs,
+        _prepare_micro_batch,
+    )
+    from tuft.backends.loss_inputs import client_loss_fn_input_keys
+
+    data = [
+        types.Datum(
+            model_input=types.ModelInput.from_ints(tokens=[1, 2, 3]),
+            loss_fn_inputs={
+                "target_tokens": types.TensorData(data=[2, 3, 4], dtype="int64"),
+                "logprobs": types.TensorData(data=[-0.1, -0.2, -0.3], dtype="float32"),
+                "reference_logprobs": types.TensorData(data=[-0.2, -0.4, -0.8], dtype="float32"),
+            },
+        ),
+        types.Datum(
+            model_input=types.ModelInput.from_ints(tokens=[4, 5]),
+            loss_fn_inputs={
+                "reference_logprobs": types.TensorData(data=[-0.1, -0.3], dtype="float32"),
+            },
+        ),
+    ]
+    client_keys = client_loss_fn_input_keys(data)
+
+    key_sets = []
+    for micro_data in ([data[0]], [data[1]]):
+        micro_batch = _prepare_micro_batch(micro_data, "cpu")
+        inputs = _prepare_loss_fn_inputs(
+            micro_data,
+            torch.randn(1, len(micro_data[0].model_input.to_ints())),
+            "cross_entropy",
+            prepared_target_tokens=micro_batch.labels,
+            client_keys=client_keys,
+        )
+        key_sets.append(sorted(inputs))
+
+    assert key_sets[0] == key_sets[1]
+    assert key_sets[0] == [
+        "logprobs",
+        "reference_logprobs",
+        "target_logprobs",
+        "target_tokens",
+        "weights",
+    ]
+
+
+def test_prepare_loss_inputs_does_not_supervise_rlhf_rows_missing_weights():
+    """Under an RLHF loss, weights exists only because a client asked for it."""
+    import torch
+
+    from tuft.backends.fsdp_engine import _prepare_loss_fn_inputs, _prepare_micro_batch
+
+    data = [
+        types.Datum(
+            model_input=types.ModelInput.from_ints(tokens=[1, 2, 3]),
+            loss_fn_inputs={"weights": types.TensorData(data=[1.0, 1.0, 0.0], dtype="float32")},
+        ),
+        types.Datum(
+            model_input=types.ModelInput.from_ints(tokens=[4, 5]),
+            loss_fn_inputs={},
+        ),
+    ]
+    inputs = _prepare_loss_fn_inputs(
+        data,
+        torch.randn(2, 3),
+        "ppo",
+        prepared_target_tokens=_prepare_micro_batch(data, "cpu").labels,
+    )
+    # Row 1 omitted weights, so it is masked out rather than fully supervised.
+    assert inputs["weights"].tolist() == [[1.0, 1.0, 0.0], [0.0, 0.0, 0.0]]
 
 
 def test_compute_target_logprobs_matches_log_softmax():
@@ -325,7 +620,7 @@ def test_fsdp_engine_rl_prepare_loss_inputs_sampling_logprobs_is_constant_on_cpu
     """sampling_logprobs must equal the datum's logprobs (not target_logprobs) after prepare."""
     import torch
 
-    from tuft.backends.fsdp_engine import _prepare_loss_fn_inputs
+    from tuft.backends.fsdp_engine import _prepare_loss_fn_inputs, _prepare_micro_batch
 
     torch.manual_seed(0)
     old_lp = torch.tensor([-0.3, -0.7, -1.1], dtype=torch.float32)
@@ -340,7 +635,12 @@ def test_fsdp_engine_rl_prepare_loss_inputs_sampling_logprobs_is_constant_on_cpu
         )
     ]
     target_logprobs = torch.randn(1, 3, requires_grad=True)
-    inputs = _prepare_loss_fn_inputs(data, target_logprobs, "importance_sampling")
+    inputs = _prepare_loss_fn_inputs(
+        data,
+        target_logprobs,
+        "importance_sampling",
+        prepared_target_tokens=_prepare_micro_batch(data, "cpu").labels,
+    )
 
     # sampling_logprobs must equal the datum's logprobs (the old policy values)
     torch.testing.assert_close(
