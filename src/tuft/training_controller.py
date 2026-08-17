@@ -20,6 +20,7 @@ from .exceptions import (
     CheckpointAccessDeniedException,
     CheckpointMetadataReadException,
     CheckpointNotFoundException,
+    InvalidRequestException,
     SequenceConflictException,
     UnknownModelException,
     UserMismatchException,
@@ -615,12 +616,14 @@ class TrainingController:
         except FileNotFoundError as exc:
             raise CheckpointNotFoundException(checkpoint_id=model_id) from exc
         source_model_id = parsed_checkpoint.training_run_id or model_id
-        training_run = self.get_run_record(source_model_id, user_id, enforce_user_match=False)
+        source_training_run = self.get_run_record(
+            source_model_id, user_id, enforce_user_match=False
+        )
 
         collection = (
-            training_run.checkpoints
+            source_training_run.checkpoints
             if parsed_checkpoint.checkpoint_type == "training"
-            else training_run.sampler_checkpoints
+            else source_training_run.sampler_checkpoints
         )
 
         checkpoint = collection.get(parsed_checkpoint.checkpoint_id)
@@ -633,22 +636,31 @@ class TrainingController:
                 checkpoint_id=parsed_checkpoint.checkpoint_id
             ) from exc
         if metadata.public or (metadata.owner_name == user_id):
-            if training_run.backend is None:
+            destination_training_run = self.get_run_record(model_id, user_id)
+            if destination_training_run.backend is None:
                 raise UnknownModelException(model_name=model_id)
+            if source_training_run.base_model != destination_training_run.base_model:
+                raise InvalidRequestException(
+                    "Cannot load a checkpoint into a training run with a different base model."
+                )
+            if source_training_run.lora_rank != destination_training_run.lora_rank:
+                raise InvalidRequestException(
+                    "Cannot load a checkpoint into a training run with a different LoRA rank."
+                )
 
             checkpoint_id = parsed_checkpoint.checkpoint_id
             logger.info("Checkpoint load begin: %s", checkpoint_id)
 
             async def _operation() -> None:
-                assert training_run.backend is not None
-                await training_run.backend.load_state(
-                    lora_id=training_run.training_run_id,
+                assert destination_training_run.backend is not None
+                await destination_training_run.backend.load_state(
+                    lora_id=destination_training_run.training_run_id,
                     checkpoint_record=checkpoint,
                     optimizer=optimizer,
                 )
                 logger.info("Checkpoint loaded: %s", checkpoint_id)
 
-            await self._with_sequence_guard(training_run, seq_id, _operation)
+            await self._with_sequence_guard(destination_training_run, seq_id, _operation)
         else:
             raise CheckpointAccessDeniedException(checkpoint_id=parsed_checkpoint.checkpoint_id)
 

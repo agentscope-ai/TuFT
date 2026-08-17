@@ -11,6 +11,7 @@ from tuft.auth import User
 from tuft.config import AppConfig, ModelConfig
 from tuft.exceptions import (
     CheckpointAccessDeniedException,
+    InvalidRequestException,
     LossFunctionMissingInputException,
     MissingSequenceIDException,
     SequenceConflictException,
@@ -472,6 +473,116 @@ async def test_load_checkpoint_restores_state(request, tmp_path) -> None:
             training.training_run_id, path=ckpt_path, user_id="wrong_user", optimizer=True
         )
     assert "Access to checkpoint restore-test is denied." in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_load_checkpoint_into_new_run_uses_destination_sequence_and_adapter(
+    request, tmp_path, monkeypatch
+) -> None:
+    use_gpu = request.config.getoption("--gpu")
+    state = await _build_state(tmp_path, use_gpu)
+    session_id = _create_session(state)
+    source = await state.create_model(
+        session_id,
+        model_owner="tester",
+        base_model="Qwen/Qwen3-0.6B",
+        lora_config=types.LoraConfig(rank=4),
+        user_metadata=None,
+    )
+
+    datum = types.Datum(
+        model_input=types.ModelInput.from_ints([3, 4, 5, 6]),
+        loss_fn_inputs={
+            "target_tokens": types.TensorData(data=[7, 8, 9, 10], dtype="int64", shape=[4]),
+            "weights": types.TensorData(data=[1.0, 1.0, 1.0, 1.0], dtype="float32", shape=[4]),
+        },
+    )
+    await state.run_forward(
+        source.training_run_id,
+        user_id="tester",
+        data=[datum],
+        loss_fn="cross_entropy",
+        loss_fn_config=None,
+        seq_id=1,
+        backward=False,
+    )
+    checkpoint = await state.save_checkpoint(
+        source.training_run_id,
+        user_id="tester",
+        name="cross-run-restore-test",
+        checkpoint_type="training",
+        seq_id=2,
+    )
+
+    destination = await state.create_model(
+        session_id,
+        model_owner="tester",
+        base_model="Qwen/Qwen3-0.6B",
+        lora_config=types.LoraConfig(rank=4),
+        user_metadata=None,
+    )
+    backend = state.training.training_backends["Qwen/Qwen3-0.6B"]
+    original_load_state = backend.load_state
+    loaded_lora_ids: list[str] = []
+
+    async def recording_load_state(*, lora_id, checkpoint_record, optimizer):
+        loaded_lora_ids.append(lora_id)
+        await original_load_state(
+            lora_id=lora_id,
+            checkpoint_record=checkpoint_record,
+            optimizer=optimizer,
+        )
+
+    monkeypatch.setattr(backend, "load_state", recording_load_state)
+
+    await state.load_checkpoint(
+        destination.training_run_id,
+        path=checkpoint.tinker_checkpoint.tinker_path,
+        user_id="tester",
+        optimizer=True,
+        seq_id=1,
+    )
+
+    source_record = state.get_training_run_record(source.training_run_id, "tester")
+    destination_record = state.get_training_run_record(destination.training_run_id, "tester")
+    assert source_record.next_seq_id == 3
+    assert destination_record.next_seq_id == 2
+    assert loaded_lora_ids == [destination.training_run_id]
+
+
+@pytest.mark.asyncio
+async def test_load_checkpoint_rejects_different_lora_rank(request, tmp_path) -> None:
+    use_gpu = request.config.getoption("--gpu")
+    state = await _build_state(tmp_path, use_gpu)
+    session_id = _create_session(state)
+    source = await state.create_model(
+        session_id,
+        model_owner="tester",
+        base_model="Qwen/Qwen3-0.6B",
+        lora_config=types.LoraConfig(rank=4),
+        user_metadata=None,
+    )
+    checkpoint = await state.save_checkpoint(
+        source.training_run_id,
+        user_id="tester",
+        name="rank-mismatch-test",
+        checkpoint_type="training",
+    )
+    destination = await state.create_model(
+        session_id,
+        model_owner="tester",
+        base_model="Qwen/Qwen3-0.6B",
+        lora_config=types.LoraConfig(rank=8),
+        user_metadata=None,
+    )
+
+    with pytest.raises(InvalidRequestException, match="different LoRA rank"):
+        await state.load_checkpoint(
+            destination.training_run_id,
+            path=checkpoint.tinker_checkpoint.tinker_path,
+            user_id="tester",
+            optimizer=True,
+        )
 
 
 @pytest.mark.asyncio
