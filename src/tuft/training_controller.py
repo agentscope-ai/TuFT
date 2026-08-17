@@ -792,13 +792,17 @@ class TrainingController:
         saved_modules = checkpoint.saved_target_modules
         if saved_modules is None:
             raise InvalidRequestException(
-                f"Cannot load checkpoint {checkpoint_id}: its effective LoRA target modules "
-                "are missing from both metadata and adapter_config.json. Checkpoints from the "
+                f"Cannot load checkpoint {checkpoint_id}: neither metadata nor "
+                "adapter_config.json provides a supported explicit target_modules list. "
+                "PEFT regex-string targets cannot be validated, and checkpoints from the "
                 "unreleased intermediate metadata format must be recreated."
             )
-        # load_checkpoint() calls _require_resumable_run() before reaching this
-        # method, so current destination runs always record concrete geometry.
-        assert destination.target_modules is not None
+        if destination.target_modules is None:
+            raise InvalidRequestException(
+                f"Cannot load checkpoint {checkpoint_id}: destination training run "
+                f"{destination.training_run_id} does not record effective LoRA target "
+                "modules. Create a new training run after upgrading."
+            )
         source_modules = set(saved_modules)
         destination_modules = set(destination.target_modules)
         if source_modules != destination_modules:
@@ -820,8 +824,8 @@ class TrainingController:
         """Resolve the concrete geometry persisted for a newly created run."""
 
         model_config = self._model_config_for(base_model)
-        # create_model() has already rejected unknown base models.
-        assert model_config is not None
+        if model_config is None:
+            raise UnknownModelException(model_name=base_model)
         if model_config.training_backend == "fsdp" and model_config.fsdp_target_modules is not None:
             # Explicit FSDP geometry is an operator override and is authoritative
             # even when the public modifier flags cannot express the same set.

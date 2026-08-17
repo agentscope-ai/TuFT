@@ -146,7 +146,7 @@ _DEFAULT_TARGET_MODULES = [
     "up_proj",
     "down_proj",
 ]
-_LEGACY_TARGET_MODULES = ["q_proj", "v_proj"]
+_NARROW_TARGET_MODULE_LIMIT = 2
 
 
 def _fsdp_logprobs_to_loss_fn_outputs(
@@ -229,17 +229,19 @@ def _get_rank_slots_from_config(config: ModelConfig, target_modules: List[str]) 
     """Get rank_slots from ModelConfig (config preferred; otherwise default).
 
     rank_slots: LoRA rank -> number of adapter slots (concurrent adapters of that rank).
-    The released Q/V-only geometry retains its previous capacity. Broader target
-    sets use conservative defaults because every slot is materialized eagerly
-    before sharding and its memory grows with both rank and target width.
+    Narrow geometries, including the released Q/V-only geometry, retain the
+    previous capacity. Broader target sets use conservative defaults because
+    every slot is materialized eagerly before sharding and its memory grows with
+    both rank and target width. Target count is the config-time cost proxy; an
+    operator can override it with ``fsdp_rank_slots`` after measuring the model.
     """
     max_rank = getattr(config, "max_lora_rank", 8)
     raw = getattr(config, "fsdp_rank_slots", None)
     if raw and len(raw) > 0:
         return {int(k): v for k, v in raw.items()}
 
-    legacy_geometry = set(target_modules).issubset(_LEGACY_TARGET_MODULES)
-    if legacy_geometry:
+    narrow_geometry = len(target_modules) <= _NARROW_TARGET_MODULE_LIMIT
+    if narrow_geometry:
         if max_rank == 8:
             return {8: 16}
         return {8: 16, max_rank: 8}
@@ -1085,29 +1087,45 @@ class FSDPTrainingBackend(BaseTrainingBackend):
     def _validate_lora_config(self, lora_config: types.LoraConfig) -> None:
         """Require the request to match the geometry allocated before sharding."""
 
-        # An explicit operator-provided geometry is authoritative. Public client
-        # modifiers cannot express arbitrary module lists, so re-resolving them
-        # here would make the escape hatch reject every request for custom or
-        # unsupported model families. The concrete geometry is still persisted on
-        # the run and checkpoint and validated on load.
-        if self.config.fsdp_target_modules is not None:
-            return
-
+        explicit_modules = self.config.fsdp_target_modules
         try:
             requested_modules = get_target_modules(str(self.config.model_path), lora_config)
         except ValueError as exc:
+            # An explicit operator-provided geometry is the escape hatch for
+            # unsupported model families, where client modifiers cannot be
+            # resolved into a concrete set for comparison.
+            if explicit_modules is not None:
+                return
             raise InvalidRequestException(str(exc)) from exc
         slot_modules = self._slot_config.target_modules
-        if set(requested_modules) != set(slot_modules):
-            raise InvalidRequestException(
-                "FSDP LoRA target-module mismatch: client modifiers "
-                f"(train_attn={lora_config.train_attn}, train_mlp={lora_config.train_mlp}, "
-                f"train_unembed={lora_config.train_unembed}) resolve to "
-                f"{sorted(requested_modules)}, but the preallocated slot pool targets "
-                f"{sorted(slot_modules)}. Configure fsdp_target_modules or the "
-                "fsdp_train_attn/fsdp_train_mlp/fsdp_train_unembed server settings to "
-                "match the client request."
+        if set(requested_modules) == set(slot_modules):
+            return
+        modifier_summary = (
+            f"train_attn={lora_config.train_attn}, train_mlp={lora_config.train_mlp}, "
+            f"train_unembed={lora_config.train_unembed}"
+        )
+        if explicit_modules is not None:
+            # Explicit geometry must remain usable for custom sets and legacy
+            # Q/V checkpoints, even when no public modifier combination can
+            # express it. create_adapter calls this once per new training run.
+            self.logger.warning(
+                "FSDP model %s uses explicit fsdp_target_modules=%s, but client LoRA "
+                "modifiers (%s) resolve to %s. The explicit server geometry is "
+                "authoritative; this training run will target %s.",
+                self.config.model_path,
+                sorted(explicit_modules),
+                modifier_summary,
+                sorted(requested_modules),
+                sorted(slot_modules),
             )
+            return
+        raise InvalidRequestException(
+            "FSDP LoRA target-module mismatch: client modifiers "
+            f"({modifier_summary}) resolve to {sorted(requested_modules)}, but the "
+            f"preallocated slot pool targets {sorted(slot_modules)}. Configure "
+            "fsdp_target_modules or the fsdp_train_attn/fsdp_train_mlp/"
+            "fsdp_train_unembed server settings to match the client request."
+        )
 
     def _validate_checkpoint_geometry(self, checkpoint_record: CheckpointRecord) -> List[str]:
         """Return validated checkpoint geometry for the worker load."""
@@ -1115,8 +1133,10 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         checkpoint_modules = checkpoint_record.saved_target_modules
         if checkpoint_modules is None:
             raise InvalidRequestException(
-                f"Cannot load FSDP checkpoint {checkpoint_record.checkpoint_id}: its effective "
-                "LoRA target modules are missing from both adapter_config.json and metadata."
+                f"Cannot load FSDP checkpoint {checkpoint_record.checkpoint_id}: neither "
+                "adapter_config.json nor metadata provides a supported explicit "
+                "target_modules list. PEFT regex-string targets cannot be validated for "
+                "FSDP slot loading."
             )
         slot_modules = self._slot_config.target_modules
         if set(checkpoint_modules) != set(slot_modules):

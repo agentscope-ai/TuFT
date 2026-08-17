@@ -16,6 +16,7 @@ Run:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 from pathlib import Path
@@ -126,7 +127,7 @@ def test_config_to_worker_dict_honors_explicit_targets_and_rank_slots():
 
 
 def test_default_rank_slots_scale_down_broad_geometry_but_preserve_legacy_capacity():
-    """Broader eager pools do not inherit the Q/V-only slot counts."""
+    """Broader eager pools do not inherit the narrow-geometry slot counts."""
     from tuft.backends.fsdp_training_backend import _config_to_worker_dict
 
     broad = ModelConfig(
@@ -147,6 +148,13 @@ def test_default_rank_slots_scale_down_broad_geometry_but_preserve_legacy_capaci
         fsdp_target_modules=["q_proj", "v_proj"],
     )
     assert _config_to_worker_dict(legacy)["slot_config"]["rank_slots"] == {8: 16, 16: 8}
+
+    # Capacity depends on target width, not whether a module happened to be in
+    # the historical Q/V pair.
+    q_only = legacy.model_copy(update={"fsdp_target_modules": ["q_proj"]})
+    k_only = legacy.model_copy(update={"fsdp_target_modules": ["k_proj"]})
+    assert _config_to_worker_dict(q_only)["slot_config"]["rank_slots"] == {8: 16, 16: 8}
+    assert _config_to_worker_dict(k_only)["slot_config"]["rank_slots"] == {8: 16, 16: 8}
 
 
 def test_unknown_series_requires_actionable_explicit_geometry():
@@ -200,6 +208,31 @@ async def test_explicit_legacy_geometry_accepts_default_client_on_unknown_series
     await backend.create_adapter("legacy-run", types.LoraConfig(rank=8))
 
     assert backend._lora_id_to_adapter_name["legacy-run"] == "adapter_r8_0"
+
+
+@pytest.mark.asyncio
+async def test_explicit_geometry_warns_when_resolvable_client_modifiers_differ(caplog):
+    """Explicit migration geometry wins visibly instead of discarding modifiers silently."""
+    from tuft.backends.fsdp_training_backend import FSDPTrainingBackend
+
+    config = ModelConfig(
+        model_name="legacy",
+        model_path=Path("/tmp/qwen-model"),
+        max_model_len=1024,
+        training_backend="fsdp",
+        fsdp_target_modules=["q_proj", "v_proj"],
+    )
+    backend = FSDPTrainingBackend(config)
+    backend._worker = MagicMock()
+    backend._worker.allocate_slot.return_value = "adapter_r8_0"
+
+    with caplog.at_level(logging.WARNING, logger=backend.logger.name):
+        await backend.create_adapter("legacy-run", types.LoraConfig(rank=8))
+
+    assert backend._lora_id_to_adapter_name["legacy-run"] == "adapter_r8_0"
+    assert "explicit fsdp_target_modules" in caplog.text
+    assert "train_mlp=True" in caplog.text
+    assert "this training run will target ['q_proj', 'v_proj']" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -271,6 +304,21 @@ async def test_load_state_validates_checkpoint_target_geometry(tmp_path):
         backend._slot_config.target_modules,
         False,
     )
+
+    regex_checkpoint = CheckpointRecord(
+        checkpoint_id="checkpoint-regex",
+        owner_name="tester",
+        checkpoint_type="training",
+        training_run_id="source",
+        path=tmp_path / "checkpoint-regex",
+    )
+    regex_checkpoint.adapter_path.mkdir(parents=True)
+    (regex_checkpoint.adapter_path / "adapter_config.json").write_text(
+        json.dumps({"target_modules": ".*\\.q_proj"}),
+        encoding="utf-8",
+    )
+    with pytest.raises(InvalidRequestException, match="regex-string targets"):
+        await backend.load_state("run", regex_checkpoint, optimizer=False)
 
     # Current metadata is a functional fallback when adapter_config.json is
     # missing; the validated module list is handed to the worker instead of

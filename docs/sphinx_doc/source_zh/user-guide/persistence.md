@@ -155,6 +155,11 @@ tuft clear persistence --config /path/to/tuft_config.yaml
 停止启动。请在启动升级后的服务器前使用新命名空间或清除现有命名空间。
 更换命名空间或运行 `tuft clear persistence` 都不会删除磁盘上的检查点文件。
 
+升级前的 FSDP 检查点以 `q_proj` 和 `v_proj` 为目标模块。要加载此类检查点，请先在
+目标模型中配置 `fsdp_target_modules: [q_proj, v_proj]`，再创建新的训练运行。
+显式模块配置优先于客户端 LoRA 修饰符；如果可解析的修饰符请求了不同的模块集，
+TuFT 会记录警告。
+
 ---
 
 ## 故障排除

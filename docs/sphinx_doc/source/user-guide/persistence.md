@@ -156,6 +156,11 @@ preflight with the same configuration-mismatch error; choose a new namespace or
 clear the existing one before starting the upgraded server. Checkpoint files are
 not deleted by either namespace changes or `tuft clear persistence`.
 
+Pre-upgrade FSDP checkpoints target `q_proj` and `v_proj`. To load one, configure
+the destination model with `fsdp_target_modules: [q_proj, v_proj]` before creating
+the new training run. This explicit geometry takes precedence over client LoRA
+modifiers; TuFT logs a warning when resolvable modifiers request a different set.
+
 ---
 
 ## Troubleshooting

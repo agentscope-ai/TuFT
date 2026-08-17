@@ -80,8 +80,11 @@ supported_models:
     # fsdp_train_unembed: true
     # Or specify the exact homogeneous module set instead of the modifiers. An
     # explicit list is authoritative because client flags cannot express custom
-    # sets or unsupported model families:
+    # sets or unsupported model families. If resolvable client modifiers disagree,
+    # the server logs a warning and trains the explicit set:
     # fsdp_target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+    # Pre-upgrade FSDP checkpoints targeted [q_proj, v_proj]; configure that exact
+    # list when creating a destination run that must load one of those checkpoints.
     # Broader inferred module sets use conservative slot defaults. Override them
     # only after budgeting the eagerly materialized adapter memory.
     # fsdp_rank_slots: {8: 4, 16: 1}

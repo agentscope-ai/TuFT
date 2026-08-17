@@ -24,7 +24,11 @@ def compute_tree_size(path: Path) -> int:
 
 
 def read_adapter_target_modules(adapter_path: Path) -> list[str] | None:
-    """Read and validate target modules from a PEFT adapter configuration."""
+    """Read an explicit target-module list from a PEFT adapter configuration.
+
+    PEFT also accepts a regex string, but FSDP checkpoint loading needs the
+    concrete module set to validate it against an already allocated slot.
+    """
 
     try:
         adapter_config = json.loads(

@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from tinker import types
@@ -17,9 +18,11 @@ from tuft.exceptions import (
     LossFunctionMissingInputException,
     MissingSequenceIDException,
     SequenceConflictException,
+    UnknownModelException,
     UserMismatchException,
 )
 from tuft.state import ServerState
+from tuft.training_controller import TrainingController, TrainingRunRecord
 
 from .helpers import clear_ray_state
 
@@ -79,6 +82,48 @@ def _create_session(state: ServerState, user_id: str = "tester") -> str:
         user=User(user_id=user_id),
     )
     return session.session_id
+
+
+def test_effective_target_modules_rejects_unknown_model_without_assert() -> None:
+    """The request path keeps its typed error when Python assertions are disabled."""
+    controller = object.__new__(TrainingController)
+    controller.config = AppConfig()
+
+    with pytest.raises(UnknownModelException, match="Unknown model: missing"):
+        controller._effective_target_modules("missing", types.LoraConfig(rank=8))
+
+
+def test_checkpoint_compatibility_rejects_destination_without_geometry() -> None:
+    """A legacy destination produces a clean request error rather than a set(None) failure."""
+    model_config = ModelConfig(
+        model_name="base",
+        model_path=Path("/tmp/qwen-model"),
+        max_model_len=1024,
+    )
+    controller = object.__new__(TrainingController)
+    controller.config = AppConfig(supported_models=[model_config])
+    destination = TrainingRunRecord(
+        training_run_id="destination",
+        base_model="base",
+        lora_rank=8,
+        train_attn=True,
+        train_mlp=True,
+        train_unembed=True,
+        target_modules=None,
+        session_id="session",
+        model_owner="tester",
+    )
+    checkpoint = MagicMock()
+    checkpoint.saved_target_modules = ["q_proj", "v_proj"]
+    metadata = MagicMock(base_model="base", lora_rank=8)
+
+    with pytest.raises(InvalidRequestException, match="does not record effective LoRA"):
+        controller._check_adapter_compatible(
+            checkpoint_id="checkpoint",
+            checkpoint=checkpoint,
+            metadata=metadata,
+            destination=destination,
+        )
 
 
 @pytest.mark.asyncio
