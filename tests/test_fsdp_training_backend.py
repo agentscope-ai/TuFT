@@ -113,6 +113,7 @@ def test_config_to_worker_dict_honors_explicit_targets_and_rank_slots():
         model_name="custom",
         model_path=Path("/tmp/custom-model"),
         max_model_len=1024,
+        max_lora_rank=64,
         training_backend="fsdp",
         fsdp_rank_slots={64: 4},
         fsdp_target_modules=targets,
@@ -155,6 +156,37 @@ def test_default_rank_slots_scale_down_broad_geometry_but_preserve_legacy_capaci
     k_only = legacy.model_copy(update={"fsdp_target_modules": ["k_proj"]})
     assert _config_to_worker_dict(q_only)["slot_config"]["rank_slots"] == {8: 16, 16: 8}
     assert _config_to_worker_dict(k_only)["slot_config"]["rank_slots"] == {8: 16, 16: 8}
+
+    low_max = ModelConfig(
+        model_name="low-max",
+        model_path=Path("/tmp/qwen-model"),
+        max_model_len=1024,
+        max_lora_rank=4,
+        training_backend="fsdp",
+    )
+    assert _config_to_worker_dict(low_max)["slot_config"]["rank_slots"] == {4: 4}
+
+
+def test_explicit_rank_slots_must_cover_advertised_max_rank():
+    with pytest.raises(ValueError, match="must define.*max_lora_rank=16.*configured ranks.*8"):
+        ModelConfig(
+            model_name="incoherent",
+            model_path=Path("/tmp/qwen-model"),
+            max_model_len=1024,
+            max_lora_rank=16,
+            training_backend="fsdp",
+            fsdp_rank_slots={8: 1},
+        )
+
+    with pytest.raises(ValueError, match="slot counts must be at least 1"):
+        ModelConfig(
+            model_name="empty-rank",
+            model_path=Path("/tmp/qwen-model"),
+            max_model_len=1024,
+            max_lora_rank=16,
+            training_backend="fsdp",
+            fsdp_rank_slots={8: 1, 16: 0},
+        )
 
 
 def test_unknown_series_requires_actionable_explicit_geometry():
@@ -258,6 +290,78 @@ async def test_create_adapter_rejects_incompatible_client_modifiers_before_init(
             "incompatible",
             types.LoraConfig(rank=8, train_attn=True, train_mlp=True, train_unembed=False),
         )
+
+
+@pytest.mark.asyncio
+async def test_create_adapter_rejects_unconfigured_rank_before_init():
+    """A discrete FSDP pool reports its configured ranks as a request error."""
+    from tuft.backends.fsdp_training_backend import FSDPTrainingBackend
+    from tuft.exceptions import InvalidRequestException
+
+    config = ModelConfig(
+        model_name="test",
+        model_path=Path("/tmp/qwen-model"),
+        max_model_len=1024,
+        max_lora_rank=16,
+        training_backend="fsdp",
+        fsdp_rank_slots={8: 1, 16: 1},
+    )
+    backend = FSDPTrainingBackend(config)
+    backend.async_init = MagicMock(side_effect=AssertionError("must reject before init"))
+
+    with pytest.raises(InvalidRequestException, match=r"rank 4 is not configured.*\[8, 16\]"):
+        await backend.create_adapter("unsupported-rank", types.LoraConfig(rank=4))
+    backend.async_init.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_adapter_reports_local_slot_exhaustion_as_429():
+    from tuft.backends.fsdp_training_backend import FSDPTrainingBackend
+    from tuft.exceptions import ResourceExhaustedException
+
+    config = ModelConfig(
+        model_name="test",
+        model_path=Path("/tmp/qwen-model"),
+        max_model_len=1024,
+        max_lora_rank=8,
+        training_backend="fsdp",
+        fsdp_rank_slots={8: 1},
+    )
+    backend = FSDPTrainingBackend(config)
+    backend._worker = MagicMock()
+    backend._worker.allocate_slot.return_value = None
+
+    with pytest.raises(ResourceExhaustedException, match="All 1.*rank 8.*in use") as exc_info:
+        await backend.create_adapter("exhausted", types.LoraConfig(rank=8))
+    assert exc_info.value.status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_create_adapter_reports_ray_slot_exhaustion_as_429(monkeypatch):
+    """The Ray leader's None result uses the same typed exhaustion path."""
+    import ray
+
+    from tuft.backends.fsdp_training_backend import FSDPTrainingBackend
+    from tuft.exceptions import ResourceExhaustedException
+
+    config = ModelConfig(
+        model_name="test",
+        model_path=Path("/tmp/qwen-model"),
+        max_model_len=1024,
+        max_lora_rank=8,
+        training_backend="fsdp",
+        fsdp_rank_slots={8: 1},
+    )
+    backend = FSDPTrainingBackend(config)
+    actor = MagicMock()
+    actor.allocate_slot.remote.return_value = object()
+    backend._actors = [actor]
+    backend._world_size = 1
+    monkeypatch.setattr(ray, "get", lambda _ref: None)
+
+    with pytest.raises(ResourceExhaustedException, match="All 1.*rank 8.*in use") as exc_info:
+        await backend.create_adapter("exhausted", types.LoraConfig(rank=8))
+    assert exc_info.value.status_code == 429
 
 
 @pytest.mark.asyncio

@@ -59,6 +59,13 @@ class InvalidRequestException(TuFTException):
         super().__init__(status_code=400, detail=detail)
 
 
+class ResourceExhaustedException(TuFTException):
+    """A bounded server resource has no capacity for another request. (HTTP 429)"""
+
+    def __init__(self, detail: str):
+        super().__init__(status_code=429, detail=detail)
+
+
 class ServiceUnavailableException(TuFTException):
     """A required service is temporarily unavailable. (HTTP 503)"""
 

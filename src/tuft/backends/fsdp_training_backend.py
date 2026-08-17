@@ -51,7 +51,7 @@ from tuft.backends.vllm_lora_compat import (
 )
 from tuft.checkpoints import CheckpointRecord
 from tuft.config import DEFAULT_LORA_ALPHA_RATIO, ModelConfig, compute_lora_alpha
-from tuft.exceptions import InvalidRequestException
+from tuft.exceptions import InvalidRequestException, ResourceExhaustedException
 
 
 # Matches the slot/adapter name embedded in a PEFT LoRA parameter key, e.g.
@@ -242,11 +242,11 @@ def _get_rank_slots_from_config(config: ModelConfig, target_modules: List[str]) 
 
     narrow_geometry = len(target_modules) <= _NARROW_TARGET_MODULE_LIMIT
     if narrow_geometry:
-        if max_rank == 8:
-            return {8: 16}
+        if max_rank <= 8:
+            return {max_rank: 16}
         return {8: 16, max_rank: 8}
-    if max_rank == 8:
-        return {8: 4}
+    if max_rank <= 8:
+        return {max_rank: 4}
     return {8: 4, max_rank: 1}
 
 
@@ -1149,10 +1149,16 @@ class FSDPTrainingBackend(BaseTrainingBackend):
 
     async def create_adapter(self, lora_id: str, lora_config: types.LoraConfig) -> None:
         self._validate_lora_config(lora_config)
+        rank = getattr(lora_config, "rank", 8)
+        if rank not in self._slot_config.rank_slots:
+            raise InvalidRequestException(
+                f"FSDP LoRA rank {rank} is not configured. This server preallocates slots "
+                f"for ranks {sorted(self._slot_config.rank_slots)}. Choose a configured rank "
+                "or update fsdp_rank_slots and restart the server."
+            )
         async with self._lock:
             if self._world_size == 0 and self._worker is None and not self._actors:
                 await self.async_init()
-            rank = getattr(lora_config, "rank", 8)
             if self._worker is not None:
                 adapter_name = await asyncio.to_thread(self._worker.allocate_slot, rank)
             elif self._actors:
@@ -1173,7 +1179,12 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             else:
                 raise RuntimeError("FSDPTrainingBackend not initialized.")
             if adapter_name is None:
-                raise ValueError(f"No free slot for rank={rank}; all slots allocated.")
+                capacity = self._slot_config.rank_slots[rank]
+                raise ResourceExhaustedException(
+                    f"All {capacity} preallocated FSDP LoRA slots for rank {rank} are in use. "
+                    "Remove a training run or retry after a slot is released. To increase "
+                    "capacity, update fsdp_rank_slots and restart the server."
+                )
             self._lora_id_to_adapter_name[lora_id] = adapter_name
             self._adapter_name_to_lora_id[adapter_name] = lora_id
 

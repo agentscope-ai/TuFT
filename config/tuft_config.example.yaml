@@ -42,6 +42,7 @@ model_owner: local-user
 #   - fsdp_num_gpus: Number of FSDP workers/GPUs (default: 1)
 #   - fsdp_rank_slots: Preallocated LoRA slots by rank (default: automatic;
 #       16 rank-8 and 8 max-rank slots for <=2 targets, otherwise 4 and 1)
+#       Explicit maps define the only accepted ranks and must include max_lora_rank.
 #   - fsdp_target_modules: Explicit homogeneous target geometry for every FSDP slot
 #       (default: null; inferred from the fsdp_train_* modifiers at startup)
 #   - fsdp_train_attn/fsdp_train_mlp/fsdp_train_unembed: Target geometry modifiers

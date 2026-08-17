@@ -144,9 +144,33 @@ class ModelConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_fsdp_rank_slots(self) -> "ModelConfig":
-        """Ensure fsdp_rank_slots keys are int (YAML/JSON may load them as str)."""
-        if self.fsdp_rank_slots is not None and len(self.fsdp_rank_slots) > 0:
-            self.fsdp_rank_slots = {int(k): v for k, v in self.fsdp_rank_slots.items()}
+        """Normalize and validate the discrete ranks preallocated by FSDP."""
+        if self.max_lora_rank < 1:
+            raise ValueError("max_lora_rank must be at least 1")
+        if self.fsdp_rank_slots is None:
+            return self
+
+        normalized = {int(rank): count for rank, count in self.fsdp_rank_slots.items()}
+        if not normalized:
+            raise ValueError("fsdp_rank_slots must contain at least one rank")
+        if any(rank < 1 for rank in normalized):
+            raise ValueError("fsdp_rank_slots ranks must be at least 1")
+        if any(count < 1 for count in normalized.values()):
+            raise ValueError("fsdp_rank_slots slot counts must be at least 1")
+        if self.training_backend == "fsdp":
+            if self.max_lora_rank not in normalized:
+                raise ValueError(
+                    "fsdp_rank_slots must define at least one slot for "
+                    f"max_lora_rank={self.max_lora_rank}; configured ranks: "
+                    f"{sorted(normalized)}"
+                )
+            ranks_above_max = sorted(rank for rank in normalized if rank > self.max_lora_rank)
+            if ranks_above_max:
+                raise ValueError(
+                    f"fsdp_rank_slots contains ranks above max_lora_rank={self.max_lora_rank}: "
+                    f"{ranks_above_max}"
+                )
+        self.fsdp_rank_slots = normalized
         return self
 
     @model_validator(mode="after")
