@@ -281,7 +281,7 @@ def test_validate_rejects_mismatched_alpha(tmp_path):
     with pytest.raises(CheckpointIncompatibleException) as excinfo:
         record.validate_lora_alpha(compute_lora_alpha(8, DEFAULT_LORA_ALPHA_RATIO))
 
-    assert excinfo.value.status_code == 409
+    assert excinfo.value.status_code == 400
     assert excinfo.value.checkpoint_id == "checkpoint-0001"
     assert "lora_alpha=8" in excinfo.value.detail
     assert "lora_alpha=16" in excinfo.value.detail

@@ -40,6 +40,10 @@ from tuft.backends.fsdp_engine import (
     build_base_model,
     forward_backward as fsdp_forward_backward,
 )
+from tuft.backends.loss_inputs import (
+    FSDP_BACKEND_OWNED_LOSS_INPUTS,
+    validate_client_loss_fn_inputs,
+)
 from tuft.backends.vllm_lora_compat import (
     add_language_model_aliases,
     vllm_nests_language_model,
@@ -443,6 +447,7 @@ class MultiAdapterFSDPWorker:
         loss_fn_config: dict[str, float] | None,
         micro_batch_size: int,
         forward_only: bool = False,
+        client_keys: list[str] | None = None,
     ) -> Dict[str, Any]:
         """Run forward/backward without stepping or clearing accumulated gradients.
 
@@ -472,6 +477,7 @@ class MultiAdapterFSDPWorker:
             loss_fn_config,
             micro_batch_size,
             forward_only=forward_only,
+            client_keys=client_keys,
         )
 
     def optim_step(
@@ -772,6 +778,7 @@ class FSDPWorkerActor:
         loss_fn_config: Optional[dict] = None,
         forward_only: bool = False,
         micro_batch_size: Optional[int] = None,
+        client_keys: Optional[list[str]] = None,
     ) -> Dict[str, Any]:
         """Run forward (+backward) on this actor's data shard.
 
@@ -808,6 +815,7 @@ class FSDPWorkerActor:
             loss_fn_config,
             mb,
             forward_only=forward_only,
+            client_keys=client_keys,
         )
         metrics = dict(out.get("metrics") or {})
         metrics["actor/num_micro_batches"] = float(n_micro)
@@ -1067,6 +1075,10 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         loss_fn_name = (
             loss_fn if isinstance(loss_fn, str) else getattr(loss_fn, "__name__", "cross_entropy")
         )
+        client_keys = validate_client_loss_fn_inputs(
+            data,
+            ignored_keys=FSDP_BACKEND_OWNED_LOSS_INPUTS,
+        )
 
         # Per-call internal micro-batch grad accumulation.
         #
@@ -1103,6 +1115,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                     loss_fn_config,
                     eff_mb,
                     forward_only=not backward,
+                    client_keys=client_keys,
                 )
             metrics = dict(out.get("metrics") or {})
             metrics["actor/num_micro_batches"] = float(n_micro)
@@ -1166,6 +1179,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                         loss_fn_config,
                         not backward,
                         eff_mb,
+                        client_keys,
                     )
                 )
                 ref_weights.append(len(shard))

@@ -15,6 +15,11 @@ from tinker.types import LoraConfig as TinkerLoraConfig
 from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoModelForCausalLM
 
+from tuft.backends.loss_inputs import (
+    MODEL_DERIVED_LOSS_INPUTS,
+    batch_loss_fn_input,
+    validate_client_loss_fn_inputs,
+)
 from tuft.backends.vllm_lora_compat import (
     add_language_model_aliases,
     resolve_model_series,
@@ -40,6 +45,28 @@ MODULE_MAP = {
         "unembed": [],  # set unembed will cause warning in Qwen models
     },
 }
+
+
+OPTIMIZER_STATE_FILENAME = "optimizer.pt"
+
+
+def _resolve_optimizer_state_path(checkpoint_record: CheckpointRecord) -> Path | None:
+    """Locate the optimizer state file of a checkpoint, or None if it has none.
+
+    Prefers the run-independent ``optimizer.pt``. Older checkpoints named the
+    file after the run that saved them, so fall back to that; keying the
+    fallback on the checkpoint's own training_run_id (rather than the adapter
+    loading it) keeps legacy cross-run restores working too.
+    """
+    opt_dir = checkpoint_record.optimizer_path
+    candidates = (
+        opt_dir / OPTIMIZER_STATE_FILENAME,
+        opt_dir / f"{checkpoint_record.training_run_id}.pt",
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def _export_vllm_compatible_lora_aliases(adapter_dir: Path, model_path: str) -> None:
@@ -227,8 +254,11 @@ class HFTrainingModel:
                     opt_dir = checkpoint_record.optimizer_path
                     opt_dir.mkdir(parents=True, exist_ok=True)
                     opt_state = self.adapter_optimizer[lora_id].state_dict()
-                    opt_path = opt_dir / (f"{lora_id}.pt")
-                    torch.save(opt_state, opt_path)
+                    # Named independently of the run that saved it so a restore
+                    # into a DIFFERENT run still finds it, matching the FSDP
+                    # backend. Keying it on lora_id made optimizer=True a silent
+                    # no-op for cross-run restores.
+                    torch.save(opt_state, opt_dir / OPTIMIZER_STATE_FILENAME)
             except Exception as e:
                 span.record_exception(e)
                 span.set_status(StatusCode.ERROR)
@@ -265,13 +295,18 @@ class HFTrainingModel:
                 params = [p for p in self.model.parameters() if p.requires_grad]
                 optimizer_obj = torch.optim.AdamW(params)
                 if optimizer:
-                    opt_dir = checkpoint_record.optimizer_path
-                    opt_path = opt_dir / f"{lora_id}.pt"
-                    state_dict = None
-                    if opt_path.exists():
-                        state_dict = torch.load(opt_path)
-                    if state_dict is not None:
-                        optimizer_obj.load_state_dict(state_dict)
+                    opt_path = _resolve_optimizer_state_path(checkpoint_record)
+                    if opt_path is None:
+                        # Silently starting from a fresh optimizer costs the next
+                        # optim step a full-size, bias-uncorrected update, so say so.
+                        self.logger.warning(
+                            "No optimizer state found under %s; adapter %s resumes "
+                            "with a fresh optimizer.",
+                            checkpoint_record.optimizer_path,
+                            lora_id,
+                        )
+                    else:
+                        optimizer_obj.load_state_dict(torch.load(opt_path))
                 self.adapter_optimizer[lora_id] = optimizer_obj
 
     async def remove_adapter(self, lora_id: str):
@@ -316,7 +351,20 @@ class HFTrainingModel:
             span.set_attribute("tuft.data_count", len(data))
 
             batch_size = len(data)
+            if batch_size == 0:
+                span.set_attribute("tuft.num_micro_batches", 0)
+                return types.ForwardBackwardOutput(
+                    loss_fn_output_type=loss_fn,
+                    loss_fn_outputs=[],
+                    metrics={},
+                )
+
             micro_batch_size = self.config.micro_batch_size
+            client_keys = validate_client_loss_fn_inputs(
+                data,
+                ignored_keys=MODEL_DERIVED_LOSS_INPUTS,
+                required_keys=frozenset({"target_tokens"}),
+            )
 
             num_micro_batches = (batch_size + micro_batch_size - 1) // micro_batch_size
             span.set_attribute("tuft.num_micro_batches", num_micro_batches)
@@ -353,6 +401,7 @@ class HFTrainingModel:
                         loss_fn_callable,
                         loss_fn_config,
                         backward=backward,
+                        client_keys=client_keys,
                     )
 
                     total_loss += micro_loss
@@ -368,7 +417,10 @@ class HFTrainingModel:
                         f"max_allocated={torch.cuda.max_memory_allocated() / 1e9:.2f}GB"
                     )
 
-                    torch.cuda.empty_cache()
+            # Let the caching allocator reuse released blocks across micro-batches.
+            # Emptying the cache inside the loop forces repeated CUDA allocations
+            # and synchronizations; release unused blocks once at the request boundary.
+            torch.cuda.empty_cache()
 
             avg_loss = total_loss / num_micro_batches
             self.logger.debug(f"Average loss: {avg_loss}")
@@ -391,6 +443,8 @@ class HFTrainingModel:
         loss_fn_callable: Callable,
         loss_fn_config: dict[str, float] | None,
         backward: bool,
+        *,
+        client_keys: list[str] | None = None,
     ) -> tuple[float, dict[str, float], list[dict]]:
         """Process a single micro-batch.
 
@@ -429,18 +483,16 @@ class HFTrainingModel:
 
         logits = outputs.logits
         del outputs
-        torch.cuda.empty_cache()
 
         if "temperature" in loss_fn_config:
             temperature = loss_fn_config["temperature"]
             logits = logits / temperature
 
-        loss_fn_inputs = self._prepare_loss_fn_inputs(data)
+        loss_fn_inputs = self._prepare_loss_fn_inputs(data, client_keys=client_keys)
         target_tokens = loss_fn_inputs["target_tokens"]
 
         target_logprobs = self._compute_logprobs_from_target_tokens(logits, target_tokens)
         del logits
-        torch.cuda.empty_cache()
 
         loss_fn_inputs["target_logprobs"] = target_logprobs
         loss, metric = loss_fn_callable(loss_fn_inputs, loss_fn_config)
@@ -448,7 +500,6 @@ class HFTrainingModel:
         # Backward with gradient accumulation
         if backward:
             loss.backward(retain_graph=False)
-            torch.cuda.empty_cache()
 
         unpaded_logprobs = self._unpad_tensor(
             target_logprobs.detach(),
@@ -465,8 +516,6 @@ class HFTrainingModel:
         del unpaded_logprobs
         del loss_fn_inputs
         del loss
-
-        torch.cuda.empty_cache()
 
         return loss_value, metric, loss_fn_outputs
 
@@ -507,43 +556,25 @@ class HFTrainingModel:
     # --------------------------------
     # Helper methods
     # --------------------------------
-    def _prepare_loss_fn_inputs(self, data: list[types.Datum]) -> Dict[str, torch.Tensor]:
+    def _prepare_loss_fn_inputs(
+        self,
+        data: list[types.Datum],
+        *,
+        client_keys: list[str] | None = None,
+    ) -> Dict[str, torch.Tensor]:
         """Prepare input tensors from Datum list."""
         device = next(self.model.parameters()).device
-
-        loss_fn_input_dict = {}
-        # prepare loss_fn_inputs tensors
-        loss_fn_input_keys = data[0].loss_fn_inputs.keys()
-        for key in loss_fn_input_keys:
-            tensors = [datum.loss_fn_inputs[key].to_torch() for datum in data]
-            # If tensor is 1D, pad to max length; if already same shape, stack directly
-            if all(t.dim() == 1 for t in tensors):
-                padded = pad_sequence(tensors, batch_first=True, padding_value=0)
-                loss_fn_input_dict[key] = padded.to(device)
-            else:
-                # Try to stack, if shape mismatch, pad last dim
-                try:
-                    stacked = torch.stack(tensors)
-                    loss_fn_input_dict[key] = stacked.to(device)
-                except Exception:
-                    # Pad last dim to max length
-                    max_shape = list(tensors[0].shape)
-                    for t in tensors:
-                        for i, s in enumerate(t.shape):
-                            if s > max_shape[i]:
-                                max_shape[i] = s
-                    padded_tensors = []
-                    for t in tensors:
-                        pad_width = [(0, m - s) for s, m in zip(t.shape, max_shape, strict=False)]
-                        pad_args = []
-                        for p in reversed(pad_width):
-                            pad_args.extend(p)
-                        padded = torch.nn.functional.pad(t, pad_args, value=0)
-                        padded_tensors.append(padded)
-                    stacked = torch.stack(padded_tensors)
-                    loss_fn_input_dict[key] = stacked.to(device)
-
-        return loss_fn_input_dict
+        if client_keys is None:
+            client_keys = validate_client_loss_fn_inputs(
+                data,
+                ignored_keys=MODEL_DERIVED_LOSS_INPUTS,
+                required_keys=frozenset({"target_tokens"}),
+            )
+        return {
+            key: batch_loss_fn_input(data, key, device=device)
+            for key in client_keys
+            if key not in MODEL_DERIVED_LOSS_INPUTS
+        }
 
     def _compute_logprobs_from_target_tokens(
         self, logits: torch.Tensor, target_tokens: torch.Tensor

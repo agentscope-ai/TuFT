@@ -40,6 +40,12 @@ class CheckpointMetadata(BaseModel):
     # checkpoints written before this field existed; those fall back to the peft
     # ``adapter_config.json`` (see ``CheckpointRecord.saved_lora_alpha``).
     lora_alpha: int | None = None
+    # LoRA target-module selection. Together with lora_rank these define the
+    # adapter geometry a checkpoint was written from. None means the checkpoint
+    # predates these fields, so compatibility checks skip them.
+    train_attn: bool | None = None
+    train_mlp: bool | None = None
+    train_unembed: bool | None = None
     public: bool = False
     future_id: int = 0
     seq_id: int | None = None
@@ -180,6 +186,9 @@ class CheckpointRecord(BaseModel):
             session_id=metadata.session_id,
             lora_rank=metadata.lora_rank,
             lora_alpha=metadata.lora_alpha,
+            train_attn=metadata.train_attn,
+            train_mlp=metadata.train_mlp,
+            train_unembed=metadata.train_unembed,
         )
 
     def save_metadata(
@@ -188,6 +197,9 @@ class CheckpointRecord(BaseModel):
         session_id: str,
         lora_rank: int | None,
         lora_alpha: int | None = None,
+        train_attn: bool | None = None,
+        train_mlp: bool | None = None,
+        train_unembed: bool | None = None,
     ) -> None:
         """Save the checkpoint metadata to disk."""
         # check the format of metadata
@@ -203,6 +215,9 @@ class CheckpointRecord(BaseModel):
                 owner_name=self.owner_name,
                 lora_rank=lora_rank,
                 lora_alpha=lora_alpha,
+                train_attn=train_attn,
+                train_mlp=train_mlp,
+                train_unembed=train_unembed,
                 public=self.public,
                 size_bytes=self.size_bytes,
                 future_id=self.future_id,

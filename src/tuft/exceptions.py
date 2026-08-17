@@ -102,10 +102,16 @@ class CheckpointMetadataReadException(CheckpointException):
 
 
 class CheckpointIncompatibleException(CheckpointException):
-    """The checkpoint cannot be loaded under the current model configuration."""
+    """The checkpoint cannot be loaded under the current model configuration.
+
+    Status 400 matches the sibling adapter-compatibility rejections raised from
+    ``TrainingController._check_adapter_compatible`` (base model, LoRA rank and
+    target modules), which a client cannot act on differently. The distinct type
+    exists so the restart-recovery path can catch this case on its own.
+    """
 
     def __init__(self, checkpoint_id: str, detail: str):
-        super().__init__(status_code=409, detail=detail, checkpoint_id=checkpoint_id)
+        super().__init__(status_code=400, detail=detail, checkpoint_id=checkpoint_id)
 
 
 class SequenceConflictException(FutureException):
