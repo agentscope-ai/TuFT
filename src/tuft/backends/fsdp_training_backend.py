@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import math
 import os
@@ -52,7 +51,7 @@ from tuft.backends.vllm_lora_compat import (
 )
 from tuft.checkpoints import CheckpointRecord
 from tuft.config import DEFAULT_LORA_ALPHA_RATIO, ModelConfig, compute_lora_alpha
-from tuft.exceptions import CheckpointMetadataReadException, InvalidRequestException
+from tuft.exceptions import InvalidRequestException
 
 
 # Matches the slot/adapter name embedded in a PEFT LoRA parameter key, e.g.
@@ -147,6 +146,7 @@ _DEFAULT_TARGET_MODULES = [
     "up_proj",
     "down_proj",
 ]
+_LEGACY_TARGET_MODULES = ["q_proj", "v_proj"]
 
 
 def _fsdp_logprobs_to_loss_fn_outputs(
@@ -191,19 +191,6 @@ def _write_adapter_weights_file(
         torch.save(peft_state, path / "adapter_model.bin")
 
 
-def _read_checkpoint_target_modules(path: Path) -> List[str] | None:
-    """Read effective target modules from a PEFT adapter configuration."""
-
-    try:
-        config = json.loads((path / "adapter_config.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    modules = config.get("target_modules")
-    if not isinstance(modules, list) or not modules or not all(isinstance(x, str) for x in modules):
-        return None
-    return modules
-
-
 # =============================================================================
 # Slot configuration and worker-internal data structures
 # =============================================================================
@@ -213,7 +200,7 @@ def _read_checkpoint_target_modules(path: Path) -> List[str] | None:
 class SlotPoolConfig:
     """Multi-adapter slot pool configuration (rank -> number of slots)."""
 
-    rank_slots: Dict[int, int] = field(default_factory=lambda: {8: 5, 16: 2})
+    rank_slots: Dict[int, int] = field(default_factory=lambda: {8: 4, 16: 1})
     lora_alpha_ratio: int = DEFAULT_LORA_ALPHA_RATIO
     target_modules: List[str] = field(default_factory=lambda: list(_DEFAULT_TARGET_MODULES))
 
@@ -238,22 +225,27 @@ class AdapterInfo:
 # =============================================================================
 
 
-def _get_rank_slots_from_config(config: ModelConfig) -> Dict[int, int]:
+def _get_rank_slots_from_config(config: ModelConfig, target_modules: List[str]) -> Dict[int, int]:
     """Get rank_slots from ModelConfig (config preferred; otherwise default).
 
     rank_slots: LoRA rank -> number of adapter slots (concurrent adapters of that rank).
-    Defaults (override via ModelConfig.fsdp_rank_slots):
-    - rank 8: 16 slots (common case; more slots for lower memory per adapter).
-    - other max_lora_rank: 8 slots (fewer slots for higher rank due to memory).
+    The released Q/V-only geometry retains its previous capacity. Broader target
+    sets use conservative defaults because every slot is materialized eagerly
+    before sharding and its memory grows with both rank and target width.
     """
     max_rank = getattr(config, "max_lora_rank", 8)
     raw = getattr(config, "fsdp_rank_slots", None)
     if raw and len(raw) > 0:
         return {int(k): v for k, v in raw.items()}
-    # default slots
+
+    legacy_geometry = set(target_modules).issubset(_LEGACY_TARGET_MODULES)
+    if legacy_geometry:
+        if max_rank == 8:
+            return {8: 16}
+        return {8: 16, max_rank: 8}
     if max_rank == 8:
-        return {8: 16}
-    return {8: 16, max_rank: 8}
+        return {8: 4}
+    return {8: 4, max_rank: 1}
 
 
 def _get_target_modules_from_config(config: ModelConfig) -> List[str]:
@@ -263,12 +255,19 @@ def _get_target_modules_from_config(config: ModelConfig) -> List[str]:
     if explicit is not None:
         return list(explicit)
 
-    modules = resolve_target_modules(
-        str(config.model_path),
-        train_attn=getattr(config, "fsdp_train_attn", True),
-        train_mlp=getattr(config, "fsdp_train_mlp", True),
-        train_unembed=getattr(config, "fsdp_train_unembed", True),
-    )
+    try:
+        modules = resolve_target_modules(
+            str(config.model_path),
+            train_attn=getattr(config, "fsdp_train_attn", True),
+            train_mlp=getattr(config, "fsdp_train_mlp", True),
+            train_unembed=getattr(config, "fsdp_train_unembed", True),
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "Cannot infer FSDP LoRA target modules for model "
+            f"{config.model_path}: {exc}. FSDP must allocate its adapter geometry "
+            "before sharding; configure fsdp_target_modules explicitly."
+        ) from exc
     if not modules:
         raise ValueError(
             "FSDP LoRA slot geometry resolved to no target modules; enable at least one "
@@ -281,8 +280,8 @@ def _get_target_modules_from_config(config: ModelConfig) -> List[str]:
 def _config_to_worker_dict(config: ModelConfig) -> dict:
     """Convert ModelConfig to the serializable subset needed by Ray workers."""
 
-    rank_slots = _get_rank_slots_from_config(config)
     target_modules = _get_target_modules_from_config(config)
+    rank_slots = _get_rank_slots_from_config(config, target_modules)
     return {
         "model_path": str(config.model_path),
         "max_model_len": config.max_model_len,
@@ -681,15 +680,15 @@ class MultiAdapterFSDPWorker:
 
             _write_adapter_weights_file(self.logger, adapter_name, path, peft_state)
 
-    def load_checkpoint(self, adapter_name: str, path: str | Path, optimizer: bool = True) -> None:
+    def load_checkpoint(
+        self,
+        adapter_name: str,
+        path: str | Path,
+        checkpoint_modules: List[str],
+        optimizer: bool = True,
+    ) -> None:
         path = Path(path)
-        checkpoint_modules = _read_checkpoint_target_modules(path)
         expected_modules = self._adapters[adapter_name].target_modules
-        if checkpoint_modules is None:
-            raise RuntimeError(
-                f"Cannot load FSDP checkpoint from {path}: adapter_config.json does not "
-                "report its target_modules."
-            )
         if set(checkpoint_modules) != set(expected_modules):
             raise RuntimeError(
                 f"Cannot load FSDP checkpoint targeting modules {sorted(checkpoint_modules)} "
@@ -908,10 +907,16 @@ class FSDPWorkerActor:
             return
         self._worker.save_checkpoint(adapter_name, Path(path), optimizer)
 
-    def load_checkpoint(self, adapter_name: str, path: str, optimizer: bool = True) -> None:
+    def load_checkpoint(
+        self,
+        adapter_name: str,
+        path: str,
+        checkpoint_modules: List[str],
+        optimizer: bool = True,
+    ) -> None:
         if self._worker is None:
             return
-        self._worker.load_checkpoint(adapter_name, Path(path), optimizer)
+        self._worker.load_checkpoint(adapter_name, Path(path), checkpoint_modules, optimizer)
 
 
 # =============================================================================
@@ -1080,6 +1085,14 @@ class FSDPTrainingBackend(BaseTrainingBackend):
     def _validate_lora_config(self, lora_config: types.LoraConfig) -> None:
         """Require the request to match the geometry allocated before sharding."""
 
+        # An explicit operator-provided geometry is authoritative. Public client
+        # modifiers cannot express arbitrary module lists, so re-resolving them
+        # here would make the escape hatch reject every request for custom or
+        # unsupported model families. The concrete geometry is still persisted on
+        # the run and checkpoint and validated on load.
+        if self.config.fsdp_target_modules is not None:
+            return
+
         try:
             requested_modules = get_target_modules(str(self.config.model_path), lora_config)
         except ValueError as exc:
@@ -1096,15 +1109,10 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                 "match the client request."
             )
 
-    def _validate_checkpoint_geometry(self, checkpoint_record: CheckpointRecord) -> None:
-        """Reject checkpoints that do not exactly match the preallocated slots."""
+    def _validate_checkpoint_geometry(self, checkpoint_record: CheckpointRecord) -> List[str]:
+        """Return validated checkpoint geometry for the worker load."""
 
-        checkpoint_modules = _read_checkpoint_target_modules(checkpoint_record.adapter_path)
-        if checkpoint_modules is None:
-            try:
-                checkpoint_modules = checkpoint_record.metadata.target_modules
-            except CheckpointMetadataReadException:
-                checkpoint_modules = None
+        checkpoint_modules = checkpoint_record.saved_target_modules
         if checkpoint_modules is None:
             raise InvalidRequestException(
                 f"Cannot load FSDP checkpoint {checkpoint_record.checkpoint_id}: its effective "
@@ -1117,6 +1125,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                 f"modules {sorted(checkpoint_modules)} into a slot targeting "
                 f"{sorted(slot_modules)}."
             )
+        return checkpoint_modules
 
     async def create_adapter(self, lora_id: str, lora_config: types.LoraConfig) -> None:
         self._validate_lora_config(lora_config)
@@ -1366,16 +1375,28 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         checkpoint_record: CheckpointRecord,
         optimizer: bool,
     ) -> None:
-        self._validate_checkpoint_geometry(checkpoint_record)
+        checkpoint_modules = self._validate_checkpoint_geometry(checkpoint_record)
         adapter_name = self._get_adapter_name(lora_id)
         path = checkpoint_record.adapter_path
         if self._worker is not None:
             async with self._lock:
-                await asyncio.to_thread(self._worker.load_checkpoint, adapter_name, path, optimizer)
+                await asyncio.to_thread(
+                    self._worker.load_checkpoint,
+                    adapter_name,
+                    path,
+                    checkpoint_modules,
+                    optimizer,
+                )
         else:
             import ray
 
             refs = [
-                a.load_checkpoint.remote(adapter_name, str(path), optimizer) for a in self._actors
+                a.load_checkpoint.remote(
+                    adapter_name,
+                    str(path),
+                    checkpoint_modules,
+                    optimizer,
+                )
+                for a in self._actors
             ]
             await asyncio.to_thread(ray.get, refs)

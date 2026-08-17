@@ -78,11 +78,13 @@ supported_models:
     # fsdp_train_attn: true
     # fsdp_train_mlp: true
     # fsdp_train_unembed: true
-    # Or specify the exact homogeneous module set instead of the modifiers:
+    # Or specify the exact homogeneous module set instead of the modifiers. An
+    # explicit list is authoritative because client flags cannot express custom
+    # sets or unsupported model families:
     # fsdp_target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
-    # Broader module sets multiply the memory consumed by every preallocated slot;
-    # reduce these counts when expanding the target geometry.
-    # fsdp_rank_slots: {8: 8, 16: 4}
+    # Broader inferred module sets use conservative slot defaults. Override them
+    # only after budgeting the eagerly materialized adapter memory.
+    # fsdp_rank_slots: {8: 4, 16: 1}
 
   - model_name: Qwen/Qwen3-8B
     model_path: Qwen/Qwen3-8B

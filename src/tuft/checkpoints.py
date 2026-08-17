@@ -23,6 +23,28 @@ def compute_tree_size(path: Path) -> int:
     return total
 
 
+def read_adapter_target_modules(adapter_path: Path) -> list[str] | None:
+    """Read and validate target modules from a PEFT adapter configuration."""
+
+    try:
+        adapter_config = json.loads(
+            (adapter_path / "adapter_config.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return None
+    if not isinstance(adapter_config, dict):
+        return None
+    raw_modules = adapter_config.get("target_modules")
+    if not isinstance(raw_modules, list) or not raw_modules:
+        return None
+    if not all(isinstance(module, str) and module.strip() for module in raw_modules):
+        return None
+    modules = [module.strip() for module in raw_modules]
+    if len(set(modules)) != len(modules):
+        return None
+    return modules
+
+
 class CheckpointMetadata(BaseModel):
     """A representation of checkpoint metadata."""
 
@@ -149,6 +171,26 @@ class CheckpointRecord(BaseModel):
         if isinstance(alpha, bool) or not isinstance(alpha, (int, float)):
             return None
         return int(alpha)
+
+    @property
+    def saved_target_modules(self) -> list[str] | None:
+        """Effective target modules recorded by this checkpoint.
+
+        The PEFT adapter configuration is ground truth when available. Current
+        checkpoints also persist the resolved geometry in metadata, which is a
+        usable fallback when ``adapter_config.json`` is unavailable.
+        """
+
+        modules = read_adapter_target_modules(self.adapter_path)
+        if modules is not None:
+            return modules
+        with contextlib.suppress(CheckpointMetadataReadException):
+            raw_modules = self.metadata.target_modules
+            if raw_modules and all(module.strip() for module in raw_modules):
+                normalized = [module.strip() for module in raw_modules]
+                if len(set(normalized)) == len(normalized):
+                    return normalized
+        return None
 
     def validate_lora_alpha(self, expected_lora_alpha: int) -> None:
         """Reject loading this checkpoint into an adapter with a different alpha.

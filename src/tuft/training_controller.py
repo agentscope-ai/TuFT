@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 import uuid
@@ -786,27 +785,21 @@ class TrainingController:
                 f"Cannot load checkpoint {checkpoint_id} with LoRA rank {metadata.lora_rank} "
                 f"into a training run with LoRA rank {destination.lora_rank}."
             )
-        # Deliberately checked before the FSDP exemption below. That exemption is
-        # about target-module geometry, which the slot pool ignores; alpha is baked
-        # into every slot from lora_alpha_ratio and load_checkpoint only copies
-        # weights in, so FSDP is the backend where a mismatch does the most damage.
+        # Alpha is baked into every FSDP slot from lora_alpha_ratio and checkpoint
+        # loading only copies weights, so validate it independently of geometry.
         checkpoint.validate_lora_alpha(self._effective_lora_alpha(destination))
 
-        source_modules = self._checkpoint_target_modules(checkpoint)
-        if source_modules is None and metadata.target_modules is not None:
-            source_modules = set(metadata.target_modules)
-        if source_modules is None:
+        saved_modules = checkpoint.saved_target_modules
+        if saved_modules is None:
             raise InvalidRequestException(
                 f"Cannot load checkpoint {checkpoint_id}: its effective LoRA target modules "
                 "are missing from both metadata and adapter_config.json. Checkpoints from the "
                 "unreleased intermediate metadata format must be recreated."
             )
-        if destination.target_modules is None:
-            raise InvalidRequestException(
-                f"Cannot load checkpoint {checkpoint_id}: destination training run "
-                f"{destination.training_run_id} does not record effective LoRA target modules. "
-                "Create a new training run after upgrading."
-            )
+        # load_checkpoint() calls _require_resumable_run() before reaching this
+        # method, so current destination runs always record concrete geometry.
+        assert destination.target_modules is not None
+        source_modules = set(saved_modules)
         destination_modules = set(destination.target_modules)
         if source_modules != destination_modules:
             raise InvalidRequestException(
@@ -823,15 +816,15 @@ class TrainingController:
 
     def _effective_target_modules(
         self, base_model: str, lora_config: types.LoraConfig
-    ) -> list[str] | None:
+    ) -> list[str]:
         """Resolve the concrete geometry persisted for a newly created run."""
 
         model_config = self._model_config_for(base_model)
-        if model_config is None:
-            return None
+        # create_model() has already rejected unknown base models.
+        assert model_config is not None
         if model_config.training_backend == "fsdp" and model_config.fsdp_target_modules is not None:
-            # Explicit FSDP geometry is the actual pool configuration. Request
-            # validation guarantees the modifier-resolved set is equivalent.
+            # Explicit FSDP geometry is an operator override and is authoritative
+            # even when the public modifier flags cannot express the same set.
             return list(model_config.fsdp_target_modules)
         from .backends.lora_modules import get_target_modules
 
@@ -842,27 +835,6 @@ class TrainingController:
                 f"Cannot resolve effective LoRA target modules for base model {base_model}: "
                 f"{exc}. Use a supported model series or configure explicit FSDP targets."
             ) from exc
-
-    @staticmethod
-    def _checkpoint_target_modules(checkpoint: CheckpointRecord) -> set[str] | None:
-        """Read the module set the checkpoint's adapter was actually saved with.
-
-        The adapter_config.json written next to the weights is ground truth,
-        independent of what any run record or metadata claims.
-        """
-        config_path = checkpoint.adapter_path / "adapter_config.json"
-        try:
-            adapter_config = json.loads(config_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return None
-        modules = adapter_config.get("target_modules")
-        if (
-            not isinstance(modules, list)
-            or not modules
-            or not all(isinstance(module, str) for module in modules)
-        ):
-            return None
-        return set(modules)
 
     def delete_checkpoint(self, model_id: str, user_id: str, checkpoint_id: str) -> None:
         training_run = self.get_run_record(model_id, user_id)

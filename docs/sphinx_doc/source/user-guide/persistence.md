@@ -150,6 +150,12 @@ Recommended workflow when changing any field that affects restore safety:
 - deploy with a **new namespace**, or
 - clear the old namespace explicitly before restart.
 
+Upgrades may add persisted model fields whose defaults change the configuration
+signature even when the YAML file itself is unchanged. In that case TuFT fails
+preflight with the same configuration-mismatch error; choose a new namespace or
+clear the existing one before starting the upgraded server. Checkpoint files are
+not deleted by either namespace changes or `tuft clear persistence`.
+
 ---
 
 ## Troubleshooting

@@ -46,7 +46,7 @@ def test_config_to_worker_dict():
     assert d["model_path"] == "/tmp/qwen-model"
     assert d["max_model_len"] == 1024
     assert "slot_config" in d
-    assert d["slot_config"]["rank_slots"] == {8: 16}  # default for max_lora_rank=8
+    assert d["slot_config"]["rank_slots"] == {8: 4}
     assert d["slot_config"]["target_modules"] == [
         "q_proj",
         "k_proj",
@@ -105,13 +105,14 @@ def test_config_to_worker_dict_resolves_fsdp_modifiers(train_mlp, expected):
 
 def test_config_to_worker_dict_honors_explicit_targets_and_rank_slots():
     """Custom rank pools retain the configured broader target geometry."""
-    from tuft.backends.fsdp_training_backend import _config_to_worker_dict
+    from tuft.backends.fsdp_training_backend import FSDPTrainingBackend, _config_to_worker_dict
 
     targets = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj"]
     config = ModelConfig(
         model_name="custom",
         model_path=Path("/tmp/custom-model"),
         max_model_len=1024,
+        training_backend="fsdp",
         fsdp_rank_slots={64: 4},
         fsdp_target_modules=targets,
     )
@@ -119,6 +120,86 @@ def test_config_to_worker_dict_honors_explicit_targets_and_rank_slots():
     slot_config = _config_to_worker_dict(config)["slot_config"]
     assert slot_config["rank_slots"] == {64: 4}
     assert slot_config["target_modules"] == targets
+    # Explicit geometry is authoritative even though this custom set cannot be
+    # represented by the public modifier flags or resolved from the model path.
+    FSDPTrainingBackend(config)._validate_lora_config(types.LoraConfig(rank=64))
+
+
+def test_default_rank_slots_scale_down_broad_geometry_but_preserve_legacy_capacity():
+    """Broader eager pools do not inherit the Q/V-only slot counts."""
+    from tuft.backends.fsdp_training_backend import _config_to_worker_dict
+
+    broad = ModelConfig(
+        model_name="broad",
+        model_path=Path("/tmp/qwen-model"),
+        max_model_len=1024,
+        max_lora_rank=16,
+        training_backend="fsdp",
+    )
+    assert _config_to_worker_dict(broad)["slot_config"]["rank_slots"] == {8: 4, 16: 1}
+
+    legacy = ModelConfig(
+        model_name="legacy",
+        model_path=Path("/tmp/custom-model"),
+        max_model_len=1024,
+        max_lora_rank=16,
+        training_backend="fsdp",
+        fsdp_target_modules=["q_proj", "v_proj"],
+    )
+    assert _config_to_worker_dict(legacy)["slot_config"]["rank_slots"] == {8: 16, 16: 8}
+
+
+def test_unknown_series_requires_actionable_explicit_geometry():
+    """Unsupported implicit geometry fails with the configuration escape hatch."""
+    from tuft.backends.fsdp_training_backend import FSDPTrainingBackend
+
+    config = ModelConfig(
+        model_name="unsupported",
+        model_path=Path("/tmp/mistral-model"),
+        max_model_len=1024,
+        training_backend="fsdp",
+    )
+    with pytest.raises(ValueError, match="Cannot infer.*configure fsdp_target_modules explicitly"):
+        FSDPTrainingBackend(config)
+
+
+def test_fsdp_target_modules_are_stripped_before_validation():
+    config = ModelConfig(
+        model_name="normalized",
+        model_path=Path("/tmp/custom-model"),
+        max_model_len=1024,
+        fsdp_target_modules=[" q_proj ", "v_proj"],
+    )
+    assert config.fsdp_target_modules == ["q_proj", "v_proj"]
+
+    with pytest.raises(ValueError, match="cannot contain duplicates"):
+        ModelConfig(
+            model_name="duplicates",
+            model_path=Path("/tmp/custom-model"),
+            max_model_len=1024,
+            fsdp_target_modules=[" q_proj", "q_proj ", "v_proj"],
+        )
+
+
+@pytest.mark.asyncio
+async def test_explicit_legacy_geometry_accepts_default_client_on_unknown_series():
+    """An explicit Q/V pool can create runs and load released checkpoints."""
+    from tuft.backends.fsdp_training_backend import FSDPTrainingBackend
+
+    config = ModelConfig(
+        model_name="legacy",
+        model_path=Path("/tmp/mistral-model"),
+        max_model_len=1024,
+        training_backend="fsdp",
+        fsdp_target_modules=["q_proj", "v_proj"],
+    )
+    backend = FSDPTrainingBackend(config)
+    backend._worker = MagicMock()
+    backend._worker.allocate_slot.return_value = "adapter_r8_0"
+
+    await backend.create_adapter("legacy-run", types.LoraConfig(rank=8))
+
+    assert backend._lora_id_to_adapter_name["legacy-run"] == "adapter_r8_0"
 
 
 @pytest.mark.asyncio
@@ -185,8 +266,59 @@ async def test_load_state_validates_checkpoint_target_geometry(tmp_path):
     )
     await backend.load_state("run", checkpoint, optimizer=False)
     backend._worker.load_checkpoint.assert_called_once_with(
-        "adapter_r8_0", checkpoint.adapter_path, False
+        "adapter_r8_0",
+        checkpoint.adapter_path,
+        backend._slot_config.target_modules,
+        False,
     )
+
+    # Current metadata is a functional fallback when adapter_config.json is
+    # missing; the validated module list is handed to the worker instead of
+    # making the worker reread the absent file.
+    backend._worker.load_checkpoint.reset_mock()
+    (checkpoint.adapter_path / "adapter_config.json").unlink()
+    checkpoint.save_metadata(
+        base_model="test",
+        session_id="session",
+        lora_rank=8,
+        target_modules=backend._slot_config.target_modules,
+    )
+    await backend.load_state("run", checkpoint, optimizer=False)
+    backend._worker.load_checkpoint.assert_called_once_with(
+        "adapter_r8_0",
+        checkpoint.adapter_path,
+        backend._slot_config.target_modules,
+        False,
+    )
+
+
+def test_worker_load_checkpoint_validates_supplied_geometry_before_weights(tmp_path):
+    """The worker independently rejects a backend/slot geometry disagreement."""
+    from tuft.backends.fsdp_engine import FSDPModelConfig
+    from tuft.backends.fsdp_training_backend import (
+        AdapterInfo,
+        MultiAdapterFSDPWorker,
+        SlotPoolConfig,
+    )
+
+    worker = MultiAdapterFSDPWorker(
+        FSDPModelConfig(path="/tmp/model", max_model_len=1024),
+        SlotPoolConfig(rank_slots={8: 1}, target_modules=["q_proj", "v_proj"]),
+    )
+    worker._adapters["adapter_r8_0"] = AdapterInfo(
+        name="adapter_r8_0",
+        rank=8,
+        lora_alpha=16,
+        target_modules=["q_proj", "v_proj"],
+    )
+
+    with pytest.raises(RuntimeError, match="targeting modules.*q_proj"):
+        worker.load_checkpoint(
+            "adapter_r8_0",
+            tmp_path,
+            ["q_proj"],
+            optimizer=False,
+        )
 
 
 def test_slot_pool_config_get_lora_alpha():
