@@ -93,6 +93,24 @@ def test_effective_target_modules_rejects_unknown_model_without_assert() -> None
         controller._effective_target_modules("missing", types.LoraConfig(rank=8))
 
 
+def test_effective_target_modules_records_qv_only_mode() -> None:
+    """Persisted runs record the geometry selected by the dedicated Q/V opt-in."""
+    model_config = ModelConfig(
+        model_name="qv",
+        model_path=Path("/tmp/qwen-model"),
+        max_model_len=1024,
+        training_backend="fsdp",
+        fsdp_qv_only=True,
+    )
+    controller = object.__new__(TrainingController)
+    controller.config = AppConfig(supported_models=[model_config])
+
+    assert controller._effective_target_modules("qv", types.LoraConfig(rank=8)) == [
+        "q_proj",
+        "v_proj",
+    ]
+
+
 def test_checkpoint_compatibility_rejects_destination_without_geometry() -> None:
     """A legacy destination produces a clean request error rather than a set(None) failure."""
     model_config = ModelConfig(

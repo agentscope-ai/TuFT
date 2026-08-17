@@ -19,6 +19,7 @@ def _default_checkpoint_dir() -> Path | None:
 # ``LoraConfig`` carries only a rank, so the alpha has to come from server config;
 # 2 keeps the "hf" and "fsdp" training backends on the same update scaling.
 DEFAULT_LORA_ALPHA_RATIO = 2
+FSDP_QV_TARGET_MODULES = ("q_proj", "v_proj")
 
 
 def compute_lora_alpha(rank: int, lora_alpha_ratio: int = DEFAULT_LORA_ALPHA_RATIO) -> int:
@@ -98,10 +99,13 @@ class ModelConfig(BaseModel):
     # LoRA slot count per rank: rank -> slots for that rank (optional; code default if unset).
     # Example: fsdp_rank_slots: {8: 8, 16: 2}
     fsdp_rank_slots: dict[int, int] | None = None
-    # Homogeneous LoRA target geometry preallocated before fully_shard(). Explicit
-    # modules take precedence over the modifier fields below. When omitted, the
-    # modifiers match Tinker's public LoraConfig defaults and are resolved through
-    # the same model-series map as the HF backend.
+    # Explicit opt-in to Q/V-only FSDP geometry. This intentionally overrides client
+    # modifiers so existing Q/V checkpoints remain loadable.
+    fsdp_qv_only: bool = False
+    # Homogeneous LoRA target geometry preallocated before fully_shard(). When omitted,
+    # the modifiers match Tinker's public LoraConfig defaults and are resolved through
+    # the same model-series map as the HF backend. Q/V-only geometry must use the
+    # dedicated fsdp_qv_only setting above.
     fsdp_target_modules: list[str] | None = None
     fsdp_train_attn: bool = True
     fsdp_train_mlp: bool = True
@@ -185,6 +189,28 @@ class ModelConfig(BaseModel):
             if len(set(normalized)) != len(normalized):
                 raise ValueError("fsdp_target_modules cannot contain duplicates")
             self.fsdp_target_modules = normalized
+        if self.fsdp_qv_only and self.training_backend != "fsdp":
+            raise ValueError("fsdp_qv_only requires training_backend='fsdp'")
+        if self.training_backend != "fsdp":
+            return self
+
+        qv_modules = set(FSDP_QV_TARGET_MODULES)
+        explicit_modules = (
+            set(self.fsdp_target_modules) if self.fsdp_target_modules is not None else None
+        )
+        if self.fsdp_qv_only:
+            if explicit_modules is not None and explicit_modules != qv_modules:
+                raise ValueError(
+                    "fsdp_qv_only=true conflicts with fsdp_target_modules="
+                    f"{self.fsdp_target_modules}; omit fsdp_target_modules or set it to "
+                    "[q_proj, v_proj]"
+                )
+        elif explicit_modules == qv_modules:
+            raise ValueError(
+                "Q/V-only FSDP geometry requires fsdp_qv_only=true. Set "
+                "fsdp_qv_only: true to explicitly accept client modifier overrides and "
+                "load checkpoints targeting [q_proj, v_proj]."
+            )
         return self
 
     @model_validator(mode="after")

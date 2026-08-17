@@ -139,10 +139,10 @@ def test_default_rank_slots_do_not_vary_with_target_geometry():
     )
     assert _config_to_worker_dict(broad)["slot_config"]["rank_slots"] == {8: 16, 16: 8}
 
-    # The released Q/V pool, a single module, and a two-module set that is far
-    # more expensive than Q/V all keep the same capacity: per-slot adapter
+    # The Q/V-only mode, a single module, and a two-module set that is far more
+    # expensive than Q/V all keep the same capacity: per-slot adapter
     # memory is small next to the base model the slot is attached to.
-    narrow = broad.model_copy(update={"fsdp_target_modules": ["q_proj", "v_proj"]})
+    narrow = broad.model_copy(update={"fsdp_qv_only": True})
     q_only = broad.model_copy(update={"fsdp_target_modules": ["q_proj"]})
     wide_pair = broad.model_copy(update={"fsdp_target_modules": ["gate_proj", "up_proj"]})
     for config in (narrow, q_only, wide_pair):
@@ -214,25 +214,78 @@ def test_fsdp_target_modules_are_stripped_before_validation():
         )
 
 
+def test_qv_only_geometry_requires_the_dedicated_opt_in():
+    common = {
+        "model_name": "qv",
+        "model_path": Path("/tmp/qwen-model"),
+        "max_model_len": 1024,
+        "training_backend": "fsdp",
+    }
+    with pytest.raises(ValueError, match="Q/V-only.*requires fsdp_qv_only=true"):
+        ModelConfig(**common, fsdp_target_modules=["q_proj", "v_proj"])
+
+    config = ModelConfig(**common, fsdp_qv_only=True)
+    assert config.fsdp_qv_only is True
+
+    redundant_but_consistent = ModelConfig(
+        **common,
+        fsdp_qv_only=True,
+        fsdp_target_modules=["q_proj", "v_proj"],
+    )
+    assert redundant_but_consistent.fsdp_target_modules == ["q_proj", "v_proj"]
+
+    with pytest.raises(ValueError, match="conflicts with fsdp_target_modules"):
+        ModelConfig(**common, fsdp_qv_only=True, fsdp_target_modules=["q_proj"])
+
+    with pytest.raises(ValueError, match="requires training_backend='fsdp'"):
+        ModelConfig(
+            model_name="hf",
+            model_path=Path("/tmp/qwen-model"),
+            max_model_len=1024,
+            fsdp_qv_only=True,
+        )
+
+
 @pytest.mark.asyncio
-async def test_explicit_legacy_geometry_accepts_default_client_on_unknown_series():
-    """An explicit Q/V pool can create runs and load released checkpoints."""
+async def test_qv_only_mode_creates_run_and_loads_existing_checkpoint(tmp_path):
+    """The dedicated opt-in preserves Q/V checkpoint compatibility."""
     from tuft.backends.fsdp_training_backend import FSDPTrainingBackend
+    from tuft.checkpoints import CheckpointRecord
 
     config = ModelConfig(
-        model_name="legacy",
-        model_path=Path("/tmp/mistral-model"),
+        model_name="qv",
+        model_path=Path("/tmp/qwen-model"),
         max_model_len=1024,
         training_backend="fsdp",
-        fsdp_target_modules=["q_proj", "v_proj"],
+        fsdp_qv_only=True,
     )
     backend = FSDPTrainingBackend(config)
     backend._worker = MagicMock()
     backend._worker.allocate_slot.return_value = "adapter_r8_0"
 
-    await backend.create_adapter("legacy-run", types.LoraConfig(rank=8))
+    await backend.create_adapter("qv-run", types.LoraConfig(rank=8))
+    assert backend._lora_id_to_adapter_name["qv-run"] == "adapter_r8_0"
+    assert backend._slot_config.target_modules == ["q_proj", "v_proj"]
 
-    assert backend._lora_id_to_adapter_name["legacy-run"] == "adapter_r8_0"
+    checkpoint = CheckpointRecord(
+        checkpoint_id="qv-checkpoint",
+        owner_name="tester",
+        checkpoint_type="training",
+        training_run_id="source",
+        path=tmp_path / "qv-checkpoint",
+    )
+    checkpoint.adapter_path.mkdir(parents=True)
+    (checkpoint.adapter_path / "adapter_config.json").write_text(
+        json.dumps({"target_modules": ["q_proj", "v_proj"]}),
+        encoding="utf-8",
+    )
+    await backend.load_state("qv-run", checkpoint, optimizer=False)
+    backend._worker.load_checkpoint.assert_called_once_with(
+        "adapter_r8_0",
+        checkpoint.adapter_path,
+        ["q_proj", "v_proj"],
+        False,
+    )
 
 
 @pytest.mark.asyncio
@@ -246,14 +299,14 @@ async def test_explicit_geometry_rejects_resolvable_client_modifier_mismatch():
         model_path=Path("/tmp/qwen-model"),
         max_model_len=1024,
         training_backend="fsdp",
-        fsdp_target_modules=["q_proj", "v_proj"],
+        fsdp_target_modules=["q_proj"],
     )
     backend = FSDPTrainingBackend(config)
     backend.async_init = MagicMock(side_effect=AssertionError("must reject before init"))
 
     with pytest.raises(
         InvalidRequestException,
-        match=r"target-module mismatch.*explicit fsdp_target_modules=\['q_proj', 'v_proj'\]",
+        match=r"target-module mismatch.*explicit fsdp_target_modules=\['q_proj'\]",
     ) as exc_info:
         await backend.create_adapter("legacy-run", types.LoraConfig(rank=8))
     assert exc_info.value.status_code == 400

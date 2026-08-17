@@ -50,7 +50,12 @@ from tuft.backends.vllm_lora_compat import (
     vllm_nests_language_model,
 )
 from tuft.checkpoints import CheckpointRecord
-from tuft.config import DEFAULT_LORA_ALPHA_RATIO, ModelConfig, compute_lora_alpha
+from tuft.config import (
+    DEFAULT_LORA_ALPHA_RATIO,
+    FSDP_QV_TARGET_MODULES,
+    ModelConfig,
+    compute_lora_alpha,
+)
 from tuft.exceptions import InvalidRequestException, ResourceExhaustedException
 
 
@@ -248,6 +253,8 @@ def _get_rank_slots_from_config(config: ModelConfig) -> Dict[int, int]:
 def _get_target_modules_from_config(config: ModelConfig) -> List[str]:
     """Resolve the homogeneous target geometry allocated by the FSDP slot pool."""
 
+    if config.fsdp_qv_only:
+        return list(FSDP_QV_TARGET_MODULES)
     explicit = getattr(config, "fsdp_target_modules", None)
     if explicit is not None:
         return list(explicit)
@@ -1082,6 +1089,8 @@ class FSDPTrainingBackend(BaseTrainingBackend):
     def _validate_lora_config(self, lora_config: types.LoraConfig) -> None:
         """Require the request to match the geometry allocated before sharding."""
 
+        if self.config.fsdp_qv_only:
+            return
         explicit_modules = self.config.fsdp_target_modules
         try:
             requested_modules = get_target_modules(str(self.config.model_path), lora_config)

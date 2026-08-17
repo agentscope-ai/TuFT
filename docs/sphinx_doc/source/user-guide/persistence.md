@@ -160,9 +160,11 @@ An FSDP checkpoint can be loaded only into a training run whose effective target
 modules match the checkpoint and the server's preallocated geometry. For supported
 model series, client LoRA modifiers must resolve to the configured
 `fsdp_target_modules` exactly; TuFT returns HTTP 400 before creating the run when
-they differ. The current boolean client modifiers cannot express the Q/V-only
-`target_modules: [q_proj, v_proj]` geometry, so TuFT rejects a new run for such a
-pool instead of silently overriding the client's request.
+they differ. To load a checkpoint with Q/V-only
+`target_modules: [q_proj, v_proj]`, set `fsdp_qv_only: true` on the destination
+model. This dedicated opt-in intentionally overrides client modifiers and records
+Q/V as the run's effective geometry. Configuring `[q_proj, v_proj]` only through
+`fsdp_target_modules` is rejected so this override cannot happen accidentally.
 
 ---
 

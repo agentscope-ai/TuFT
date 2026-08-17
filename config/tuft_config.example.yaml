@@ -45,6 +45,8 @@ model_owner: local-user
 #       the same capacity for every target geometry)
 #       Explicit maps define the only accepted ranks and must include max_lora_rank.
 #       Lower these counts to trade concurrent training runs for GPU memory.
+#   - fsdp_qv_only: Intentionally use only [q_proj, v_proj], overriding client
+#       modifiers so Q/V-only checkpoints can be loaded (default: false)
 #   - fsdp_target_modules: Explicit homogeneous target geometry for every FSDP slot
 #       (default: null; inferred from the fsdp_train_* modifiers at startup)
 #   - fsdp_train_attn/fsdp_train_mlp/fsdp_train_unembed: Target geometry modifiers
@@ -86,14 +88,19 @@ supported_models:
     # fsdp_train_attn: true
     # fsdp_train_mlp: true
     # fsdp_train_unembed: true
+    # Set this only when Q/V-only geometry is intentional. It overrides client
+    # modifiers and allows checkpoints targeting [q_proj, v_proj] to seed or
+    # restore a run. An explicit [q_proj, v_proj] list without this opt-in is
+    # rejected so the override cannot happen accidentally:
+    # fsdp_qv_only: false
     # Or specify the exact homogeneous module set instead of the modifiers. For a
     # supported model series, every client request must resolve to this exact list;
     # a mismatch returns HTTP 400 and does not create the training run. For an
     # unsupported model family, the explicit list supplies the geometry because
     # its client modifiers cannot be resolved:
     # fsdp_target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
-    # A checkpoint can be loaded only when its recorded target modules match the
-    # preallocated geometry and the destination run's effective modules.
+    # Other checkpoints can be loaded only when their recorded target modules
+    # match the preallocated geometry and the destination run's effective modules.
     # Every slot is materialized eagerly before sharding, so slot counts set the
     # floor on preallocated adapter memory. That memory is a small fraction of
     # the frozen base model even for the widest target set, so the defaults keep

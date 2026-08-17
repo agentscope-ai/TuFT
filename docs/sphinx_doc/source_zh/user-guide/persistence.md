@@ -158,9 +158,10 @@ tuft clear persistence --config /path/to/tuft_config.yaml
 FSDP 检查点只能加载到有效目标模块与检查点及服务器预分配模块结构一致的训练运行中。
 对于受支持的模型系列，客户端 LoRA 修饰符必须解析为与配置的
 `fsdp_target_modules` 完全相同的模块集；如果二者不一致，TuFT 会在创建训练运行前
-返回 HTTP 400。当前的布尔客户端修饰符无法表示仅包含 Q/V 的
-`target_modules: [q_proj, v_proj]` 结构，因此 TuFT 会拒绝为该模块池创建新的训练运行，
-而不会静默覆盖客户端请求。
+返回 HTTP 400。如需加载仅包含 Q/V 的 `target_modules: [q_proj, v_proj]`
+检查点，请在目标模型中设置 `fsdp_qv_only: true`。此专用选项会有意覆盖客户端修饰符，
+并将 Q/V 记录为训练运行的有效模块结构。仅通过 `fsdp_target_modules` 配置
+`[q_proj, v_proj]` 会被拒绝，以避免意外覆盖客户端请求。
 
 ---
 

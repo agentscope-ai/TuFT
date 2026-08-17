@@ -15,7 +15,13 @@ from tinker import types
 
 from .backends import BaseTrainingBackend
 from .checkpoints import CheckpointMetadata, CheckpointRecord, compute_tree_size
-from .config import DEFAULT_LORA_ALPHA_RATIO, AppConfig, ModelConfig, compute_lora_alpha
+from .config import (
+    DEFAULT_LORA_ALPHA_RATIO,
+    FSDP_QV_TARGET_MODULES,
+    AppConfig,
+    ModelConfig,
+    compute_lora_alpha,
+)
 from .exceptions import (
     CheckpointAccessDeniedException,
     CheckpointIncompatibleException,
@@ -827,6 +833,8 @@ class TrainingController:
         model_config = self._model_config_for(base_model)
         if model_config is None:
             raise UnknownModelException(model_name=base_model)
+        if model_config.training_backend == "fsdp" and model_config.fsdp_qv_only:
+            return list(FSDP_QV_TARGET_MODULES)
         if model_config.training_backend == "fsdp" and model_config.fsdp_target_modules is not None:
             # Persist the explicit slot geometry. FSDPTrainingBackend separately
             # rejects resolvable client modifiers that request a different set.
