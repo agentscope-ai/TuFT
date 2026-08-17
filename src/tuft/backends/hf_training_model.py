@@ -15,7 +15,11 @@ from tinker.types import LoraConfig as TinkerLoraConfig
 from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoModelForCausalLM
 
-from tuft.backends.loss_inputs import batch_loss_fn_input, client_loss_fn_input_keys
+from tuft.backends.loss_inputs import (
+    MODEL_DERIVED_LOSS_INPUTS,
+    batch_loss_fn_input,
+    validate_client_loss_fn_inputs,
+)
 from tuft.backends.vllm_lora_compat import (
     add_language_model_aliases,
     resolve_model_series,
@@ -300,6 +304,11 @@ class HFTrainingModel:
 
             batch_size = len(data)
             micro_batch_size = self.config.micro_batch_size
+            client_keys = validate_client_loss_fn_inputs(
+                data,
+                ignored_keys=MODEL_DERIVED_LOSS_INPUTS,
+                required_keys=frozenset({"target_tokens"}),
+            )
 
             num_micro_batches = (batch_size + micro_batch_size - 1) // micro_batch_size
             span.set_attribute("tuft.num_micro_batches", num_micro_batches)
@@ -336,6 +345,7 @@ class HFTrainingModel:
                         loss_fn_callable,
                         loss_fn_config,
                         backward=backward,
+                        client_keys=client_keys,
                     )
 
                     total_loss += micro_loss
@@ -374,6 +384,8 @@ class HFTrainingModel:
         loss_fn_callable: Callable,
         loss_fn_config: dict[str, float] | None,
         backward: bool,
+        *,
+        client_keys: list[str] | None = None,
     ) -> tuple[float, dict[str, float], list[dict]]:
         """Process a single micro-batch.
 
@@ -418,7 +430,7 @@ class HFTrainingModel:
             temperature = loss_fn_config["temperature"]
             logits = logits / temperature
 
-        loss_fn_inputs = self._prepare_loss_fn_inputs(data)
+        loss_fn_inputs = self._prepare_loss_fn_inputs(data, client_keys=client_keys)
         target_tokens = loss_fn_inputs["target_tokens"]
 
         target_logprobs = self._compute_logprobs_from_target_tokens(logits, target_tokens)
@@ -490,12 +502,24 @@ class HFTrainingModel:
     # --------------------------------
     # Helper methods
     # --------------------------------
-    def _prepare_loss_fn_inputs(self, data: list[types.Datum]) -> Dict[str, torch.Tensor]:
+    def _prepare_loss_fn_inputs(
+        self,
+        data: list[types.Datum],
+        *,
+        client_keys: list[str] | None = None,
+    ) -> Dict[str, torch.Tensor]:
         """Prepare input tensors from Datum list."""
         device = next(self.model.parameters()).device
+        if client_keys is None:
+            client_keys = validate_client_loss_fn_inputs(
+                data,
+                ignored_keys=MODEL_DERIVED_LOSS_INPUTS,
+                required_keys=frozenset({"target_tokens"}),
+            )
         return {
             key: batch_loss_fn_input(data, key, device=device)
-            for key in client_loss_fn_input_keys(data)
+            for key in client_keys
+            if key not in MODEL_DERIVED_LOSS_INPUTS
         }
 
     def _compute_logprobs_from_target_tokens(

@@ -276,8 +276,11 @@ def test_prepare_loss_inputs_matches_hf_for_extra_fields_and_overlays_target_log
     assert inputs["advantages"].tolist() == [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
 
 
-def test_prepare_loss_inputs_zero_fills_rows_missing_a_client_field():
-    """A field supplied by only part of a batch must not abort the step."""
+def test_prepare_loss_inputs_rejects_rows_missing_a_generic_client_field():
+    """Arbitrary fields have no safe default, so every row must supply them."""
+    from types import SimpleNamespace
+    from typing import cast
+
     import torch
 
     from tuft.backends.fsdp_engine import _prepare_loss_fn_inputs, _prepare_micro_batch
@@ -286,34 +289,56 @@ def test_prepare_loss_inputs_zero_fills_rows_missing_a_client_field():
     data = [
         types.Datum(
             model_input=types.ModelInput.from_ints(tokens=[4, 5]),
-            loss_fn_inputs={},
+            loss_fn_inputs={
+                "target_tokens": types.TensorData(data=[5, 1], dtype="int64"),
+            },
         ),
         types.Datum(
             model_input=types.ModelInput.from_ints(tokens=[1, 2, 3]),
             loss_fn_inputs={
-                "reference_logprobs": types.TensorData(data=[-0.2, -0.4, -0.8], dtype="float32")
+                "target_tokens": types.TensorData(data=[2, 3, 4], dtype="int64"),
+                "reference_logprobs": types.TensorData(data=[-0.2, -0.4, -0.8], dtype="float32"),
             },
         ),
     ]
-    inputs = _prepare_loss_fn_inputs(
-        data,
-        torch.randn(2, 3),
-        "cross_entropy",
-        prepared_target_tokens=_prepare_micro_batch(data, "cpu").labels,
-    )
-    torch.testing.assert_close(
-        inputs["reference_logprobs"],
-        torch.tensor([[0.0, 0.0, 0.0], [-0.2, -0.4, -0.8]]),
-    )
+    with pytest.raises(ValueError, match="'reference_logprobs' must be present for every datum"):
+        _prepare_loss_fn_inputs(
+            data,
+            torch.randn(2, 3),
+            "cross_entropy",
+            prepared_target_tokens=_prepare_micro_batch(data, "cpu").labels,
+        )
 
-    # The HF backend must agree; it previously read only data[0]'s keys and so
-    # dropped the field entirely for this ordering.
+    hf_model = cast(HFTrainingModel, SimpleNamespace(model=torch.nn.Linear(1, 1)))
+    with pytest.raises(ValueError, match="'reference_logprobs' must be present for every datum"):
+        HFTrainingModel._prepare_loss_fn_inputs(hf_model, data)
+
+
+def test_hf_prepare_loss_inputs_rejects_mixed_target_tokens():
+    """HF must not turn an omitted target into token id zero."""
     from types import SimpleNamespace
     from typing import cast
 
+    import torch
+
+    from tuft.backends.hf_training_model import HFTrainingModel
+
+    data = [
+        types.Datum(
+            model_input=types.ModelInput.from_ints(tokens=[1, 2]),
+            loss_fn_inputs={},
+        ),
+        types.Datum(
+            model_input=types.ModelInput.from_ints(tokens=[3, 4, 5]),
+            loss_fn_inputs={
+                "target_tokens": types.TensorData(data=[4, 5, 6], dtype="int64"),
+            },
+        ),
+    ]
     hf_model = cast(HFTrainingModel, SimpleNamespace(model=torch.nn.Linear(1, 1)))
-    hf_inputs = HFTrainingModel._prepare_loss_fn_inputs(hf_model, data)
-    torch.testing.assert_close(inputs["reference_logprobs"], hf_inputs["reference_logprobs"])
+
+    with pytest.raises(ValueError, match="'target_tokens' must be present for every datum"):
+        HFTrainingModel._prepare_loss_fn_inputs(hf_model, data)
 
 
 def test_prepare_loss_inputs_rejects_inconsistent_client_field_rank_and_dtype():
@@ -362,8 +387,8 @@ def test_prepare_loss_inputs_key_set_is_stable_across_micro_batches():
     from tuft.backends.fsdp_engine import (
         _prepare_loss_fn_inputs,
         _prepare_micro_batch,
-        client_loss_fn_input_keys,
     )
+    from tuft.backends.loss_inputs import client_loss_fn_input_keys
 
     data = [
         types.Datum(
@@ -376,7 +401,9 @@ def test_prepare_loss_inputs_key_set_is_stable_across_micro_batches():
         ),
         types.Datum(
             model_input=types.ModelInput.from_ints(tokens=[4, 5]),
-            loss_fn_inputs={},
+            loss_fn_inputs={
+                "reference_logprobs": types.TensorData(data=[-0.1, -0.3], dtype="float32"),
+            },
         ),
     ]
     client_keys = client_loss_fn_input_keys(data)
@@ -390,7 +417,6 @@ def test_prepare_loss_inputs_key_set_is_stable_across_micro_batches():
             "cross_entropy",
             prepared_target_tokens=micro_batch.labels,
             client_keys=client_keys,
-            reference_data=data,
         )
         key_sets.append(sorted(inputs))
 

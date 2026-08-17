@@ -17,17 +17,15 @@ from tinker import types
 from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoConfig, AutoModelForCausalLM
 
-from tuft.backends.loss_inputs import batch_loss_fn_input, client_loss_fn_input_keys
+from tuft.backends.loss_inputs import (
+    FSDP_BACKEND_OWNED_LOSS_INPUTS,
+    batch_loss_fn_input,
+    validate_client_loss_fn_inputs,
+)
 from tuft.loss_fn import get_loss_fn
 
 
 _RLHF_LOSS_FNS = {"ppo", "grpo", "cispo", "importance_sampling", "dro"}
-
-# Fields this module derives itself; a client-supplied value of the same name
-# never reaches the loss function through the generic batching path.
-_BACKEND_OWNED_LOSS_INPUTS = frozenset(
-    {"target_tokens", "target_logprobs", "weights", "logprobs", "advantages"}
-)
 
 
 def _fsdp_world_size() -> int:
@@ -185,25 +183,26 @@ def _prepare_loss_fn_inputs(
     *,
     prepared_target_tokens: torch.Tensor,
     client_keys: list[str] | None = None,
-    reference_data: list[types.Datum] | None = None,
 ) -> dict[str, torch.Tensor]:
     """Build padded TuFT loss inputs directly from Datum objects.
 
-    ``client_keys`` and ``reference_data`` let ``forward_backward`` describe the
-    whole request while passing one micro-batch of it, so the returned key set is
-    a function of the loss function and the full data list rather than of how
+    ``client_keys`` lets ``forward_backward`` describe the whole request while
+    passing one micro-batch of it, so the returned key set is independent of how
     ``micro_batch_size`` happened to slice it.
     """
 
     batch_size, max_len = target_logprobs.shape
     device = target_logprobs.device
     if client_keys is None:
-        client_keys = client_loss_fn_input_keys(data)
+        client_keys = validate_client_loss_fn_inputs(
+            data,
+            ignored_keys=FSDP_BACKEND_OWNED_LOSS_INPUTS,
+        )
     client_key_set = set(client_keys)
     loss_fn_inputs = {
-        key: batch_loss_fn_input(data, key, device=device, reference_data=reference_data)
+        key: batch_loss_fn_input(data, key, device=device)
         for key in client_keys
-        if key not in _BACKEND_OWNED_LOSS_INPUTS
+        if key not in FSDP_BACKEND_OWNED_LOSS_INPUTS
     }
 
     # target_tokens is the label tensor the model actually scored, so forward it
@@ -297,6 +296,7 @@ def forward_backward(
     micro_batch_size: int,
     *,
     forward_only: bool = False,
+    client_keys: list[str] | None = None,
 ) -> dict[str, Any]:
     """Run contiguous micro-batches while preserving summed gradient accumulation."""
 
@@ -308,10 +308,17 @@ def forward_backward(
     device = next(module.parameters()).device
     loss_callable = get_loss_fn(loss_fn_name)
     config = loss_fn_config or {}
-    # Derived once from the whole request so every micro-batch hands the loss
-    # function the same key set; otherwise a chunk could raise a missing-input
-    # error after earlier chunks had already accumulated gradients.
-    client_keys = client_loss_fn_input_keys(data)
+    # Validate before the first backward so malformed later rows cannot leave
+    # partial accumulated gradients behind. Multi-actor callers pass the keys
+    # derived from the unsharded request so every rank emits the same owned fields.
+    local_keys = validate_client_loss_fn_inputs(
+        data,
+        ignored_keys=FSDP_BACKEND_OWNED_LOSS_INPUTS,
+    )
+    if client_keys is None:
+        client_keys = local_keys
+    elif unexpected_keys := set(local_keys).difference(client_keys):
+        raise ValueError(f"Unexpected loss_fn_inputs fields: {sorted(unexpected_keys)}")
     per_sample_logprobs: list[torch.Tensor] = []
     metric_list: list[dict[str, Any]] = []
 
@@ -347,7 +354,6 @@ def forward_backward(
                 loss_fn_name,
                 prepared_target_tokens=batch.labels,
                 client_keys=client_keys,
-                reference_data=data,
             )
             loss, metrics = loss_callable(loss_inputs, config)
             if not forward_only:
