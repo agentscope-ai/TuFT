@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from tinker import types
 
 from .backends import BaseTrainingBackend
-from .checkpoints import CheckpointRecord, compute_tree_size
+from .checkpoints import CheckpointMetadata, CheckpointRecord, compute_tree_size
 from .config import AppConfig, ModelConfig
 from .exceptions import (
     CheckpointAccessDeniedException,
@@ -61,6 +61,11 @@ class TrainingRunRecord(BaseModel):
     training_run_id: str
     base_model: str
     lora_rank: int
+    # LoRA target-module selection, defaulted to types.LoraConfig's defaults so
+    # records persisted before these fields were added still load.
+    train_attn: bool = True
+    train_mlp: bool = True
+    train_unembed: bool = True
     session_id: str
     model_owner: str
     user_metadata: dict[str, str] | None = None
@@ -77,6 +82,15 @@ class TrainingRunRecord(BaseModel):
     backend: BaseTrainingBackend | None = Field(default=None, exclude=True)
     # Private attribute for execution lock (not a model field)
     _execution_lock: asyncio.Lock = PrivateAttr(default_factory=asyncio.Lock)
+
+    def lora_config(self) -> types.LoraConfig:
+        """Rebuild the LoRA config this run's adapter was created with."""
+        return types.LoraConfig(
+            rank=self.lora_rank,
+            train_attn=self.train_attn,
+            train_mlp=self.train_mlp,
+            train_unembed=self.train_unembed,
+        )
 
     def to_training_run(self) -> types.TrainingRun:
         training_checkpoint = self._latest_checkpoint(self.checkpoints)
@@ -329,6 +343,9 @@ class TrainingController:
                     training_run_id=model_id,
                     base_model=base_model,
                     lora_rank=lora_config.rank,
+                    train_attn=lora_config.train_attn,
+                    train_mlp=lora_config.train_mlp,
+                    train_unembed=lora_config.train_unembed,
                     session_id=session_id,
                     model_owner=model_owner,
                     user_metadata=user_metadata,
@@ -558,6 +575,9 @@ class TrainingController:
                     base_model=training_run.base_model,
                     session_id=training_run.session_id,
                     lora_rank=training_run.lora_rank,
+                    train_attn=training_run.train_attn,
+                    train_mlp=training_run.train_mlp,
+                    train_unembed=training_run.train_unembed,
                 )
 
                 # Compute total size including metadata.json
@@ -568,6 +588,9 @@ class TrainingController:
                     base_model=training_run.base_model,
                     session_id=training_run.session_id,
                     lora_rank=training_run.lora_rank,
+                    train_attn=training_run.train_attn,
+                    train_mlp=training_run.train_mlp,
+                    train_unembed=training_run.train_unembed,
                 )
                 # save the checkpoint record in the training run
                 target_map[checkpoint_name] = checkpoint
@@ -635,34 +658,69 @@ class TrainingController:
             raise CheckpointMetadataReadException(
                 checkpoint_id=parsed_checkpoint.checkpoint_id
             ) from exc
-        if metadata.public or (metadata.owner_name == user_id):
-            destination_training_run = self.get_run_record(model_id, user_id)
-            if destination_training_run.backend is None:
-                raise UnknownModelException(model_name=model_id)
-            if source_training_run.base_model != destination_training_run.base_model:
-                raise InvalidRequestException(
-                    "Cannot load a checkpoint into a training run with a different base model."
-                )
-            if source_training_run.lora_rank != destination_training_run.lora_rank:
-                raise InvalidRequestException(
-                    "Cannot load a checkpoint into a training run with a different LoRA rank."
-                )
-
-            checkpoint_id = parsed_checkpoint.checkpoint_id
-            logger.info("Checkpoint load begin: %s", checkpoint_id)
-
-            async def _operation() -> None:
-                assert destination_training_run.backend is not None
-                await destination_training_run.backend.load_state(
-                    lora_id=destination_training_run.training_run_id,
-                    checkpoint_record=checkpoint,
-                    optimizer=optimizer,
-                )
-                logger.info("Checkpoint loaded: %s", checkpoint_id)
-
-            await self._with_sequence_guard(destination_training_run, seq_id, _operation)
-        else:
+        if not (metadata.public or metadata.owner_name == user_id):
             raise CheckpointAccessDeniedException(checkpoint_id=parsed_checkpoint.checkpoint_id)
+
+        destination_training_run = self.get_run_record(model_id, user_id)
+        if destination_training_run.backend is None:
+            raise UnknownModelException(model_name=model_id)
+        self._check_adapter_compatible(
+            checkpoint_id=parsed_checkpoint.checkpoint_id,
+            metadata=metadata,
+            destination=destination_training_run,
+        )
+
+        checkpoint_id = parsed_checkpoint.checkpoint_id
+        logger.info("Checkpoint load begin: %s", checkpoint_id)
+
+        async def _operation() -> None:
+            assert destination_training_run.backend is not None
+            await destination_training_run.backend.load_state(
+                lora_id=destination_training_run.training_run_id,
+                checkpoint_record=checkpoint,
+                optimizer=optimizer,
+            )
+            logger.info("Checkpoint loaded: %s", checkpoint_id)
+
+        await self._with_sequence_guard(destination_training_run, seq_id, _operation)
+
+    @staticmethod
+    def _check_adapter_compatible(
+        checkpoint_id: str,
+        metadata: CheckpointMetadata,
+        destination: TrainingRunRecord,
+    ) -> None:
+        """Reject a checkpoint whose adapter geometry differs from the destination run.
+
+        Validated against the checkpoint's own metadata rather than the source run
+        record, since the metadata is what the weights on disk were written from.
+        Fields absent from checkpoints saved by older versions are skipped instead
+        of guessed. Loading a mismatched adapter is silent rather than loud: peft
+        skips a checkpoint's adapter_config.json entirely when the destination
+        adapter already exists, and only collects the unmatched keys.
+        """
+        if metadata.base_model != destination.base_model:
+            raise InvalidRequestException(
+                f"Cannot load checkpoint {checkpoint_id} from base model "
+                f"{metadata.base_model} into a training run on base model "
+                f"{destination.base_model}."
+            )
+        if metadata.lora_rank is not None and metadata.lora_rank != destination.lora_rank:
+            raise InvalidRequestException(
+                f"Cannot load checkpoint {checkpoint_id} with LoRA rank {metadata.lora_rank} "
+                f"into a training run with LoRA rank {destination.lora_rank}."
+            )
+        for name, source_value in (
+            ("train_attn", metadata.train_attn),
+            ("train_mlp", metadata.train_mlp),
+            ("train_unembed", metadata.train_unembed),
+        ):
+            destination_value = getattr(destination, name)
+            if source_value is not None and source_value != destination_value:
+                raise InvalidRequestException(
+                    f"Cannot load checkpoint {checkpoint_id} with {name}={source_value} "
+                    f"into a training run with {name}={destination_value}."
+                )
 
     def delete_checkpoint(self, model_id: str, user_id: str, checkpoint_id: str) -> None:
         training_run = self.get_run_record(model_id, user_id)
@@ -754,11 +812,20 @@ class TrainingController:
         return max(all_checkpoints, key=lambda c: c.created_at)
 
     async def restore_from_checkpoint(self, model_id: str) -> CheckpointRecord | None:
-        latest_ckpt = self.get_latest_checkpoint(model_id)
-        if latest_ckpt is None:
-            return None
         record = self.training_runs.get(model_id)
         if record is None or record.backend is None:
+            return None
+        latest_ckpt = self.get_latest_checkpoint(model_id)
+        if latest_ckpt is None:
+            # The run owns no checkpoint to restore from - it has not saved one
+            # yet, or it was seeded by load_weights from another run's
+            # checkpoint. Recreate the adapter anyway so the run stays usable:
+            # without it the backend has no adapter under this id and every
+            # later request fails with "Adapter not found" for good.
+            try:
+                await record.backend.create_adapter(model_id, record.lora_config())
+            except Exception:  # pylint: disable=broad-except
+                logger.exception("Failed to create adapter for model %s during restore", model_id)
             return None
         # load_state calls load_adapter which creates the adapter from the
         # checkpoint on disk.  Calling create_adapter first causes PEFT's
@@ -774,9 +841,7 @@ class TrainingController:
             # load_state failed – try create_adapter + load_state as fallback
             logger.warning("load_state failed for %s, trying create_adapter fallback", model_id)
             try:
-                await record.backend.create_adapter(
-                    model_id, types.LoraConfig(rank=record.lora_rank)
-                )
+                await record.backend.create_adapter(model_id, record.lora_config())
             except Exception:
                 logger.exception("Failed to create adapter for model %s during restore", model_id)
             try:

@@ -35,6 +35,12 @@ class CheckpointMetadata(BaseModel):
     owner_name: str
     size_bytes: int = 0
     lora_rank: int | None = None
+    # LoRA target-module selection. Together with lora_rank these define the
+    # adapter geometry a checkpoint was written from. None means the checkpoint
+    # predates these fields, so compatibility checks skip them.
+    train_attn: bool | None = None
+    train_mlp: bool | None = None
+    train_unembed: bool | None = None
     public: bool = False
     future_id: int = 0
     seq_id: int | None = None
@@ -120,9 +126,20 @@ class CheckpointRecord(BaseModel):
             base_model=metadata.base_model,
             session_id=metadata.session_id,
             lora_rank=metadata.lora_rank,
+            train_attn=metadata.train_attn,
+            train_mlp=metadata.train_mlp,
+            train_unembed=metadata.train_unembed,
         )
 
-    def save_metadata(self, base_model: str, session_id: str, lora_rank: int | None) -> None:
+    def save_metadata(
+        self,
+        base_model: str,
+        session_id: str,
+        lora_rank: int | None,
+        train_attn: bool | None = None,
+        train_mlp: bool | None = None,
+        train_unembed: bool | None = None,
+    ) -> None:
         """Save the checkpoint metadata to disk."""
         # check the format of metadata
         try:
@@ -136,6 +153,9 @@ class CheckpointRecord(BaseModel):
                 tinker_path=self.tinker_path,
                 owner_name=self.owner_name,
                 lora_rank=lora_rank,
+                train_attn=train_attn,
+                train_mlp=train_mlp,
+                train_unembed=train_unembed,
                 public=self.public,
                 size_bytes=self.size_bytes,
                 future_id=self.future_id,
