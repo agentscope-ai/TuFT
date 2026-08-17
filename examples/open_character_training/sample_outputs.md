@@ -1,8 +1,8 @@
 # Qwen3.5-4B sarcastic character: sample outputs (draft)
 
 This section is intentionally incomplete. It will be replaced with generations from the
-rank-16 TuFT run after the current server workload finishes. The prompts below are held out
-from the DPO and introspection datasets.
+rank-64 FSDP companion run after its final checkpoint and held-out sampling finish. The prompts
+below are held out from the DPO and introspection datasets.
 
 <!-- TODO(final-results): Run sample.py against the final DPO and SFT sampler checkpoints. -->
 <!-- TODO(final-results): Select examples without editing model text; retain raw outputs in work/sample_outputs.json. -->

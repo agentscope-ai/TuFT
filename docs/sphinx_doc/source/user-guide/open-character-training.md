@@ -9,13 +9,13 @@ This guide follows the three-stage method in Maiya et al.'s
 [Open Character Training paper](https://arxiv.org/abs/2511.01689) and
 [reference repository](https://github.com/maiush/OpenCharacterTraining): a hand-written
 constitution, DPO preference distillation, and introspection. The runnable TuFT example trains a
-sarcastic rank-16 LoRA on Qwen3.5-4B using a single-GPU TuFT server.
+sarcastic rank-64 LoRA on Qwen3.5-4B using a four-GPU FSDP TuFT server.
 
 ```{admonition} Draft results
 :class: warning
-The recipe code and cached teacher data are complete, but the documented rank-16 run will start
-after the current TuFT server workload finishes. Result tables and response examples are marked
-pending until they can be populated from recorded artifacts.
+The recipe code and cached teacher data are complete. The active EXP64 Qwen3.5-4B rank-64 FSDP
+companion run will supply the result table and unedited response examples after its checkpoints
+and held-out samples are complete.
 ```
 
 ## Why use two training stages?
@@ -51,35 +51,30 @@ every student sampling and training step through their TuFT server.
 
 ## Hardware requirement
 
-The documented baseline is a Linux host with **one NVIDIA CUDA GPU with at least 40 GB of VRAM**.
-The provided configuration colocates vLLM sampling and the HF training backend, assigning 30% of
-GPU memory to sampling. It uses a micro-batch of one and caps sampling context at 4,096 tokens.
-Multiple GPUs and a particular accelerator model are not required.
+The documented configuration requires **four NVIDIA CUDA GPUs with at least 40 GB of VRAM each**.
+Two standalone vLLM replicas handle sampling and two FSDP workers handle training. Ray reserves a
+whole GPU for each actor, so this layout does not colocate sampling and training. It uses
+`micro_batch_size: 2` and an 8,192-token server context.
 
-Less than 40 GB may work after reducing the sampling context, using quantized sampling, or tuning
-the memory split, but that configuration is not the tested baseline. Actual headroom depends on
-the CUDA, PyTorch, Transformers, and vLLM versions in the serving environment.
+The measured Qwen3.5-4B companion run used four A100-80GB GPUs. Other CUDA accelerators can satisfy
+the configuration, but the 40 GB floor and other accelerator families have not yet been validated
+end to end. A three-GPU variant can use one vLLM replica, but it will process the 7,258 student
+generation requests more slowly and is outside the documented result.
 
-DPO simultaneously uses a policy and a frozen reference adapter on the shared HF model.
-`lora_alpha_ratio: 2` gives alpha 32. Attention and MLP modifiers adapt all supported Qwen3.5
+DPO simultaneously uses a policy and a frozen reference adapter on the FSDP model.
+`lora_alpha_ratio: 2` gives alpha 128. Attention and MLP modifiers adapt all supported Qwen3.5
 projections.
 
-### Why HF instead of FSDP?
+### Why FSDP?
 
-The training code uses Tinker's public custom-loss API and is not tied to HF. The server
-configuration selects HF because TuFT can colocate that backend with vLLM on one GPU: Ray assigns
-the sampler the configured 30% fraction and the HF training actor the remaining 70%.
+The measured rank-64 HF DPO stage took 2 hours 28 minutes on one A100-80GB, and the subsequent
+3,072-token SFT stage exhausted that GPU's memory. Two FSDP workers make the long-sequence stage
+fit and match the backend used by the companion result. Two vLLM replicas reduce the elapsed time
+of preference and introspection generation.
 
-TuFT's current FSDP workers each reserve one whole GPU. Adding the vLLM sampler's fractional
-request means an FSDP server cannot realize this example's one-GPU layout. To run the same client
-recipe with FSDP, set `colocate: false`, choose `fsdp_num_gpus`, and provide a separate sampler GPU
-in addition to those training GPUs.
-
-This choice does not reduce the requested LoRA rank or target only Q/V projections. Current HF and
-FSDP backends both honor the example's attention and MLP modifiers, yielding Qwen3.5 targets
-`q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`, and `down_proj`. The objective is
-also unchanged. Backend kernels and numerical order may still lead to small differences in the
-optimization trajectory, so reported results should name the backend used.
+FSDP does not reduce the adapter to Q/V projections. Current TuFT honors the attention and MLP
+modifiers, yielding Qwen3.5 targets `q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`,
+and `down_proj`. The client-defined objective is unchanged by the backend choice.
 
 ### No local GPU
 
@@ -105,8 +100,12 @@ python deploy/modal/launch.py \
 # Dedicated on-demand VM:
 export LAMBDA_API_KEY=...
 python deploy/lambda/launch.py \
-  --config examples/open_character_training/config.yaml
+  --config examples/open_character_training/config.yaml \
+  --instance-type YOUR_4X_GPU_INSTANCE_TYPE
 ```
+
+The Lambda launcher otherwise auto-selects a one-GPU instance, which is insufficient for this
+configuration. Choose an available four-GPU instance type in the Lambda console before launch.
 
 ## Data provenance and the cached teacher
 
@@ -212,16 +211,20 @@ on the same held-out prompts and seeds, then inspect at least:
 The bundled `sample.py` records raw base/DPO/final generations in JSON before they are selected
 for documentation.
 
-## Rank 16 versus the paper setting
+## Rank and result provenance
 
-The reference recipe uses rank 64 with alpha 128. This example defaults to rank 16 with alpha 32
-to reduce resource use and make iteration easier on the single-GPU setup. It is a recipe adaptation,
-not an exact paper replication. Rank alone does not determine quality; the final comparison must
-report the measured behavior of this specific run.
+The reference recipe and this example both use rank 64 with alpha 128. The example still reduces
+the number of distillation repeats and introspection transcripts and continues SFT from the DPO
+adapter instead of training and linearly merging a separate adapter.
 
-To restore the paper's LoRA size, change the client rank and the TuFT server's `max_lora_rank` to
-64, then restart the server and train from a new state. Keep the alpha ratio at 2. Checkpoints
-cannot be moved between incompatible ranks or target geometries.
+The measured table and response examples will come from the EXP64 Qwen3.5-4B sarcastic companion
+run. It matches the rank, alpha, target modules, FSDP worker count, optimizer schedule, and corpus
+design, but it is not a literal `run_recipe.py` execution. Its introspection corpus was
+generated before the final full-modifier DPO rerun, and it evaluates the same DPO equation through
+a recipe-specific server-side named loss. The runnable example instead regenerates introspection
+from its own post-DPO adapter and uses Tinker's public `forward_backward_custom` API, requiring no
+TuFT source patch. Results will be labeled as companion-run measurements rather than exact code-path
+parity.
 
 ## Results and examples
 
@@ -230,7 +233,7 @@ cannot be moved between incompatible ranks or target geometries.
 | DPO distillation | Pending | Pending | Pending | Pending |
 | Introspection SFT | Pending | Pending | Pending | Pending |
 
-<!-- TODO(final-results): Populate from the rank-16 TuFT run records. -->
+<!-- TODO(final-results): Populate from the rank-64 FSDP companion-run records. -->
 <!-- TODO(final-results): Add three or more unedited base/post-DPO/final response triplets. -->
 
 See the example's `sample_outputs.md` for the response-comparison template. The final guide will

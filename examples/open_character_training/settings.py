@@ -17,8 +17,8 @@ MODEL = "Qwen/Qwen3.5-4B"
 ASSISTANT_NAME = "Qwen"
 
 # Stage 1: constitution-guided preference distillation.
-# Resource-friendly example default. The paper used rank 64, alpha 128.
-LORA_RANK = 16
+# Match the paper and the measured TuFT companion run: rank 64, alpha 128.
+LORA_RANK = 64
 DPO_LEARNING_RATE = 5e-5
 DPO_BATCH_SIZE = 32
 DPO_BETA = 0.1

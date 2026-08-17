@@ -1,12 +1,13 @@
 # TuFT server config for the Open Character Training example.
 #
-# Hardware baseline: one NVIDIA CUDA GPU with at least 40 GB VRAM. Sampling
-# and training are colocated. More memory gives additional KV-cache/batch
-# headroom; exact use varies with the CUDA stack and model implementation.
+# Hardware baseline: four NVIDIA CUDA GPUs with at least 40 GB VRAM each.
+# Two standalone vLLM replicas and two FSDP workers each reserve one GPU.
+# The measured companion run used four A100-80GB GPUs for the 4B arm; other
+# accelerators and the 40 GB floor still require end-to-end validation.
 #
 # Generate a key, replace the placeholder below, then launch:
 #   python -c "import secrets; print('tml-' + secrets.token_urlsafe(24))"
-#   CUDA_VISIBLE_DEVICES=0 tuft launch --host 0.0.0.0 --port 10610 \
+#   CUDA_VISIBLE_DEVICES=0,1,2,3 tuft launch --host 0.0.0.0 --port 10610 \
 #       --config examples/open_character_training/config.yaml
 #   Modal: python deploy/modal/launch.py --config examples/open_character_training/config.yaml --foreground
 #   Lambda: python deploy/lambda/launch.py --config examples/open_character_training/config.yaml
@@ -17,26 +18,29 @@ model_owner: local-user
 supported_models:
   - model_name: Qwen/Qwen3.5-4B
     model_path: Qwen/Qwen3.5-4B
-    max_model_len: 4096
-    sampling_max_model_len: 4096
+    max_model_len: 8192
+    sampling_max_model_len: 8192
     tensor_parallel_size: 1
-    data_parallel_size: 1
+    data_parallel_size: 2
     sampling_enforce_eager: true
 
-    # One GPU: reserve 30% for vLLM and the remainder for the HF trainer.
-    # Do not change only `training_backend` to `fsdp`: current FSDP workers each
-    # reserve a whole GPU, so FSDP needs colocate:false plus a separate sampler
-    # GPU in addition to fsdp_num_gpus training GPUs.
-    colocate: true
-    sampling_memory_fraction: 0.3
-    training_backend: hf
-    micro_batch_size: 1
+    # FSDP training and sampling use separate whole GPUs. Together with the two
+    # data-parallel vLLM replicas above, this configuration needs four GPUs.
+    colocate: false
+    training_backend: fsdp
+    fsdp_num_gpus: 2
+    micro_batch_size: 2
+    fsdp_qv_only: false
+    fsdp_train_attn: true
+    fsdp_train_mlp: true
+    fsdp_train_unembed: true
+    attn_implementation: sdpa
 
-    # This example uses rank 16, alpha 32 as a resource-friendly deviation from
-    # the paper's rank 64, alpha 128 recipe. The client requests all attention
-    # and MLP projections. Qwen3.5 has no supported unembedding LoRA target, so
-    # the effective set is q/k/v/o_proj plus gate/up/down_proj.
-    max_lora_rank: 16
+    # Match the paper and companion run at rank 64, alpha 128. The client asks
+    # for all attention and MLP projections. Qwen3.5 has no supported
+    # unembedding LoRA target, so the effective set is q/k/v/o_proj plus
+    # gate/up/down_proj.
+    max_lora_rank: 64
     lora_alpha_ratio: 2
     max_loras: 4
 
@@ -55,12 +59,13 @@ telemetry:
 # Cloud infrastructure sections are stripped before TuFT reads the config.
 # See docs/sphinx_doc/source/deployment/{modal,lambda}.md for setup and teardown.
 modal:
-  gpu: A100-40GB
+  gpu: A100-40GB:4
   name: open-character-training
   proxy_auth: false
   min_containers: 0
 
 lambda:
-  gpu: a100
   name: open-character-training
+  # The launcher auto-picks a 1-GPU VM unless --instance-type is supplied.
+  # Pin a currently available 4-GPU instance type when launching this example.
   # filesystem: tuft   # optional persistent storage for checkpoints/model cache

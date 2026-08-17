@@ -1,9 +1,9 @@
 # Open Character Training with TuFT (draft)
 
-> **Draft status.** The recipe and cached teacher data are ready for review, but the rank-16
-> Qwen3.5-4B run has not started. The current TuFT server workload will finish first. Measured
-> timings, losses, and unedited LoRA responses are marked `TODO(final-results)` and will be added
-> from the new run's artifacts.
+> **Draft status.** The recipe and cached teacher data are ready for review. The active EXP64
+> Qwen3.5-4B rank-64 FSDP run will supply the measured timings, losses, and unedited LoRA
+> responses after its checkpoints and held-out samples are complete. Those fields remain marked
+> `TODO(final-results)` until the artifacts are available.
 
 This example teaches a model a persistent **sarcastic character** using the pipeline from
 [Open Character Training](https://arxiv.org/abs/2511.01689) and its
@@ -30,7 +30,7 @@ that API unless you explicitly choose to regenerate them.
 
 | File | Purpose |
 |---|---|
-| `config.yaml` | Single-GPU TuFT server plus Modal and Lambda Cloud deployment settings |
+| `config.yaml` | Four-GPU FSDP TuFT server plus Modal and Lambda Cloud deployment settings |
 | `settings.py` / `character.py` | Frozen hyperparameters, constitution, and reference prompt templates |
 | `generate_data.py` | Cached/live teacher generation, base-model rejection sampling, filtering, reflection, and self-interaction |
 | `train.py` | Composite DPO and response-only introspection SFT through the public Tinker client API |
@@ -44,31 +44,28 @@ optimizer checkpoints live in the TuFT server's configured `checkpoint_dir`.
 
 ## Hardware requirement
 
-The baseline configuration requires a Linux host with **one NVIDIA CUDA GPU with at least 40 GB
-of VRAM**. It colocates the vLLM sampler and HF training backend on that GPU, reserving 30% of
-memory for sampling. More VRAM provides headroom for different CUDA/library versions, longer
-contexts, or larger micro-batches; multiple GPUs are not required for this 4B example.
+The provided configuration requires a Linux host with **four NVIDIA CUDA GPUs, each with at least
+40 GB of VRAM**. Two GPUs host independent vLLM replicas (`data_parallel_size: 2`), and two are
+FSDP training workers (`fsdp_num_gpus: 2`). Each actor reserves a whole GPU; sampling and training
+are not colocated. The 4B companion run used four A100-80GB GPUs. The accelerator family is not a
+model requirement, but other accelerators and the 40 GB floor have not yet been validated through
+the complete pipeline.
 
-The default uses `micro_batch_size: 1` and a 4,096-token sampling context. Hardware below 40 GB
-may work with a smaller sampling context, quantized sampling, or more aggressive memory tuning,
-but that is not the documented baseline and must be validated for the chosen software stack.
+The default uses `micro_batch_size: 2` and an 8,192-token server context. Reducing vLLM data
+parallelism to one would reduce the allocation to three GPUs but slow the 7,258 student generation
+requests; that layout is outside the documented result. Hardware with less memory may work after
+reducing context or batch settings, but it is not the supported baseline for this example.
 
-### Why the example uses the HF backend
+### Why the example uses FSDP
 
-The client recipe is backend-independent, but the documented one-GPU layout is not. With
-`colocate: true`, TuFT's HF training actor reserves the GPU fraction left after
-`sampling_memory_fraction`; the vLLM actor reserves the sampling fraction. The two Ray resource
-requests therefore fit on one GPU (70% training and 30% sampling in this configuration).
+The rank-64 HF DPO companion took 2 hours 28 minutes on one A100-80GB, and its 3,072-token SFT
+stage exhausted that GPU's memory. Two FSDP workers make the long-sequence SFT stage fit and match
+the backend used for the result reported here. Two vLLM replicas keep the preference and
+introspection generation stages from becoming the dominant end-to-end bottleneck.
 
-The current FSDP backend reserves one complete GPU for each training worker. A colocated vLLM
-actor would still request its additional fractional GPU, so Ray cannot schedule that combination
-on a single GPU. An FSDP deployment of this recipe therefore needs at least one GPU for vLLM plus
-the GPU or GPUs selected by `fsdp_num_gpus`, with `colocate: false`.
-
-Using HF does not change the rank-16 adapter geometry requested by the client or the DPO/SFT
-objectives. Both backends now honor the attention and MLP modifiers used here. Backend-specific
-kernels and numerical order can still produce small trajectory differences, so the final results
-will identify the HF backend rather than claim exact backend parity.
+The client-defined DPO and SFT objectives do not depend on FSDP. Current TuFT FSDP honors the
+attention and MLP modifiers used here, so selecting FSDP does not restrict the adapter to Q/V
+projections.
 
 The client asks for attention, MLP, and unembedding modifiers. On Qwen3.5 the resulting LoRA
 targets are `q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`, and `down_proj`;
@@ -92,10 +89,10 @@ For a long run, point `checkpoint_dir` at durable storage. Put the generated cli
 durable workspace storage too by passing `--work-dir`; neither location needs to be inside the
 Git checkout.
 
-Start TuFT on the local GPU:
+Start TuFT with four visible GPUs:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 uv run tuft launch \
+CUDA_VISIBLE_DEVICES=0,1,2,3 uv run tuft launch \
   --host 0.0.0.0 \
   --port 10610 \
   --config examples/open_character_training/config.yaml
@@ -114,7 +111,7 @@ their model computation is remote.
 
 ### No local GPU: Modal
 
-The same `config.yaml` includes a `modal:` section selecting a single 40 GB GPU. Follow TuFT's
+The same `config.yaml` includes a `modal:` section selecting four 40 GB GPUs. Follow TuFT's
 [Modal deployment guide](../../docs/sphinx_doc/source/deployment/modal.md) to install and
 authenticate the CLI, then launch the server:
 
@@ -133,12 +130,15 @@ headroom.
 
 For a dedicated on-demand VM, follow TuFT's
 [Lambda Cloud deployment guide](../../docs/sphinx_doc/source/deployment/lambda.md), export your
-Lambda API key, and launch:
+Lambda API key, and pin a currently available instance type with four GPUs. The launcher's
+automatic selection considers only one-GPU instance types and does not meet this example's
+capacity requirement.
 
 ```bash
 export LAMBDA_API_KEY=...
 python deploy/lambda/launch.py \
-  --config examples/open_character_training/config.yaml
+  --config examples/open_character_training/config.yaml \
+  --instance-type YOUR_4X_GPU_INSTANCE_TYPE
 ```
 
 The launcher prints an SSH tunnel command. Keep that tunnel open and use
@@ -223,7 +223,7 @@ $OCT_WORK_DIR/data/
 └── dpo_summary.json
 ```
 
-<!-- TODO(final-results): Record the rank-16 run's exact filter counts and data hash. -->
+<!-- TODO(final-results): Record the rank-64 companion run's exact filter counts and data hash. -->
 
 ## 4. DPO constitution distillation
 
@@ -277,7 +277,7 @@ uv run python examples/open_character_training/train.py sft \
   --work-dir "$OCT_WORK_DIR"
 ```
 
-This creates a rank-16 client, restores the final DPO training state, and continues for one
+This creates a rank-64 client, restores the final DPO training state, and continues for one
 shuffled epoch at peak learning rate `5e-5`. Loss is applied only to the final assistant message
 and is normalized per example before the batch mean. Long self-interactions lose whole early
 turns rather than truncating away the supervised answer.
@@ -321,16 +321,28 @@ This is a resource-conscious TuFT case study—not a claim of exact paper replic
 | Choice | This example | Reference recipe |
 |---|---|---|
 | Student | Qwen3.5-4B | Multiple model families/sizes |
-| LoRA | rank 16, alpha 32 | rank 64, alpha 128 |
+| LoRA | rank 64, alpha 128 | rank 64, alpha 128 |
 | Distillation repeats | 2 | 5 |
 | Introspection corpus | 1,200 reflections + 300 interactions | 10,000 reflections + 2,000 interactions |
 | Stage combination | Restore DPO state, then continue SFT | Train adapters separately, then linearly merge |
 | Completeness filter | Final Unicode punctuation or symbol | Final punctuation |
 
-The smaller rank is the example's default to reduce adapter memory and iteration cost. To test
-the paper setting, change `LORA_RANK` and `max_lora_rank` to 64; keep `lora_alpha_ratio: 2` for
-alpha 128. Changing rank requires a new TuFT server and new run; a rank-16 optimizer checkpoint
-cannot seed a rank-64 client.
+The LoRA rank and alpha match the paper. The reduced distillation repeats, smaller introspection
+corpus, and sequential stage composition remain deliberate deviations.
+
+## Result provenance
+
+The final table and response examples will come from the EXP64 Qwen3.5-4B sarcastic companion
+run. It matches this example's rank, alpha, full attention/MLP target geometry, FSDP worker count,
+optimizer schedule, and corpus design. It is not a literal execution of `run_recipe.py`:
+
+- EXP64 uses frozen introspection transcripts generated before the final full-modifier DPO rerun,
+  whereas this example generates them from its own post-DPO checkpoint.
+- EXP64 evaluates the same composite DPO equation through a recipe-specific server-side named
+  loss; this example keeps `forward_backward_custom` so a stock TuFT server needs no source patch.
+
+The documentation will label these as companion-run results rather than claim byte-for-byte code
+path parity.
 
 ## Draft results
 
