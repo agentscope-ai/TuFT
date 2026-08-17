@@ -64,6 +64,23 @@ DPO simultaneously uses a policy and a frozen reference adapter on the shared HF
 `lora_alpha_ratio: 2` gives alpha 32. Attention and MLP modifiers adapt all supported Qwen3.5
 projections.
 
+### Why HF instead of FSDP?
+
+The training code uses Tinker's public custom-loss API and is not tied to HF. The server
+configuration selects HF because TuFT can colocate that backend with vLLM on one GPU: Ray assigns
+the sampler the configured 30% fraction and the HF training actor the remaining 70%.
+
+TuFT's current FSDP workers each reserve one whole GPU. Adding the vLLM sampler's fractional
+request means an FSDP server cannot realize this example's one-GPU layout. To run the same client
+recipe with FSDP, set `colocate: false`, choose `fsdp_num_gpus`, and provide a separate sampler GPU
+in addition to those training GPUs.
+
+This choice does not reduce the requested LoRA rank or target only Q/V projections. Current HF and
+FSDP backends both honor the example's attention and MLP modifiers, yielding Qwen3.5 targets
+`q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`, and `down_proj`. The objective is
+also unchanged. Backend kernels and numerical order may still lead to small differences in the
+optimization trajectory, so reported results should name the backend used.
+
 ### No local GPU
 
 The client scripts do not need a GPU; they can drive a remote TuFT server over HTTP. The example's

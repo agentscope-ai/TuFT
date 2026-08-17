@@ -53,6 +53,23 @@ The default uses `micro_batch_size: 1` and a 4,096-token sampling context. Hardw
 may work with a smaller sampling context, quantized sampling, or more aggressive memory tuning,
 but that is not the documented baseline and must be validated for the chosen software stack.
 
+### Why the example uses the HF backend
+
+The client recipe is backend-independent, but the documented one-GPU layout is not. With
+`colocate: true`, TuFT's HF training actor reserves the GPU fraction left after
+`sampling_memory_fraction`; the vLLM actor reserves the sampling fraction. The two Ray resource
+requests therefore fit on one GPU (70% training and 30% sampling in this configuration).
+
+The current FSDP backend reserves one complete GPU for each training worker. A colocated vLLM
+actor would still request its additional fractional GPU, so Ray cannot schedule that combination
+on a single GPU. An FSDP deployment of this recipe therefore needs at least one GPU for vLLM plus
+the GPU or GPUs selected by `fsdp_num_gpus`, with `colocate: false`.
+
+Using HF does not change the rank-16 adapter geometry requested by the client or the DPO/SFT
+objectives. Both backends now honor the attention and MLP modifiers used here. Backend-specific
+kernels and numerical order can still produce small trajectory differences, so the final results
+will identify the HF backend rather than claim exact backend parity.
+
 The client asks for attention, MLP, and unembedding modifiers. On Qwen3.5 the resulting LoRA
 targets are `q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`, and `down_proj`;
 there is no supported unembedding target for this model family.

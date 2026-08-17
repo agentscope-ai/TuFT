@@ -24,6 +24,9 @@ supported_models:
     sampling_enforce_eager: true
 
     # One GPU: reserve 30% for vLLM and the remainder for the HF trainer.
+    # Do not change only `training_backend` to `fsdp`: current FSDP workers each
+    # reserve a whole GPU, so FSDP needs colocate:false plus a separate sampler
+    # GPU in addition to fsdp_num_gpus training GPUs.
     colocate: true
     sampling_memory_fraction: 0.3
     training_backend: hf
