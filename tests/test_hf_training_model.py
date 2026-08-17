@@ -9,6 +9,24 @@ from tuft.checkpoints import CheckpointRecord
 
 
 @pytest.mark.asyncio
+async def test_forward_empty_request_is_a_noop():
+    from tuft.backends.hf_training_model import HFTrainingModel
+
+    model = HFTrainingModel.__new__(HFTrainingModel)
+
+    output = await model.forward(
+        data=[],
+        lora_id="test",
+        loss_fn="cross_entropy",
+        loss_fn_config=None,
+    )
+
+    assert output.loss_fn_output_type == "cross_entropy"
+    assert output.loss_fn_outputs == []
+    assert output.metrics == {}
+
+
+@pytest.mark.asyncio
 async def test_forward_backward_empties_cuda_cache_once_after_all_micro_batches(
     monkeypatch,
 ):

@@ -17,6 +17,11 @@ from tinker import types
 from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoConfig, AutoModelForCausalLM
 
+from tuft.backends.loss_inputs import (
+    FSDP_BACKEND_OWNED_LOSS_INPUTS,
+    batch_loss_fn_input,
+    validate_client_loss_fn_inputs,
+)
 from tuft.loss_fn import get_loss_fn
 
 
@@ -175,19 +180,44 @@ def _prepare_loss_fn_inputs(
     data: list[types.Datum],
     target_logprobs: torch.Tensor,
     loss_fn_name: str,
+    *,
+    prepared_target_tokens: torch.Tensor,
+    client_keys: list[str] | None = None,
 ) -> dict[str, torch.Tensor]:
-    """Build padded TuFT loss inputs directly from Datum objects."""
+    """Build padded TuFT loss inputs directly from Datum objects.
+
+    ``client_keys`` lets ``forward_backward`` describe the whole request while
+    passing one micro-batch of it, so the returned key set is independent of how
+    ``micro_batch_size`` happened to slice it.
+    """
 
     batch_size, max_len = target_logprobs.shape
     device = target_logprobs.device
-    if loss_fn_name.lower() in _RLHF_LOSS_FNS:
+    if client_keys is None:
+        client_keys = validate_client_loss_fn_inputs(
+            data,
+            ignored_keys=FSDP_BACKEND_OWNED_LOSS_INPUTS,
+        )
+    client_key_set = set(client_keys)
+    loss_fn_inputs = {
+        key: batch_loss_fn_input(data, key, device=device)
+        for key in client_keys
+        if key not in FSDP_BACKEND_OWNED_LOSS_INPUTS
+    }
+
+    # target_tokens is the label tensor the model actually scored, so forward it
+    # unconditionally: rows without explicit targets keep _prepare_micro_batch's
+    # fallback labels, and the key cannot appear or vanish per micro-batch.
+    loss_fn_inputs["target_tokens"] = prepared_target_tokens
+
+    is_rlhf_loss = loss_fn_name.lower() in _RLHF_LOSS_FNS
+    if is_rlhf_loss or "logprobs" in client_key_set:
         # detach() is critical: sampling_logprobs must be a constant (old policy logprobs),
         # NOT connected to the computation graph. Without detach(), clone() preserves the
         # autograd connection and the gradients of target_logprobs cancel out in
         # prob_ratio = exp(target_logprobs - sampling_logprobs), giving zero net gradient
         # and no weight updates (reward never grows in RL training).
         sampling_logprobs = target_logprobs.detach().clone()
-        advantages = torch.zeros((batch_size, max_len), dtype=torch.float32, device=device)
         for row, datum in enumerate(data):
             old_logprobs = _datum_field(
                 datum,
@@ -197,6 +227,11 @@ def _prepare_loss_fn_inputs(
             )
             if old_logprobs is not None:
                 _copy_row(sampling_logprobs, row, old_logprobs)
+        loss_fn_inputs["logprobs"] = sampling_logprobs
+
+    if is_rlhf_loss or "advantages" in client_key_set:
+        advantages = torch.zeros((batch_size, max_len), dtype=torch.float32, device=device)
+        for row, datum in enumerate(data):
             advantage = _datum_field(
                 datum,
                 "advantages",
@@ -205,27 +240,34 @@ def _prepare_loss_fn_inputs(
             )
             if advantage is not None:
                 _copy_row(advantages, row, advantage)
-        return {
-            "target_logprobs": target_logprobs,
-            "logprobs": sampling_logprobs,
-            "advantages": advantages,
-        }
+        loss_fn_inputs["advantages"] = advantages
 
-    weights = torch.zeros((batch_size, max_len), dtype=torch.float32, device=device)
-    for row, datum in enumerate(data):
-        value = _datum_field(datum, "weights", device=device, dtype=torch.float32)
-        if value is None:
-            length = len(datum.model_input.to_ints())
-            value = torch.ones(length, dtype=torch.float32, device=device)
-            # Flat-roll fallback: without explicit target_tokens, a sample's final
-            # token receives the *next* sample's first token as its label (wrapping
-            # to the first sample for the last row). That label is a garbage
-            # supervision signal, so zero its weight so it does not enter the loss
-            # (the HF backend fails fast instead of silently supervising it).
-            if (datum.loss_fn_inputs or {}).get("target_tokens") is None and length > 0:
-                value[length - 1] = 0.0
-        _copy_row(weights, row, value)
-    return {"target_logprobs": target_logprobs, "weights": weights}
+    if not is_rlhf_loss or "weights" in client_key_set:
+        weights = torch.zeros((batch_size, max_len), dtype=torch.float32, device=device)
+        for row, datum in enumerate(data):
+            value = _datum_field(datum, "weights", device=device, dtype=torch.float32)
+            if value is None:
+                if is_rlhf_loss:
+                    # weights is emitted here only because a client asked for it,
+                    # so rows that omitted it are zero-filled like any other
+                    # client field rather than being fully supervised.
+                    continue
+                length = len(datum.model_input.to_ints())
+                value = torch.ones(length, dtype=torch.float32, device=device)
+                # Flat-roll fallback: without explicit target_tokens, a sample's final
+                # token receives the *next* sample's first token as its label (wrapping
+                # to the first sample for the last row). That label is a garbage
+                # supervision signal, so zero its weight so it does not enter the loss
+                # (the HF backend fails fast instead of silently supervising it).
+                if (datum.loss_fn_inputs or {}).get("target_tokens") is None and length > 0:
+                    value[length - 1] = 0.0
+            _copy_row(weights, row, value)
+        loss_fn_inputs["weights"] = weights
+
+    # The model-derived values always win over any client-supplied field of the
+    # same name so custom losses cannot accidentally consume stale target values.
+    loss_fn_inputs["target_logprobs"] = target_logprobs
+    return loss_fn_inputs
 
 
 def _merge_micro_metrics(metric_list: list[dict[str, Any]]) -> dict[str, float]:
@@ -254,6 +296,7 @@ def forward_backward(
     micro_batch_size: int,
     *,
     forward_only: bool = False,
+    client_keys: list[str] | None = None,
 ) -> dict[str, Any]:
     """Run contiguous micro-batches while preserving summed gradient accumulation."""
 
@@ -265,6 +308,17 @@ def forward_backward(
     device = next(module.parameters()).device
     loss_callable = get_loss_fn(loss_fn_name)
     config = loss_fn_config or {}
+    # Validate before the first backward so malformed later rows cannot leave
+    # partial accumulated gradients behind. Multi-actor callers pass the keys
+    # derived from the unsharded request so every rank emits the same owned fields.
+    local_keys = validate_client_loss_fn_inputs(
+        data,
+        ignored_keys=FSDP_BACKEND_OWNED_LOSS_INPUTS,
+    )
+    if client_keys is None:
+        client_keys = local_keys
+    elif unexpected_keys := set(local_keys).difference(client_keys):
+        raise ValueError(f"Unexpected loss_fn_inputs fields: {sorted(unexpected_keys)}")
     per_sample_logprobs: list[torch.Tensor] = []
     metric_list: list[dict[str, Any]] = []
 
@@ -294,7 +348,13 @@ def forward_backward(
                     logits = logits / config["temperature"]
                 target_logprobs = _compute_target_logprobs(logits, batch.labels)
 
-            loss_inputs = _prepare_loss_fn_inputs(micro_data, target_logprobs, loss_fn_name)
+            loss_inputs = _prepare_loss_fn_inputs(
+                micro_data,
+                target_logprobs,
+                loss_fn_name,
+                prepared_target_tokens=batch.labels,
+                client_keys=client_keys,
+            )
             loss, metrics = loss_callable(loss_inputs, config)
             if not forward_only:
                 # FSDP2 `fully_shard` averages gradients across ranks during the
