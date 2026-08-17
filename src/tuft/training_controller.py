@@ -71,10 +71,8 @@ class TrainingRunRecord(BaseModel):
     base_model: str
     lora_rank: int
     # LoRA target-module selection. None means the record predates these fields
-    # and the actual geometry is unknown - never guess it: a run created with a
-    # non-default flag would deserialize as compatible with checkpoints it is
-    # not, and the guess would then be written into its next checkpoint's
-    # metadata as fact.
+    # and cannot safely be resumed. Its checkpoints remain available as sources
+    # because their adapter_config.json records the actual module geometry.
     train_attn: bool | None = None
     train_mlp: bool | None = None
     train_unembed: bool | None = None
@@ -95,22 +93,25 @@ class TrainingRunRecord(BaseModel):
     # Private attribute for execution lock (not a model field)
     _execution_lock: asyncio.Lock = PrivateAttr(default_factory=asyncio.Lock)
 
+    @property
+    def has_legacy_lora_state(self) -> bool:
+        """Whether this run predates persisted LoRA geometry."""
+        return any(getattr(self, flag) is None for flag, _ in _LORA_FLAG_GROUPS)
+
     def lora_config(self) -> types.LoraConfig:
         """Rebuild the LoRA config this run's adapter was created with.
 
-        Unknown (legacy) flags fall back to types.LoraConfig's defaults, which
-        is how such adapters were created before the flags were recorded. Only
-        used to recreate adapters; compatibility checks read the raw fields so
-        an unknown flag stays unknown there.
+        Legacy records are invalidated on restore, so every resumable run has
+        complete geometry here.
         """
-        defaults = types.LoraConfig(rank=self.lora_rank)
+        assert self.train_attn is not None
+        assert self.train_mlp is not None
+        assert self.train_unembed is not None
         return types.LoraConfig(
             rank=self.lora_rank,
-            train_attn=defaults.train_attn if self.train_attn is None else self.train_attn,
-            train_mlp=defaults.train_mlp if self.train_mlp is None else self.train_mlp,
-            train_unembed=(
-                defaults.train_unembed if self.train_unembed is None else self.train_unembed
-            ),
+            train_attn=self.train_attn,
+            train_mlp=self.train_mlp,
+            train_unembed=self.train_unembed,
         )
 
     def to_training_run(self) -> types.TrainingRun:
@@ -209,6 +210,13 @@ class TrainingController:
                 record.backend = self.training_backends[record.base_model]
             else:
                 record.corrupted = True
+            if record.has_legacy_lora_state:
+                record.corrupted = True
+                logger.warning(
+                    "Training run %s uses the legacy state format and cannot be resumed; "
+                    "its checkpoints remain available to load into a new run.",
+                    model_id,
+                )
             self.training_runs[model_id] = record
 
     def _restore_checkpoints(self, model_id: str, record: TrainingRunRecord) -> None:
@@ -398,6 +406,15 @@ class TrainingController:
             raise UserMismatchException()
         return record
 
+    @staticmethod
+    def _require_resumable_run(record: TrainingRunRecord) -> None:
+        if record.has_legacy_lora_state:
+            raise InvalidRequestException(
+                f"Training run {record.training_run_id} was created with an older state "
+                "format and cannot be resumed. Create a new training run with the same "
+                "LoRA configuration and load one of this run's checkpoints."
+            )
+
     def build_supported_models(self) -> list[types.SupportedModel]:
         return [
             types.SupportedModel(model_name=model.model_name)
@@ -421,6 +438,7 @@ class TrainingController:
         backward: bool,
     ) -> types.ForwardBackwardOutput:
         record = self.get_run_record(model_id, user_id)
+        self._require_resumable_run(record)
         self.update_activity(model_id, user_id)
 
         span_name = (
@@ -469,6 +487,7 @@ class TrainingController:
         self, model_id: str, user_id: str, params: types.AdamParams, seq_id: int | None
     ) -> types.OptimStepResponse:
         record = self.get_run_record(model_id, user_id)
+        self._require_resumable_run(record)
         self.update_activity(model_id, user_id)
 
         with _get_tracer().start_as_current_span("training_controller.run_optim_step") as span:
@@ -550,6 +569,7 @@ class TrainingController:
     ) -> CheckpointRecord:
         """Save a checkpoint for the given training run."""
         training_run = self.get_run_record(model_id=model_id, user_id=user_id)
+        self._require_resumable_run(training_run)
 
         with _get_tracer().start_as_current_span("training_controller.save_checkpoint") as span:
             span.set_attribute("tuft.training_run_id", model_id)
@@ -590,7 +610,6 @@ class TrainingController:
                         checkpoint_record=checkpoint,
                         optimizer=(checkpoint_type == "training"),
                     )
-                    self._backfill_lora_flags(training_run, checkpoint)
 
                 # Write metadata once so metadata.json exists
                 checkpoint.save_metadata(
@@ -684,20 +703,21 @@ class TrainingController:
             raise CheckpointAccessDeniedException(checkpoint_id=parsed_checkpoint.checkpoint_id)
 
         destination_training_run = self.get_run_record(model_id, user_id)
+        self._require_resumable_run(destination_training_run)
         if destination_training_run.backend is None:
             raise UnknownModelException(model_name=model_id)
-        self._check_adapter_compatible(
-            checkpoint_id=parsed_checkpoint.checkpoint_id,
-            checkpoint=checkpoint,
-            metadata=metadata,
-            destination=destination_training_run,
-        )
 
         checkpoint_id = parsed_checkpoint.checkpoint_id
         logger.info("Checkpoint load begin: %s", checkpoint_id)
 
         async def _operation() -> None:
             assert destination_training_run.backend is not None
+            self._check_adapter_compatible(
+                checkpoint_id=checkpoint_id,
+                checkpoint=checkpoint,
+                metadata=metadata,
+                destination=destination_training_run,
+            )
             await destination_training_run.backend.load_state(
                 lora_id=destination_training_run.training_run_id,
                 checkpoint_record=checkpoint,
@@ -724,8 +744,9 @@ class TrainingController:
 
         Target-module geometry is compared as resolved module sets, not raw flags:
         flags that resolve to nothing for a series (e.g. train_unembed on Qwen)
-        are not geometry and must not reject a compatible checkpoint. Anything
-        unknown - legacy flags, unresolvable series - is skipped, never guessed.
+        are not geometry and must not reject a compatible checkpoint. A legacy
+        checkpoint is accepted only when adapter_config.json supplies its target
+        modules. Unresolvable model series fall back to raw flags.
         FSDP models are exempt: that backend allocates fixed slot geometry that
         ignores the flags, and its load_checkpoint hard-fails on a key mismatch.
         """
@@ -752,11 +773,12 @@ class TrainingController:
             source_modules = self._checkpoint_target_modules(checkpoint)
             if source_modules is None:
                 source_modules = self._target_modules_from_flags(metadata, series)
-            if (
-                source_modules is not None
-                and destination_modules is not None
-                and source_modules != destination_modules
-            ):
+            if source_modules is None:
+                raise InvalidRequestException(
+                    f"Cannot load legacy checkpoint {checkpoint_id}: its LoRA target "
+                    "modules are missing from both metadata and adapter_config.json."
+                )
+            if destination_modules is not None and source_modules != destination_modules:
                 raise InvalidRequestException(
                     f"Cannot load checkpoint {checkpoint_id} targeting LoRA modules "
                     f"{sorted(source_modules)} into a training run targeting "
@@ -778,37 +800,6 @@ class TrainingController:
                     f"Cannot load checkpoint {checkpoint_id} with {name}={source_value} "
                     f"into a training run with {name}={destination_value}."
                 )
-
-    def _backfill_lora_flags(
-        self, training_run: TrainingRunRecord, checkpoint: CheckpointRecord
-    ) -> None:
-        """Fill unknown (legacy) target-module flags from the saved adapter config.
-
-        Records that predate the flags carry None; the adapter_config.json the
-        backend just wrote is the actual geometry, so derive what it can prove.
-        A flag whose module group is empty for the series (e.g. train_unembed on
-        Qwen) stays unknown - the config carries no evidence either way. Runs
-        with a mutated record persist it right after this in the save flow.
-        """
-        if all(getattr(training_run, flag) is not None for flag, _ in _LORA_FLAG_GROUPS):
-            return
-        saved_modules = self._checkpoint_target_modules(checkpoint)
-        if saved_modules is None:
-            return
-        model_config = self._model_config_for(training_run.base_model)
-        if model_config is None:
-            return
-        from .backends.vllm_lora_compat import resolve_model_series
-
-        series = resolve_model_series(str(model_config.model_path))
-        if series is None:
-            return
-        from .backends.hf_training_model import MODULE_MAP
-
-        for flag_name, group in _LORA_FLAG_GROUPS:
-            group_modules = MODULE_MAP[series][group]
-            if getattr(training_run, flag_name) is None and group_modules:
-                setattr(training_run, flag_name, bool(saved_modules.intersection(group_modules)))
 
     def _model_config_for(self, base_model: str) -> ModelConfig | None:
         return next(
@@ -947,6 +938,9 @@ class TrainingController:
     async def restore_from_checkpoint(self, model_id: str) -> CheckpointRecord | None:
         record = self.training_runs.get(model_id)
         if record is None or record.backend is None:
+            return None
+        if record.has_legacy_lora_state:
+            record.corrupted = True
             return None
         latest_ckpt = self.get_latest_checkpoint(model_id)
         if latest_ckpt is None:

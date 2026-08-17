@@ -345,6 +345,9 @@ class TestTrainingRunPersistence:
             training_run_id=training_run_id,
             base_model="Qwen/Qwen3-0.6B",
             lora_rank=8,
+            train_attn=True,
+            train_mlp=True,
+            train_unembed=True,
             session_id="session-001",
             model_owner="trainer_user",
             user_metadata={"experiment": "test"},
@@ -375,9 +378,10 @@ class TestTrainingRunPersistence:
         assert restored.user_metadata == {"experiment": "test"}
         assert restored.next_seq_id == 5
         assert restored.session_id == "session-001"
+        assert restored.corrupted is False
 
-    def test_training_run_with_checkpoint_persisted(self, setup):
-        """Test that training run checkpoints are persisted and restored."""
+    def test_legacy_training_run_with_checkpoint_restored_read_only(self, setup):
+        """Legacy runs are invalidated while their checkpoints remain indexed."""
         store, app_config = setup
 
         # === Phase 1: Create training run with checkpoint ===
@@ -429,6 +433,7 @@ class TestTrainingRunPersistence:
         assert restored_ckpt.checkpoint_id == "my-checkpoint"
         assert restored_ckpt.size_bytes == 1024
         assert restored_ckpt.checkpoint_type == "training"
+        assert restored.corrupted is True
 
 
 # =============================================================================
@@ -926,6 +931,9 @@ class TestConfigSignatureValidation:
             training_run_id=training_run_id,
             base_model="ModelA",
             lora_rank=8,
+            train_attn=True,
+            train_mlp=True,
+            train_unembed=True,
             session_id="session-001",
             model_owner="user1",
         )

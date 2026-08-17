@@ -740,56 +740,50 @@ async def test_load_checkpoint_compares_resolved_modules_not_raw_flags(request, 
 
 
 @pytest.mark.asyncio
-async def test_legacy_run_flags_stay_unknown(request, tmp_path) -> None:
-    """A record predating the target-module flags must not have them guessed.
-
-    Its checkpoints record the flags as unknown, and unknown never rejects -
-    the run may have been created with any module set, and a fabricated True
-    would let a later save pass off the guess as fact.
-    """
-    from tuft.training_controller import TrainingRunRecord
-
-    # A record serialized before the flags existed must deserialize as unknown,
-    # not as the all-True defaults of types.LoraConfig.
-    legacy = TrainingRunRecord.model_validate(
-        {
-            "training_run_id": "legacy",
-            "base_model": "Qwen/Qwen3-0.6B",
-            "lora_rank": 4,
-            "session_id": "s",
-            "model_owner": "tester",
-        }
-    )
-    assert legacy.train_attn is None
-    assert legacy.train_mlp is None
-    assert legacy.train_unembed is None
-
+async def test_legacy_run_is_invalid_but_checkpoint_can_seed_new_run(request, tmp_path) -> None:
+    """Legacy runs are read-only checkpoint sources after an upgrade."""
     use_gpu = request.config.getoption("--gpu")
-    state = await _build_state(tmp_path, use_gpu)
+    state = await _build_state(tmp_path, use_gpu, cpu_model_path="/path/to/qwen-test-model")
     session_id = _create_session(state)
     source = await state.create_model(
         session_id,
         model_owner="tester",
         base_model="Qwen/Qwen3-0.6B",
-        lora_config=types.LoraConfig(rank=4),
+        lora_config=types.LoraConfig(rank=4, train_mlp=False),
         user_metadata=None,
     )
-    # Simulate a record restored from pre-flag persistence.
-    record = state.training.training_runs[source.training_run_id]
-    record.train_attn = None
-    record.train_mlp = None
-    record.train_unembed = None
-
     checkpoint = await state.save_checkpoint(
         source.training_run_id,
         user_id="tester",
-        name="legacy-flags-test",
+        name="legacy-source-test",
         checkpoint_type="training",
     )
-    metadata = checkpoint.metadata
-    assert metadata.train_attn is None
-    assert metadata.train_mlp is None
-    assert metadata.train_unembed is None
+    checkpoint.adapter_path.mkdir(parents=True, exist_ok=True)
+    (checkpoint.adapter_path / "adapter_config.json").write_text(
+        json.dumps({"target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"]}),
+        encoding="utf-8",
+    )
+    checkpoint.save_metadata(
+        base_model=source.base_model,
+        session_id=source.session_id,
+        lora_rank=source.lora_rank,
+    )
+
+    source_record = state.training.training_runs[source.training_run_id]
+    source_record.train_attn = None
+    source_record.train_mlp = None
+    source_record.train_unembed = None
+    restored = await state.training.restore_from_checkpoint(source.training_run_id)
+
+    assert restored is None
+    assert source_record.corrupted is True
+    with pytest.raises(InvalidRequestException, match="older state format"):
+        await state.save_checkpoint(
+            source.training_run_id,
+            user_id="tester",
+            name="legacy-resume-test",
+            checkpoint_type="training",
+        )
 
     destination = await state.create_model(
         session_id,
@@ -798,7 +792,6 @@ async def test_legacy_run_flags_stay_unknown(request, tmp_path) -> None:
         lora_config=types.LoraConfig(rank=4, train_mlp=False),
         user_metadata=None,
     )
-    # Unknown source geometry is skipped, not treated as all-True.
     await state.load_checkpoint(
         destination.training_run_id,
         path=checkpoint.tinker_checkpoint.tinker_path,
@@ -806,18 +799,25 @@ async def test_legacy_run_flags_stay_unknown(request, tmp_path) -> None:
         optimizer=True,
     )
 
+    incompatible_destination = await state.create_model(
+        session_id,
+        model_owner="tester",
+        base_model="Qwen/Qwen3-0.6B",
+        lora_config=types.LoraConfig(rank=4, train_mlp=True),
+        user_metadata=None,
+    )
+    with pytest.raises(InvalidRequestException, match="targeting LoRA modules"):
+        await state.load_checkpoint(
+            incompatible_destination.training_run_id,
+            path=checkpoint.tinker_checkpoint.tinker_path,
+            user_id="tester",
+            optimizer=True,
+        )
+
 
 @pytest.mark.asyncio
-async def test_save_backfills_legacy_flags_from_adapter_config(
-    request, tmp_path, monkeypatch
-) -> None:
-    """Unknown flags are derived from the adapter config the backend saved.
-
-    The adapter_config.json written next to the weights is the actual geometry.
-    Groups it can prove are backfilled; groups with no modules for the series
-    (unembed on Qwen) stay unknown. The saved file is also what the
-    compatibility check trusts over metadata when loading.
-    """
+async def test_legacy_checkpoint_without_adapter_geometry_is_rejected(request, tmp_path) -> None:
+    """Legacy checkpoints need adapter_config.json to be safe load sources."""
     use_gpu = request.config.getoption("--gpu")
     state = await _build_state(tmp_path, use_gpu, cpu_model_path="/path/to/qwen-test-model")
     session_id = _create_session(state)
@@ -828,71 +828,32 @@ async def test_save_backfills_legacy_flags_from_adapter_config(
         lora_config=types.LoraConfig(rank=4),
         user_metadata=None,
     )
-    record = state.training.training_runs[source.training_run_id]
-    record.train_attn = None
-    record.train_mlp = None
-    record.train_unembed = None
-
-    backend = state.training.training_backends["Qwen/Qwen3-0.6B"]
-    original_save_state = backend.save_state
-
-    async def writing_save_state(*, lora_id, checkpoint_record, optimizer):
-        await original_save_state(
-            lora_id=lora_id, checkpoint_record=checkpoint_record, optimizer=optimizer
-        )
-        checkpoint_record.adapter_path.mkdir(parents=True, exist_ok=True)
-        (checkpoint_record.adapter_path / "adapter_config.json").write_text(
-            json.dumps({"target_modules": ["q_proj", "k_proj", "v_proj", "o_proj"]}),
-            encoding="utf-8",
-        )
-
-    monkeypatch.setattr(backend, "save_state", writing_save_state)
-
     checkpoint = await state.save_checkpoint(
         source.training_run_id,
         user_id="tester",
-        name="backfill-test",
+        name="unverifiable-legacy-test",
         checkpoint_type="training",
     )
-
-    # Attn-only adapter: attn provable True, mlp provable False, unembed has no
-    # modules on Qwen so nothing can prove it either way.
-    assert record.train_attn is True
-    assert record.train_mlp is False
-    assert record.train_unembed is None
-    metadata = checkpoint.metadata
-    assert metadata.train_attn is True
-    assert metadata.train_mlp is False
-    assert metadata.train_unembed is None
-
-    mlp_destination = await state.create_model(
+    checkpoint.save_metadata(
+        base_model=source.base_model,
+        session_id=source.session_id,
+        lora_rank=source.lora_rank,
+    )
+    destination = await state.create_model(
         session_id,
         model_owner="tester",
         base_model="Qwen/Qwen3-0.6B",
-        lora_config=types.LoraConfig(rank=4, train_mlp=True),
+        lora_config=types.LoraConfig(rank=4),
         user_metadata=None,
     )
-    with pytest.raises(InvalidRequestException, match="targeting LoRA modules"):
+
+    with pytest.raises(InvalidRequestException, match="adapter_config.json"):
         await state.load_checkpoint(
-            mlp_destination.training_run_id,
+            destination.training_run_id,
             path=checkpoint.tinker_checkpoint.tinker_path,
             user_id="tester",
             optimizer=True,
         )
-
-    attn_destination = await state.create_model(
-        session_id,
-        model_owner="tester",
-        base_model="Qwen/Qwen3-0.6B",
-        lora_config=types.LoraConfig(rank=4, train_mlp=False),
-        user_metadata=None,
-    )
-    await state.load_checkpoint(
-        attn_destination.training_run_id,
-        path=checkpoint.tinker_checkpoint.tinker_path,
-        user_id="tester",
-        optimizer=True,
-    )
 
 
 @pytest.mark.asyncio
