@@ -212,6 +212,8 @@ def _prepare_loss_fn_inputs(
     data: list[types.Datum],
     target_logprobs: torch.Tensor,
     loss_fn_name: str,
+    *,
+    prepared_target_tokens: torch.Tensor | None = None,
 ) -> dict[str, torch.Tensor]:
     """Build padded TuFT loss inputs directly from Datum objects."""
 
@@ -223,8 +225,17 @@ def _prepare_loss_fn_inputs(
     loss_fn_inputs = {
         key: _batch_loss_fn_input(data, key, device=device)
         for key in client_keys
-        if key not in {"target_logprobs", "weights", "logprobs", "advantages"}
+        if key not in {"target_tokens", "target_logprobs", "weights", "logprobs", "advantages"}
     }
+
+    # target_tokens is optional per row; forward the prepared labels so rows
+    # without explicit targets retain _prepare_micro_batch's fallback behavior.
+    if "target_tokens" in client_keys:
+        if prepared_target_tokens is None:
+            raise ValueError(
+                "prepared_target_tokens is required when a datum supplies target_tokens"
+            )
+        loss_fn_inputs["target_tokens"] = prepared_target_tokens
 
     is_rlhf_loss = loss_fn_name.lower() in _RLHF_LOSS_FNS
     if is_rlhf_loss or "logprobs" in client_keys:
@@ -347,7 +358,12 @@ def forward_backward(
                     logits = logits / config["temperature"]
                 target_logprobs = _compute_target_logprobs(logits, batch.labels)
 
-            loss_inputs = _prepare_loss_fn_inputs(micro_data, target_logprobs, loss_fn_name)
+            loss_inputs = _prepare_loss_fn_inputs(
+                micro_data,
+                target_logprobs,
+                loss_fn_name,
+                prepared_target_tokens=batch.labels,
+            )
             loss, metrics = loss_callable(loss_inputs, config)
             if not forward_only:
                 # FSDP2 `fully_shard` averages gradients across ranks during the

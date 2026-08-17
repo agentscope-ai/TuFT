@@ -181,13 +181,44 @@ def test_prepare_loss_inputs_pads_weights_and_defaults_missing_rows():
     assert inputs["weights"].tolist() == [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0]]
 
 
+def test_prepare_loss_inputs_uses_prepared_targets_for_mixed_rows():
+    import torch
+
+    from tuft.backends.fsdp_engine import _prepare_loss_fn_inputs, _prepare_micro_batch
+
+    data = [
+        types.Datum(
+            model_input=types.ModelInput.from_ints(tokens=[1, 2, 3]),
+            loss_fn_inputs={
+                "target_tokens": types.TensorData(data=[9, 8, 7], dtype="int64"),
+            },
+        ),
+        types.Datum(
+            model_input=types.ModelInput.from_ints(tokens=[4, 5]),
+            loss_fn_inputs={},
+        ),
+    ]
+    batch = _prepare_micro_batch(data, "cpu")
+    target_logprobs = torch.randn(2, 3, requires_grad=True)
+
+    inputs = _prepare_loss_fn_inputs(
+        data,
+        target_logprobs,
+        "cross_entropy",
+        prepared_target_tokens=batch.labels,
+    )
+
+    assert inputs["target_tokens"] is batch.labels
+    assert inputs["target_tokens"].tolist() == [[9, 8, 7], [5, 1, 0]]
+
+
 def test_prepare_loss_inputs_matches_hf_for_extra_fields_and_overlays_target_logprobs():
     from types import SimpleNamespace
     from typing import cast
 
     import torch
 
-    from tuft.backends.fsdp_engine import _prepare_loss_fn_inputs
+    from tuft.backends.fsdp_engine import _prepare_loss_fn_inputs, _prepare_micro_batch
     from tuft.backends.hf_training_model import HFTrainingModel
 
     data = [
@@ -215,8 +246,14 @@ def test_prepare_loss_inputs_matches_hf_for_extra_fields_and_overlays_target_log
         ),
     ]
     target_logprobs = torch.randn(2, 3, requires_grad=True)
+    prepared_target_tokens = _prepare_micro_batch(data, "cpu").labels
 
-    inputs = _prepare_loss_fn_inputs(data, target_logprobs, "dro")
+    inputs = _prepare_loss_fn_inputs(
+        data,
+        target_logprobs,
+        "dro",
+        prepared_target_tokens=prepared_target_tokens,
+    )
     hf_model = cast(HFTrainingModel, SimpleNamespace(model=torch.nn.Linear(1, 1)))
     hf_inputs = HFTrainingModel._prepare_loss_fn_inputs(hf_model, data)
     hf_inputs["target_logprobs"] = target_logprobs
