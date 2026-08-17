@@ -361,7 +361,10 @@ class HFTrainingModel:
                         f"max_allocated={torch.cuda.max_memory_allocated() / 1e9:.2f}GB"
                     )
 
-                    torch.cuda.empty_cache()
+            # Let the caching allocator reuse released blocks across micro-batches.
+            # Emptying the cache inside the loop forces repeated CUDA allocations
+            # and synchronizations; release unused blocks once at the request boundary.
+            torch.cuda.empty_cache()
 
             avg_loss = total_loss / num_micro_batches
             self.logger.debug(f"Average loss: {avg_loss}")
@@ -424,7 +427,6 @@ class HFTrainingModel:
 
         logits = outputs.logits
         del outputs
-        torch.cuda.empty_cache()
 
         if "temperature" in loss_fn_config:
             temperature = loss_fn_config["temperature"]
@@ -435,7 +437,6 @@ class HFTrainingModel:
 
         target_logprobs = self._compute_logprobs_from_target_tokens(logits, target_tokens)
         del logits
-        torch.cuda.empty_cache()
 
         loss_fn_inputs["target_logprobs"] = target_logprobs
         loss, metric = loss_fn_callable(loss_fn_inputs, loss_fn_config)
@@ -443,7 +444,6 @@ class HFTrainingModel:
         # Backward with gradient accumulation
         if backward:
             loss.backward(retain_graph=False)
-            torch.cuda.empty_cache()
 
         unpaded_logprobs = self._unpad_tensor(
             target_logprobs.detach(),
@@ -460,8 +460,6 @@ class HFTrainingModel:
         del unpaded_logprobs
         del loss_fn_inputs
         del loss
-
-        torch.cuda.empty_cache()
 
         return loss_value, metric, loss_fn_outputs
 
