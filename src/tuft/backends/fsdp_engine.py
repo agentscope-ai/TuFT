@@ -171,6 +171,43 @@ def _copy_row(destination: torch.Tensor, row: int, value: torch.Tensor) -> None:
         destination[row, :width] = value[:width]
 
 
+def _batch_loss_fn_input(
+    data: list[types.Datum],
+    key: str,
+    *,
+    device: torch.device | str,
+) -> torch.Tensor:
+    """Stack or pad one client-supplied loss input across a micro-batch."""
+
+    tensors = []
+    for datum in data:
+        value = (datum.loss_fn_inputs or {}).get(key)
+        if value is None:
+            raise ValueError(f"loss_fn_inputs field {key!r} must be present for every datum")
+        tensors.append(value.to_torch().to(device=device))
+
+    if all(tensor.dim() == 1 for tensor in tensors):
+        return pad_sequence(tensors, batch_first=True, padding_value=0)
+
+    try:
+        return torch.stack(tensors)
+    except RuntimeError:
+        ndim = tensors[0].dim()
+        if any(tensor.dim() != ndim for tensor in tensors):
+            raise ValueError(
+                f"loss_fn_inputs field {key!r} must have the same rank for every datum"
+            ) from None
+
+        max_shape = [max(tensor.size(dim) for tensor in tensors) for dim in range(ndim)]
+        padded_tensors = []
+        for tensor in tensors:
+            pad = []
+            for size, maximum in reversed(list(zip(tensor.shape, max_shape, strict=True))):
+                pad.extend((0, maximum - size))
+            padded_tensors.append(torch.nn.functional.pad(tensor, pad, value=0))
+        return torch.stack(padded_tensors)
+
+
 def _prepare_loss_fn_inputs(
     data: list[types.Datum],
     target_logprobs: torch.Tensor,
@@ -180,14 +217,23 @@ def _prepare_loss_fn_inputs(
 
     batch_size, max_len = target_logprobs.shape
     device = target_logprobs.device
-    if loss_fn_name.lower() in _RLHF_LOSS_FNS:
+    client_keys = dict.fromkeys(
+        key for datum in data for key in (datum.loss_fn_inputs or {}).keys()
+    )
+    loss_fn_inputs = {
+        key: _batch_loss_fn_input(data, key, device=device)
+        for key in client_keys
+        if key not in {"target_logprobs", "weights", "logprobs", "advantages"}
+    }
+
+    is_rlhf_loss = loss_fn_name.lower() in _RLHF_LOSS_FNS
+    if is_rlhf_loss or "logprobs" in client_keys:
         # detach() is critical: sampling_logprobs must be a constant (old policy logprobs),
         # NOT connected to the computation graph. Without detach(), clone() preserves the
         # autograd connection and the gradients of target_logprobs cancel out in
         # prob_ratio = exp(target_logprobs - sampling_logprobs), giving zero net gradient
         # and no weight updates (reward never grows in RL training).
         sampling_logprobs = target_logprobs.detach().clone()
-        advantages = torch.zeros((batch_size, max_len), dtype=torch.float32, device=device)
         for row, datum in enumerate(data):
             old_logprobs = _datum_field(
                 datum,
@@ -197,6 +243,11 @@ def _prepare_loss_fn_inputs(
             )
             if old_logprobs is not None:
                 _copy_row(sampling_logprobs, row, old_logprobs)
+        loss_fn_inputs["logprobs"] = sampling_logprobs
+
+    if is_rlhf_loss or "advantages" in client_keys:
+        advantages = torch.zeros((batch_size, max_len), dtype=torch.float32, device=device)
+        for row, datum in enumerate(data):
             advantage = _datum_field(
                 datum,
                 "advantages",
@@ -205,27 +256,29 @@ def _prepare_loss_fn_inputs(
             )
             if advantage is not None:
                 _copy_row(advantages, row, advantage)
-        return {
-            "target_logprobs": target_logprobs,
-            "logprobs": sampling_logprobs,
-            "advantages": advantages,
-        }
+        loss_fn_inputs["advantages"] = advantages
 
-    weights = torch.zeros((batch_size, max_len), dtype=torch.float32, device=device)
-    for row, datum in enumerate(data):
-        value = _datum_field(datum, "weights", device=device, dtype=torch.float32)
-        if value is None:
-            length = len(datum.model_input.to_ints())
-            value = torch.ones(length, dtype=torch.float32, device=device)
-            # Flat-roll fallback: without explicit target_tokens, a sample's final
-            # token receives the *next* sample's first token as its label (wrapping
-            # to the first sample for the last row). That label is a garbage
-            # supervision signal, so zero its weight so it does not enter the loss
-            # (the HF backend fails fast instead of silently supervising it).
-            if (datum.loss_fn_inputs or {}).get("target_tokens") is None and length > 0:
-                value[length - 1] = 0.0
-        _copy_row(weights, row, value)
-    return {"target_logprobs": target_logprobs, "weights": weights}
+    if not is_rlhf_loss or "weights" in client_keys:
+        weights = torch.zeros((batch_size, max_len), dtype=torch.float32, device=device)
+        for row, datum in enumerate(data):
+            value = _datum_field(datum, "weights", device=device, dtype=torch.float32)
+            if value is None:
+                length = len(datum.model_input.to_ints())
+                value = torch.ones(length, dtype=torch.float32, device=device)
+                # Flat-roll fallback: without explicit target_tokens, a sample's final
+                # token receives the *next* sample's first token as its label (wrapping
+                # to the first sample for the last row). That label is a garbage
+                # supervision signal, so zero its weight so it does not enter the loss
+                # (the HF backend fails fast instead of silently supervising it).
+                if (datum.loss_fn_inputs or {}).get("target_tokens") is None and length > 0:
+                    value[length - 1] = 0.0
+            _copy_row(weights, row, value)
+        loss_fn_inputs["weights"] = weights
+
+    # The model-derived values always win over any client-supplied field of the
+    # same name so custom losses cannot accidentally consume stale target values.
+    loss_fn_inputs["target_logprobs"] = target_logprobs
+    return loss_fn_inputs
 
 
 def _merge_micro_metrics(metric_list: list[dict[str, Any]]) -> dict[str, float]:

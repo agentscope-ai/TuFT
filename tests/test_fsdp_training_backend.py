@@ -181,6 +181,57 @@ def test_prepare_loss_inputs_pads_weights_and_defaults_missing_rows():
     assert inputs["weights"].tolist() == [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0]]
 
 
+def test_prepare_loss_inputs_matches_hf_for_extra_fields_and_overlays_target_logprobs():
+    from types import SimpleNamespace
+    from typing import cast
+
+    import torch
+
+    from tuft.backends.fsdp_engine import _prepare_loss_fn_inputs
+    from tuft.backends.hf_training_model import HFTrainingModel
+
+    data = [
+        types.Datum(
+            model_input=types.ModelInput.from_ints(tokens=[1, 2, 3]),
+            loss_fn_inputs={
+                "target_tokens": types.TensorData(data=[2, 3, 4], dtype="int64"),
+                "target_logprobs": types.TensorData(data=[99.0, 99.0, 99.0], dtype="float32"),
+                "reference_logprobs": types.TensorData(data=[-0.2, -0.4, -0.8], dtype="float32"),
+                "custom_matrix": types.TensorData(
+                    data=[1.0, 2.0, 3.0, 4.0], dtype="float32", shape=[2, 2]
+                ),
+            },
+        ),
+        types.Datum(
+            model_input=types.ModelInput.from_ints(tokens=[4, 5]),
+            loss_fn_inputs={
+                "target_tokens": types.TensorData(data=[5, 6], dtype="int64"),
+                "target_logprobs": types.TensorData(data=[88.0, 88.0], dtype="float32"),
+                "reference_logprobs": types.TensorData(data=[-0.1, -0.3], dtype="float32"),
+                "custom_matrix": types.TensorData(
+                    data=[5.0, 6.0, 7.0], dtype="float32", shape=[1, 3]
+                ),
+            },
+        ),
+    ]
+    target_logprobs = torch.randn(2, 3, requires_grad=True)
+
+    inputs = _prepare_loss_fn_inputs(data, target_logprobs, "dro")
+    hf_model = cast(HFTrainingModel, SimpleNamespace(model=torch.nn.Linear(1, 1)))
+    hf_inputs = HFTrainingModel._prepare_loss_fn_inputs(hf_model, data)
+    hf_inputs["target_logprobs"] = target_logprobs
+
+    assert inputs["target_logprobs"] is target_logprobs
+    for key in ("target_tokens", "reference_logprobs", "custom_matrix", "target_logprobs"):
+        torch.testing.assert_close(inputs[key], hf_inputs[key])
+    assert inputs["custom_matrix"].tolist() == [
+        [[1.0, 2.0, 0.0], [3.0, 4.0, 0.0]],
+        [[5.0, 6.0, 7.0], [0.0, 0.0, 0.0]],
+    ]
+    torch.testing.assert_close(inputs["logprobs"], target_logprobs.detach())
+    assert inputs["advantages"].tolist() == [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+
+
 def test_compute_target_logprobs_matches_log_softmax():
     import torch
 
