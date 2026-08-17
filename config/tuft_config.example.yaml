@@ -38,6 +38,21 @@ model_owner: local-user
 #   - min_response_tokens: Minimum tokens to generate (default: 0)
 #   - max_lora_rank: Maximum LoRA adapter rank (default: 16)
 #   - max_loras: Maximum simultaneous LoRA adapters (default: 1)
+#   - training_backend: Training implementation, "hf" or "fsdp" (default: hf)
+#   - fsdp_num_gpus: Number of FSDP workers/GPUs (default: 1)
+#   - fsdp_rank_slots: Preallocated LoRA slots by rank (default: 16 rank-8 slots
+#       plus 8 max_lora_rank slots, or 16 slots at max_lora_rank when it is <= 8;
+#       the same capacity for every target geometry)
+#       Explicit maps define the only accepted ranks and must include max_lora_rank.
+#       Lower these counts to trade concurrent training runs for GPU memory.
+#   - fsdp_qv_only: Intentionally use only [q_proj, v_proj], overriding client
+#       modifiers so Q/V-only checkpoints can be loaded (default: false)
+#   - fsdp_target_modules: Explicit homogeneous target geometry for every FSDP slot
+#       (default: null; inferred from the fsdp_train_* modifiers at startup)
+#   - fsdp_train_attn/fsdp_train_mlp/fsdp_train_unembed: Target geometry modifiers
+#       (defaults: true/true/true)
+#       FSDP target geometry is allocated at server startup and cannot be changed
+#       while the server is running; restart with a new configuration to change it.
 #   - lora_alpha_ratio: lora_alpha = rank * this ratio (default: 2)
 #       Applies to both the "hf" and "fsdp" training backends, so the same rank
 #       gets the same LoRA update scaling whichever backend serves the model.
@@ -65,6 +80,34 @@ supported_models:
     max_lora_rank: 16
     max_loras: 1
     lora_alpha_ratio: 2
+    # FSDP creates every adapter slot before sharding. By default these modifiers
+    # match Tinker's LoraConfig defaults and resolve to attention + MLP modules on
+    # Qwen. A client request with different modifiers is rejected clearly.
+    # training_backend: fsdp
+    # fsdp_num_gpus: 2
+    # fsdp_train_attn: true
+    # fsdp_train_mlp: true
+    # fsdp_train_unembed: true
+    # Set this only when Q/V-only geometry is intentional. It overrides client
+    # modifiers and allows checkpoints targeting [q_proj, v_proj] to seed or
+    # restore a run. An explicit [q_proj, v_proj] list without this opt-in is
+    # rejected so the override cannot happen accidentally:
+    # fsdp_qv_only: false
+    # Or specify the exact homogeneous module set instead of the modifiers. For a
+    # supported model series, every client request must resolve to this exact list;
+    # a mismatch returns HTTP 400 and does not create the training run. For an
+    # unsupported model family, the explicit list supplies the geometry because
+    # its client modifiers cannot be resolved:
+    # fsdp_target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+    # Other checkpoints can be loaded only when their recorded target modules
+    # match the preallocated geometry and the destination run's effective modules.
+    # Every slot is materialized eagerly before sharding, so slot counts set the
+    # floor on preallocated adapter memory. That memory is a small fraction of
+    # the frozen base model even for the widest target set, so the defaults keep
+    # capacity constant across geometries. Reduce the counts when you need the
+    # memory back and can serve fewer concurrent training runs; a single-tenant
+    # deployment can go as low as one slot per rank:
+    # fsdp_rank_slots: {8: 8, 16: 2}
 
   - model_name: Qwen/Qwen3-8B
     model_path: Qwen/Qwen3-8B

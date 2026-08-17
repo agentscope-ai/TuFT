@@ -19,6 +19,7 @@ def _default_checkpoint_dir() -> Path | None:
 # ``LoraConfig`` carries only a rank, so the alpha has to come from server config;
 # 2 keeps the "hf" and "fsdp" training backends on the same update scaling.
 DEFAULT_LORA_ALPHA_RATIO = 2
+FSDP_QV_TARGET_MODULES = ("q_proj", "v_proj")
 
 
 def compute_lora_alpha(rank: int, lora_alpha_ratio: int = DEFAULT_LORA_ALPHA_RATIO) -> int:
@@ -96,8 +97,19 @@ class ModelConfig(BaseModel):
     # TCP port for torch.distributed init (FSDP multi-GPU); default 29500
     fsdp_master_port: int = 29500
     # LoRA slot count per rank: rank -> slots for that rank (optional; code default if unset).
-    # Example: fsdp_rank_slots: {8: 16, 16: 8}
+    # Example: fsdp_rank_slots: {8: 8, 16: 2}
     fsdp_rank_slots: dict[int, int] | None = None
+    # Explicit opt-in to Q/V-only FSDP geometry. This intentionally overrides client
+    # modifiers so existing Q/V checkpoints remain loadable.
+    fsdp_qv_only: bool = False
+    # Homogeneous LoRA target geometry preallocated before fully_shard(). When omitted,
+    # the modifiers match Tinker's public LoraConfig defaults and are resolved through
+    # the same model-series map as the HF backend. Q/V-only geometry must use the
+    # dedicated fsdp_qv_only setting above.
+    fsdp_target_modules: list[str] | None = None
+    fsdp_train_attn: bool = True
+    fsdp_train_mlp: bool = True
+    fsdp_train_unembed: bool = True
     # optional override for FSDP backend HFModelConfig (e.g. attn_implementation)
     fsdp_override_config: dict[str, Any] | None = None
     # Attention implementation passed to AutoModelForCausalLM.from_pretrained for the
@@ -136,9 +148,69 @@ class ModelConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_fsdp_rank_slots(self) -> "ModelConfig":
-        """Ensure fsdp_rank_slots keys are int (YAML/JSON may load them as str)."""
-        if self.fsdp_rank_slots is not None and len(self.fsdp_rank_slots) > 0:
-            self.fsdp_rank_slots = {int(k): v for k, v in self.fsdp_rank_slots.items()}
+        """Normalize and validate the discrete ranks preallocated by FSDP."""
+        if self.max_lora_rank < 1:
+            raise ValueError("max_lora_rank must be at least 1")
+        if self.fsdp_rank_slots is None:
+            return self
+
+        normalized = {int(rank): count for rank, count in self.fsdp_rank_slots.items()}
+        if not normalized:
+            raise ValueError("fsdp_rank_slots must contain at least one rank")
+        if any(rank < 1 for rank in normalized):
+            raise ValueError("fsdp_rank_slots ranks must be at least 1")
+        if any(count < 1 for count in normalized.values()):
+            raise ValueError("fsdp_rank_slots slot counts must be at least 1")
+        if self.training_backend == "fsdp":
+            if self.max_lora_rank not in normalized:
+                raise ValueError(
+                    "fsdp_rank_slots must define at least one slot for "
+                    f"max_lora_rank={self.max_lora_rank}; configured ranks: "
+                    f"{sorted(normalized)}"
+                )
+            ranks_above_max = sorted(rank for rank in normalized if rank > self.max_lora_rank)
+            if ranks_above_max:
+                raise ValueError(
+                    f"fsdp_rank_slots contains ranks above max_lora_rank={self.max_lora_rank}: "
+                    f"{ranks_above_max}"
+                )
+        self.fsdp_rank_slots = normalized
+        return self
+
+    @model_validator(mode="after")
+    def validate_fsdp_target_modules(self) -> "ModelConfig":
+        """Reject unusable explicit FSDP target-module geometries."""
+        if self.fsdp_target_modules is not None:
+            if not self.fsdp_target_modules:
+                raise ValueError("fsdp_target_modules must contain at least one module")
+            normalized = [module.strip() for module in self.fsdp_target_modules]
+            if any(not module for module in normalized):
+                raise ValueError("fsdp_target_modules cannot contain empty module names")
+            if len(set(normalized)) != len(normalized):
+                raise ValueError("fsdp_target_modules cannot contain duplicates")
+            self.fsdp_target_modules = normalized
+        if self.fsdp_qv_only and self.training_backend != "fsdp":
+            raise ValueError("fsdp_qv_only requires training_backend='fsdp'")
+        if self.training_backend != "fsdp":
+            return self
+
+        qv_modules = set(FSDP_QV_TARGET_MODULES)
+        explicit_modules = (
+            set(self.fsdp_target_modules) if self.fsdp_target_modules is not None else None
+        )
+        if self.fsdp_qv_only:
+            if explicit_modules is not None and explicit_modules != qv_modules:
+                raise ValueError(
+                    "fsdp_qv_only=true conflicts with fsdp_target_modules="
+                    f"{self.fsdp_target_modules}; omit fsdp_target_modules or set it to "
+                    "[q_proj, v_proj]"
+                )
+        elif explicit_modules == qv_modules:
+            raise ValueError(
+                "Q/V-only FSDP geometry requires fsdp_qv_only=true. Set "
+                "fsdp_qv_only: true to explicitly accept client modifier overrides and "
+                "load checkpoints targeting [q_proj, v_proj]."
+            )
         return self
 
     @model_validator(mode="after")

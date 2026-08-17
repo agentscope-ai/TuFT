@@ -150,6 +150,22 @@ Recommended workflow when changing any field that affects restore safety:
 - deploy with a **new namespace**, or
 - clear the old namespace explicitly before restart.
 
+Adding persisted model fields can change the configuration signature even when
+the YAML file itself is unchanged. If the computed signature differs from the
+stored signature, TuFT fails preflight with a configuration-mismatch error. Use a
+new namespace or clear the existing one before starting the server. Checkpoint
+files are not deleted by either namespace changes or `tuft clear persistence`.
+
+An FSDP checkpoint can be loaded only into a training run whose effective target
+modules match the checkpoint and the server's preallocated geometry. For supported
+model series, client LoRA modifiers must resolve to the configured
+`fsdp_target_modules` exactly; TuFT returns HTTP 400 before creating the run when
+they differ. To load a checkpoint with Q/V-only
+`target_modules: [q_proj, v_proj]`, set `fsdp_qv_only: true` on the destination
+model. This dedicated opt-in intentionally overrides client modifiers and records
+Q/V as the run's effective geometry. Configuring `[q_proj, v_proj]` only through
+`fsdp_target_modules` is rejected so this override cannot happen accidentally.
+
 ---
 
 ## Troubleshooting

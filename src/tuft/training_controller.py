@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 import uuid
@@ -16,7 +15,13 @@ from tinker import types
 
 from .backends import BaseTrainingBackend
 from .checkpoints import CheckpointMetadata, CheckpointRecord, compute_tree_size
-from .config import DEFAULT_LORA_ALPHA_RATIO, AppConfig, ModelConfig, compute_lora_alpha
+from .config import (
+    DEFAULT_LORA_ALPHA_RATIO,
+    FSDP_QV_TARGET_MODULES,
+    AppConfig,
+    ModelConfig,
+    compute_lora_alpha,
+)
 from .exceptions import (
     CheckpointAccessDeniedException,
     CheckpointIncompatibleException,
@@ -46,14 +51,6 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
-# LoRA flag -> MODULE_MAP group; the geometry vocabulary shared by
-# TrainingRunRecord, CheckpointMetadata, and the compatibility check.
-_LORA_FLAG_GROUPS = (
-    ("train_attn", "attn"),
-    ("train_mlp", "mlp"),
-    ("train_unembed", "unembed"),
-)
-
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -77,6 +74,9 @@ class TrainingRunRecord(BaseModel):
     train_attn: bool | None = None
     train_mlp: bool | None = None
     train_unembed: bool | None = None
+    # Concrete module geometry resolved when the adapter was created. None is
+    # accepted only while reading older persisted records, which become read-only.
+    target_modules: list[str] | None = None
     session_id: str
     model_owner: str
     user_metadata: dict[str, str] | None = None
@@ -96,8 +96,10 @@ class TrainingRunRecord(BaseModel):
 
     @property
     def has_legacy_lora_state(self) -> bool:
-        """Whether this run predates persisted LoRA geometry."""
-        return any(getattr(self, flag) is None for flag, _ in _LORA_FLAG_GROUPS)
+        """Whether this run lacks the complete, effective LoRA geometry."""
+        return self.target_modules is None or any(
+            flag is None for flag in (self.train_attn, self.train_mlp, self.train_unembed)
+        )
 
     def lora_config(self) -> types.LoraConfig:
         """Rebuild the LoRA config this run's adapter was created with.
@@ -233,8 +235,9 @@ class TrainingController:
             if record.has_legacy_lora_state:
                 record.corrupted = True
                 logger.warning(
-                    "Training run %s uses the legacy state format and cannot be resumed; "
-                    "its checkpoints remain available to load into a new run.",
+                    "Training run %s does not record its complete effective LoRA geometry "
+                    "and is therefore read-only; checkpoints with a valid "
+                    "adapter_config.json remain available to load into a new run.",
                     model_id,
                 )
             self.training_runs[model_id] = record
@@ -388,6 +391,7 @@ class TrainingController:
                 if base_model not in self.training_backends:
                     raise UnknownModelException(model_name=base_model)
                 backend = self.training_backends[base_model]
+                target_modules = self._effective_target_modules(base_model, lora_config)
                 record = TrainingRunRecord(
                     training_run_id=model_id,
                     base_model=base_model,
@@ -395,6 +399,7 @@ class TrainingController:
                     train_attn=lora_config.train_attn,
                     train_mlp=lora_config.train_mlp,
                     train_unembed=lora_config.train_unembed,
+                    target_modules=target_modules,
                     session_id=session_id,
                     model_owner=model_owner,
                     user_metadata=user_metadata,
@@ -430,9 +435,10 @@ class TrainingController:
     def _require_resumable_run(record: TrainingRunRecord) -> None:
         if record.has_legacy_lora_state:
             raise InvalidRequestException(
-                f"Training run {record.training_run_id} was created with an older state "
-                "format and cannot be resumed. Create a new training run with the same "
-                "LoRA configuration and load one of this run's checkpoints."
+                f"Training run {record.training_run_id} does not record its complete effective "
+                "LoRA target geometry and therefore cannot be resumed. Create a new training "
+                "run with the same LoRA configuration and load a checkpoint that contains "
+                "adapter/adapter_config.json."
             )
 
     def build_supported_models(self) -> list[types.SupportedModel]:
@@ -642,6 +648,7 @@ class TrainingController:
                     train_attn=training_run.train_attn,
                     train_mlp=training_run.train_mlp,
                     train_unembed=training_run.train_unembed,
+                    target_modules=training_run.target_modules,
                 )
 
                 # Compute total size including metadata.json
@@ -656,6 +663,7 @@ class TrainingController:
                     train_attn=training_run.train_attn,
                     train_mlp=training_run.train_mlp,
                     train_unembed=training_run.train_unembed,
+                    target_modules=training_run.target_modules,
                 )
                 # save the checkpoint record in the training run
                 target_map[checkpoint_name] = checkpoint
@@ -766,13 +774,11 @@ class TrainingController:
         adapter_config.json entirely when the destination adapter already exists,
         and only collects the unmatched keys.
 
-        Target-module geometry is compared as resolved module sets, not raw flags:
-        flags that resolve to nothing for a series (e.g. train_unembed on Qwen)
-        are not geometry and must not reject a compatible checkpoint. A legacy
-        checkpoint is accepted only when adapter_config.json supplies its target
-        modules. Unresolvable model series fall back to raw flags.
-        FSDP models are exempt: that backend allocates fixed slot geometry that
-        ignores the flags, and its load_checkpoint hard-fails on a key mismatch.
+        Target-module geometry is compared as concrete module sets, not raw flags.
+        The PEFT adapter config is ground truth, with checkpoint metadata as the
+        fallback when it records a concrete module list. Checkpoints that only
+        record modifier flags are rejected rather than guessed from server
+        configuration that may have changed.
         """
         if metadata.base_model != destination.base_model:
             raise InvalidRequestException(
@@ -785,50 +791,33 @@ class TrainingController:
                 f"Cannot load checkpoint {checkpoint_id} with LoRA rank {metadata.lora_rank} "
                 f"into a training run with LoRA rank {destination.lora_rank}."
             )
-        # Deliberately checked before the FSDP exemption below. That exemption is
-        # about target-module geometry, which the slot pool ignores; alpha is baked
-        # into every slot from lora_alpha_ratio and load_checkpoint only copies
-        # weights in, so FSDP is the backend where a mismatch does the most damage.
+        # Alpha is baked into every FSDP slot from lora_alpha_ratio and checkpoint
+        # loading only copies weights, so validate it independently of geometry.
         checkpoint.validate_lora_alpha(self._effective_lora_alpha(destination))
 
-        model_config = self._model_config_for(destination.base_model)
-        if model_config is None or getattr(model_config, "training_backend", "hf") == "fsdp":
-            return
-        from .backends.vllm_lora_compat import resolve_model_series
-
-        series = resolve_model_series(str(model_config.model_path))
-        if series is not None:
-            destination_modules = self._target_modules_from_flags(destination, series)
-            source_modules = self._checkpoint_target_modules(checkpoint)
-            if source_modules is None:
-                source_modules = self._target_modules_from_flags(metadata, series)
-            if source_modules is None:
-                raise InvalidRequestException(
-                    f"Cannot load legacy checkpoint {checkpoint_id}: its LoRA target "
-                    "modules are missing from both metadata and adapter_config.json."
-                )
-            if destination_modules is not None and source_modules != destination_modules:
-                raise InvalidRequestException(
-                    f"Cannot load checkpoint {checkpoint_id} targeting LoRA modules "
-                    f"{sorted(source_modules)} into a training run targeting "
-                    f"{sorted(destination_modules)}."
-                )
-            return
-
-        # Unknown series: module sets cannot be resolved, so raw flags are the
-        # only signal. Compare the ones known on both sides.
-        for name, _ in _LORA_FLAG_GROUPS:
-            source_value = getattr(metadata, name)
-            destination_value = getattr(destination, name)
-            if (
-                source_value is not None
-                and destination_value is not None
-                and source_value != destination_value
-            ):
-                raise InvalidRequestException(
-                    f"Cannot load checkpoint {checkpoint_id} with {name}={source_value} "
-                    f"into a training run with {name}={destination_value}."
-                )
+        saved_modules = checkpoint.saved_target_modules
+        if saved_modules is None:
+            raise InvalidRequestException(
+                f"Cannot load checkpoint {checkpoint_id}: neither metadata nor "
+                "adapter_config.json provides a supported explicit target_modules list. "
+                "PEFT regex-string targets and checkpoints without an explicit target-module "
+                "list cannot be validated."
+            )
+        if destination.target_modules is None:
+            raise InvalidRequestException(
+                f"Cannot load checkpoint {checkpoint_id}: destination training run "
+                f"{destination.training_run_id} does not record effective LoRA target "
+                "modules and is not resumable. Create a new training run that records its "
+                "effective target modules."
+            )
+        source_modules = set(saved_modules)
+        destination_modules = set(destination.target_modules)
+        if source_modules != destination_modules:
+            raise InvalidRequestException(
+                f"Cannot load checkpoint {checkpoint_id} targeting LoRA modules "
+                f"{sorted(source_modules)} into a training run targeting "
+                f"{sorted(destination_modules)}."
+            )
 
     def _model_config_for(self, base_model: str) -> ModelConfig | None:
         return next(
@@ -836,44 +825,29 @@ class TrainingController:
             None,
         )
 
-    @staticmethod
-    def _target_modules_from_flags(
-        source: CheckpointMetadata | TrainingRunRecord, series: str
-    ) -> set[str] | None:
-        """Resolve LoRA flags into the module set they select for a series.
+    def _effective_target_modules(
+        self, base_model: str, lora_config: types.LoraConfig
+    ) -> list[str]:
+        """Resolve the concrete geometry persisted for a newly created run."""
 
-        Returns None when any flag that matters for the series is unknown.
-        """
-        from .backends.hf_training_model import MODULE_MAP
+        model_config = self._model_config_for(base_model)
+        if model_config is None:
+            raise UnknownModelException(model_name=base_model)
+        if model_config.training_backend == "fsdp" and model_config.fsdp_qv_only:
+            return list(FSDP_QV_TARGET_MODULES)
+        if model_config.training_backend == "fsdp" and model_config.fsdp_target_modules is not None:
+            # Persist the explicit slot geometry. FSDPTrainingBackend separately
+            # rejects resolvable client modifiers that request a different set.
+            return list(model_config.fsdp_target_modules)
+        from .backends.lora_modules import get_target_modules
 
-        modules: set[str] = set()
-        for flag_name, group in _LORA_FLAG_GROUPS:
-            group_modules = MODULE_MAP[series][group]
-            if not group_modules:
-                continue
-            flag = getattr(source, flag_name)
-            if flag is None:
-                return None
-            if flag:
-                modules.update(group_modules)
-        return modules
-
-    @staticmethod
-    def _checkpoint_target_modules(checkpoint: CheckpointRecord) -> set[str] | None:
-        """Read the module set the checkpoint's adapter was actually saved with.
-
-        The adapter_config.json written next to the weights is ground truth,
-        independent of what any run record or metadata claims.
-        """
-        config_path = checkpoint.adapter_path / "adapter_config.json"
         try:
-            adapter_config = json.loads(config_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return None
-        modules = adapter_config.get("target_modules")
-        if not modules:
-            return None
-        return set(modules)
+            return get_target_modules(str(model_config.model_path), lora_config)
+        except ValueError as exc:
+            raise InvalidRequestException(
+                f"Cannot resolve effective LoRA target modules for base model {base_model}: "
+                f"{exc}. Use a supported model series or configure explicit FSDP targets."
+            ) from exc
 
     def delete_checkpoint(self, model_id: str, user_id: str, checkpoint_id: str) -> None:
         training_run = self.get_run_record(model_id, user_id)

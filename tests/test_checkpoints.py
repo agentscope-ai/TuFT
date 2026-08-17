@@ -1,3 +1,5 @@
+import json
+
 from src.tuft.checkpoints import CheckpointRecord
 
 
@@ -55,3 +57,31 @@ def test_checkpoint_record(tmp_path):
     # test delete
     record2.delete()
     assert not checkpoint_dir.exists()
+
+
+def test_saved_target_modules_prefers_adapter_config_and_falls_back_to_metadata(tmp_path):
+    record = CheckpointRecord.from_training_run(
+        training_run_id="run-targets",
+        checkpoint_name="checkpoint-targets",
+        owner_name="default",
+        checkpoint_type="training",
+        checkpoint_root_dir=tmp_path,
+    )
+    record.save_metadata(
+        session_id="session",
+        base_model="base-model",
+        lora_rank=8,
+        target_modules=["q_proj", "v_proj"],
+    )
+
+    assert record.saved_target_modules == ["q_proj", "v_proj"]
+
+    record.adapter_path.mkdir()
+    (record.adapter_path / "adapter_config.json").write_text(
+        json.dumps({"target_modules": ["k_proj", "o_proj"]}),
+        encoding="utf-8",
+    )
+    assert record.saved_target_modules == ["k_proj", "o_proj"]
+
+    (record.adapter_path / "adapter_config.json").write_text("not-json", encoding="utf-8")
+    assert record.saved_target_modules == ["q_proj", "v_proj"]

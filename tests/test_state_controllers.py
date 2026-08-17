@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from tinker import types
@@ -17,9 +18,11 @@ from tuft.exceptions import (
     LossFunctionMissingInputException,
     MissingSequenceIDException,
     SequenceConflictException,
+    UnknownModelException,
     UserMismatchException,
 )
 from tuft.state import ServerState
+from tuft.training_controller import TrainingController, TrainingRunRecord
 
 from .helpers import clear_ray_state
 
@@ -40,12 +43,12 @@ async def _build_state(
     tmp_path,
     use_gpu: bool = False,
     extra_base_models: list[str] | None = None,
-    cpu_model_path: str = "/path/to/model",
+    cpu_model_path: str = "/path/to/qwen-test-model",
 ) -> ServerState:
     """cpu_model_path picks the fake weights path for CPU runs.
 
-    The default is deliberately series-unresolvable; pass a path containing
-    e.g. "qwen" when a test needs target-module geometry to resolve.
+    The default resolves as Qwen so every newly created run records concrete
+    target geometry, as production runs are now required to do.
     """
     if use_gpu:
         assert "TUFT_TEST_MODEL" in os.environ, (
@@ -79,6 +82,66 @@ def _create_session(state: ServerState, user_id: str = "tester") -> str:
         user=User(user_id=user_id),
     )
     return session.session_id
+
+
+def test_effective_target_modules_rejects_unknown_model_without_assert() -> None:
+    """The request path keeps its typed error when Python assertions are disabled."""
+    controller = object.__new__(TrainingController)
+    controller.config = AppConfig()
+
+    with pytest.raises(UnknownModelException, match="Unknown model: missing"):
+        controller._effective_target_modules("missing", types.LoraConfig(rank=8))
+
+
+def test_effective_target_modules_records_qv_only_mode() -> None:
+    """Persisted runs record the geometry selected by the dedicated Q/V opt-in."""
+    model_config = ModelConfig(
+        model_name="qv",
+        model_path=Path("/tmp/qwen-model"),
+        max_model_len=1024,
+        training_backend="fsdp",
+        fsdp_qv_only=True,
+    )
+    controller = object.__new__(TrainingController)
+    controller.config = AppConfig(supported_models=[model_config])
+
+    assert controller._effective_target_modules("qv", types.LoraConfig(rank=8)) == [
+        "q_proj",
+        "v_proj",
+    ]
+
+
+def test_checkpoint_compatibility_rejects_destination_without_geometry() -> None:
+    """A legacy destination produces a clean request error rather than a set(None) failure."""
+    model_config = ModelConfig(
+        model_name="base",
+        model_path=Path("/tmp/qwen-model"),
+        max_model_len=1024,
+    )
+    controller = object.__new__(TrainingController)
+    controller.config = AppConfig(supported_models=[model_config])
+    destination = TrainingRunRecord(
+        training_run_id="destination",
+        base_model="base",
+        lora_rank=8,
+        train_attn=True,
+        train_mlp=True,
+        train_unembed=True,
+        target_modules=None,
+        session_id="session",
+        model_owner="tester",
+    )
+    checkpoint = MagicMock()
+    checkpoint.saved_target_modules = ["q_proj", "v_proj"]
+    metadata = MagicMock(base_model="base", lora_rank=8)
+
+    with pytest.raises(InvalidRequestException, match="does not record effective LoRA"):
+        controller._check_adapter_compatible(
+            checkpoint_id="checkpoint",
+            checkpoint=checkpoint,
+            metadata=metadata,
+            destination=destination,
+        )
 
 
 @pytest.mark.asyncio
@@ -646,8 +709,8 @@ async def test_load_checkpoint_rejects_different_lora_target_modules(request, tm
     checkpoint's own adapter_config.json, so an unguarded load here would leave
     the unmatched modules at their random init without raising.
 
-    The default CPU model path resolves to no known series, so this exercises
-    the raw-flag fallback of the compatibility check.
+    Compatibility is checked from the concrete target modules persisted in the
+    run and checkpoint, rather than reconstructing geometry from modifier flags.
     """
     use_gpu = request.config.getoption("--gpu")
     state = await _build_state(tmp_path, use_gpu)
@@ -675,7 +738,7 @@ async def test_load_checkpoint_rejects_different_lora_target_modules(request, tm
         user_metadata=None,
     )
 
-    with pytest.raises(InvalidRequestException, match="train_mlp"):
+    with pytest.raises(InvalidRequestException, match="targeting LoRA modules"):
         await state.load_checkpoint(
             destination.training_run_id,
             path=checkpoint.tinker_checkpoint.tinker_path,
@@ -709,6 +772,17 @@ async def test_load_checkpoint_compares_resolved_modules_not_raw_flags(request, 
         name="module-set-test",
         checkpoint_type="training",
     )
+    expected_modules = [
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj",
+        "gate_proj",
+        "up_proj",
+        "down_proj",
+    ]
+    assert state.training.training_runs[source.training_run_id].target_modules == expected_modules
+    assert checkpoint.metadata.target_modules == expected_modules
 
     same_geometry = await state.create_model(
         session_id,
@@ -742,7 +816,7 @@ async def test_load_checkpoint_compares_resolved_modules_not_raw_flags(request, 
 
 @pytest.mark.asyncio
 async def test_legacy_run_is_invalid_but_checkpoint_can_seed_new_run(request, tmp_path) -> None:
-    """Legacy runs are read-only checkpoint sources after an upgrade."""
+    """Runs missing effective geometry are read-only checkpoint sources."""
     use_gpu = request.config.getoption("--gpu")
     state = await _build_state(tmp_path, use_gpu, cpu_model_path="/path/to/qwen-test-model")
     session_id = _create_session(state)
@@ -778,7 +852,7 @@ async def test_legacy_run_is_invalid_but_checkpoint_can_seed_new_run(request, tm
 
     assert restored is None
     assert source_record.corrupted is True
-    with pytest.raises(InvalidRequestException, match="older state format"):
+    with pytest.raises(InvalidRequestException, match="does not record.*target geometry"):
         await state.save_checkpoint(
             source.training_run_id,
             user_id="tester",
@@ -817,8 +891,8 @@ async def test_legacy_run_is_invalid_but_checkpoint_can_seed_new_run(request, tm
 
 
 @pytest.mark.asyncio
-async def test_legacy_checkpoint_without_adapter_geometry_is_rejected(request, tmp_path) -> None:
-    """Legacy checkpoints need adapter_config.json to be safe load sources."""
+async def test_checkpoint_without_explicit_adapter_geometry_is_rejected(request, tmp_path) -> None:
+    """Checkpoint metadata without concrete target modules is rejected clearly."""
     use_gpu = request.config.getoption("--gpu")
     state = await _build_state(tmp_path, use_gpu, cpu_model_path="/path/to/qwen-test-model")
     session_id = _create_session(state)
@@ -839,6 +913,9 @@ async def test_legacy_checkpoint_without_adapter_geometry_is_rejected(request, t
         base_model=source.base_model,
         session_id=source.session_id,
         lora_rank=source.lora_rank,
+        train_attn=True,
+        train_mlp=True,
+        train_unembed=True,
     )
     destination = await state.create_model(
         session_id,
@@ -848,7 +925,7 @@ async def test_legacy_checkpoint_without_adapter_geometry_is_rejected(request, t
         user_metadata=None,
     )
 
-    with pytest.raises(InvalidRequestException, match="adapter_config.json"):
+    with pytest.raises(InvalidRequestException, match="without an explicit target-module list"):
         await state.load_checkpoint(
             destination.training_run_id,
             path=checkpoint.tinker_checkpoint.tinker_path,

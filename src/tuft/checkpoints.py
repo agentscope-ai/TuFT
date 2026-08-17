@@ -23,6 +23,32 @@ def compute_tree_size(path: Path) -> int:
     return total
 
 
+def read_adapter_target_modules(adapter_path: Path) -> list[str] | None:
+    """Read an explicit target-module list from a PEFT adapter configuration.
+
+    PEFT also accepts a regex string, but FSDP checkpoint loading needs the
+    concrete module set to validate it against an already allocated slot.
+    """
+
+    try:
+        adapter_config = json.loads(
+            (adapter_path / "adapter_config.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return None
+    if not isinstance(adapter_config, dict):
+        return None
+    raw_modules = adapter_config.get("target_modules")
+    if not isinstance(raw_modules, list) or not raw_modules:
+        return None
+    if not all(isinstance(module, str) and module.strip() for module in raw_modules):
+        return None
+    modules = [module.strip() for module in raw_modules]
+    if len(set(modules)) != len(modules):
+        return None
+    return modules
+
+
 class CheckpointMetadata(BaseModel):
     """A representation of checkpoint metadata."""
 
@@ -41,11 +67,12 @@ class CheckpointMetadata(BaseModel):
     # ``adapter_config.json`` (see ``CheckpointRecord.saved_lora_alpha``).
     lora_alpha: int | None = None
     # LoRA target-module selection. Together with lora_rank these define the
-    # adapter geometry a checkpoint was written from. None means the checkpoint
-    # predates these fields, so compatibility checks skip them.
+    # adapter geometry a checkpoint was written from. Older checkpoints may omit
+    # these fields, but must provide target_modules in adapter_config.json to load.
     train_attn: bool | None = None
     train_mlp: bool | None = None
     train_unembed: bool | None = None
+    target_modules: list[str] | None = None
     public: bool = False
     future_id: int = 0
     seq_id: int | None = None
@@ -149,6 +176,26 @@ class CheckpointRecord(BaseModel):
             return None
         return int(alpha)
 
+    @property
+    def saved_target_modules(self) -> list[str] | None:
+        """Effective target modules recorded by this checkpoint.
+
+        The PEFT adapter configuration is ground truth when available. Current
+        checkpoints also persist the resolved geometry in metadata, which is a
+        usable fallback when ``adapter_config.json`` is unavailable.
+        """
+
+        modules = read_adapter_target_modules(self.adapter_path)
+        if modules is not None:
+            return modules
+        with contextlib.suppress(CheckpointMetadataReadException):
+            raw_modules = self.metadata.target_modules
+            if raw_modules and all(module.strip() for module in raw_modules):
+                normalized = [module.strip() for module in raw_modules]
+                if len(set(normalized)) == len(normalized):
+                    return normalized
+        return None
+
     def validate_lora_alpha(self, expected_lora_alpha: int) -> None:
         """Reject loading this checkpoint into an adapter with a different alpha.
 
@@ -189,6 +236,7 @@ class CheckpointRecord(BaseModel):
             train_attn=metadata.train_attn,
             train_mlp=metadata.train_mlp,
             train_unembed=metadata.train_unembed,
+            target_modules=metadata.target_modules,
         )
 
     def save_metadata(
@@ -200,6 +248,7 @@ class CheckpointRecord(BaseModel):
         train_attn: bool | None = None,
         train_mlp: bool | None = None,
         train_unembed: bool | None = None,
+        target_modules: list[str] | None = None,
     ) -> None:
         """Save the checkpoint metadata to disk."""
         # check the format of metadata
@@ -218,6 +267,7 @@ class CheckpointRecord(BaseModel):
                 train_attn=train_attn,
                 train_mlp=train_mlp,
                 train_unembed=train_unembed,
+                target_modules=target_modules,
                 public=self.public,
                 size_bytes=self.size_bytes,
                 future_id=self.future_id,

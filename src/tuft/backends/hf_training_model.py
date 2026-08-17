@@ -15,6 +15,7 @@ from tinker.types import LoraConfig as TinkerLoraConfig
 from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoModelForCausalLM
 
+from tuft.backends.lora_modules import MODULE_MAP, get_target_modules
 from tuft.backends.loss_inputs import (
     MODEL_DERIVED_LOSS_INPUTS,
     batch_loss_fn_input,
@@ -32,20 +33,6 @@ from tuft.telemetry.tracing import extract_context, get_tracer
 
 
 _get_tracer = lambda: get_tracer("tuft.hf_training_model")  # noqa: E731
-
-MODULE_MAP = {
-    "llama": {
-        "attn": ["q_proj", "k_proj", "v_proj", "o_proj"],
-        "mlp": ["gate_proj", "up_proj", "down_proj"],
-        "unembed": ["lm_head"],
-    },
-    "qwen": {
-        "attn": ["q_proj", "k_proj", "v_proj", "o_proj"],
-        "mlp": ["gate_proj", "up_proj", "down_proj"],
-        "unembed": [],  # set unembed will cause warning in Qwen models
-    },
-}
-
 
 OPTIMIZER_STATE_FILENAME = "optimizer.pt"
 
@@ -103,25 +90,6 @@ def _export_vllm_compatible_lora_aliases(adapter_dir: Path, model_path: str) -> 
     tmp_path = adapter_dir / "adapter_model.safetensors.tmp"
     save_file(aliased, str(tmp_path))
     os.replace(tmp_path, weights_path)
-
-
-def _resolve_model_series(model_path: str) -> str:
-    series = resolve_model_series(model_path)
-    if series is None:
-        raise ValueError(f"Unsupported model series: {model_path}")
-    return series
-
-
-def get_target_modules(model_path: str, lora_config: TinkerLoraConfig) -> list[str]:
-    mode_series = _resolve_model_series(model_path)
-    target_modules = []
-    if lora_config.train_attn:
-        target_modules.extend(MODULE_MAP[mode_series]["attn"])
-    if lora_config.train_mlp:
-        target_modules.extend(MODULE_MAP[mode_series]["mlp"])
-    if lora_config.train_unembed:
-        target_modules.extend(MODULE_MAP[mode_series]["unembed"])
-    return target_modules
 
 
 def build_peft_lora_config(

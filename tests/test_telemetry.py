@@ -92,7 +92,7 @@ async def _build_state(tmp_path, use_gpu: bool = False) -> ServerState:
     model_path = (
         Path(os.environ.get("TUFT_TEST_MODEL", "/path/to/model"))
         if use_gpu
-        else Path("/path/to/model")
+        else Path("/path/to/qwen-test-model")
     )
     config = AppConfig(checkpoint_dir=tmp_path)
     config.supported_models = [
@@ -426,7 +426,7 @@ def telemetry_server(tmp_path_factory, request, span_exporter, setup_tracer_prov
         ray.init(ignore_reinit_error=True)
         model_path = Path(os.environ.get("TUFT_TEST_MODEL", "Qwen/Qwen3-0.6B"))
     else:
-        model_path = Path("/dummy/model")
+        model_path = Path("/dummy/qwen-model")
 
     config = AppConfig(checkpoint_dir=Path(tmp_path_factory.mktemp("checkpoints")))
     config.supported_models = [

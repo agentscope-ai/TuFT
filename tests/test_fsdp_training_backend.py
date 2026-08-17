@@ -15,9 +15,11 @@ Run:
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from tinker import types
@@ -36,19 +38,486 @@ def test_config_to_worker_dict():
 
     config = ModelConfig(
         model_name="test",
-        model_path=Path("/tmp/model"),
+        model_path=Path("/tmp/qwen-model"),
         max_model_len=1024,
         max_lora_rank=8,
     )
     d = _config_to_worker_dict(config)
-    assert d["model_path"] == "/tmp/model"
+    assert d["model_path"] == "/tmp/qwen-model"
     assert d["max_model_len"] == 1024
     assert "slot_config" in d
-    assert d["slot_config"]["rank_slots"] == {8: 16}  # default for max_lora_rank=8
-    assert d["slot_config"]["target_modules"] == ["q_proj", "v_proj"]
+    assert d["slot_config"]["rank_slots"] == {8: 16}
+    assert d["slot_config"]["target_modules"] == [
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj",
+        "gate_proj",
+        "up_proj",
+        "down_proj",
+    ]
     assert d["slot_config"]["lora_alpha_ratio"] == config.lora_alpha_ratio
     assert "fsdp_override_config" in d
     assert isinstance(d["fsdp_override_config"], dict)
+
+
+@pytest.mark.parametrize(
+    ("train_mlp", "expected"),
+    [
+        (False, ["q_proj", "k_proj", "v_proj", "o_proj"]),
+        (
+            True,
+            [
+                "q_proj",
+                "k_proj",
+                "v_proj",
+                "o_proj",
+                "gate_proj",
+                "up_proj",
+                "down_proj",
+            ],
+        ),
+    ],
+)
+def test_config_to_worker_dict_resolves_fsdp_modifiers(train_mlp, expected):
+    """Attention-only and attention+MLP pools share HF's model-series map."""
+    from tuft.backends.fsdp_training_backend import FSDPTrainingBackend, _config_to_worker_dict
+
+    config = ModelConfig(
+        model_name="test",
+        model_path=Path("/tmp/qwen-model"),
+        max_model_len=1024,
+        fsdp_train_attn=True,
+        fsdp_train_mlp=train_mlp,
+        fsdp_train_unembed=False,
+    )
+
+    assert _config_to_worker_dict(config)["slot_config"]["target_modules"] == expected
+    FSDPTrainingBackend(config)._validate_lora_config(
+        types.LoraConfig(
+            rank=8,
+            train_attn=True,
+            train_mlp=train_mlp,
+            train_unembed=False,
+        )
+    )
+
+
+def test_config_to_worker_dict_honors_explicit_targets_and_rank_slots():
+    """Custom rank pools retain the configured broader target geometry."""
+    from tuft.backends.fsdp_training_backend import FSDPTrainingBackend, _config_to_worker_dict
+
+    targets = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj"]
+    config = ModelConfig(
+        model_name="custom",
+        model_path=Path("/tmp/custom-model"),
+        max_model_len=1024,
+        max_lora_rank=64,
+        training_backend="fsdp",
+        fsdp_rank_slots={64: 4},
+        fsdp_target_modules=targets,
+    )
+
+    slot_config = _config_to_worker_dict(config)["slot_config"]
+    assert slot_config["rank_slots"] == {64: 4}
+    assert slot_config["target_modules"] == targets
+    # Explicit geometry supplies the fallback when this custom set cannot be
+    # represented by public modifier flags or resolved from the model path.
+    FSDPTrainingBackend(config)._validate_lora_config(types.LoraConfig(rank=64))
+
+
+def test_default_rank_slots_do_not_vary_with_target_geometry():
+    """Widening the geometry must not silently cost concurrent adapter capacity."""
+    from tuft.backends.fsdp_training_backend import _config_to_worker_dict
+
+    broad = ModelConfig(
+        model_name="broad",
+        model_path=Path("/tmp/qwen-model"),
+        max_model_len=1024,
+        max_lora_rank=16,
+        training_backend="fsdp",
+    )
+    assert _config_to_worker_dict(broad)["slot_config"]["rank_slots"] == {8: 16, 16: 8}
+
+    # The Q/V-only mode, a single module, and a two-module set that is far more
+    # expensive than Q/V all keep the same capacity: per-slot adapter
+    # memory is small next to the base model the slot is attached to.
+    narrow = broad.model_copy(update={"fsdp_qv_only": True})
+    q_only = broad.model_copy(update={"fsdp_target_modules": ["q_proj"]})
+    wide_pair = broad.model_copy(update={"fsdp_target_modules": ["gate_proj", "up_proj"]})
+    for config in (narrow, q_only, wide_pair):
+        assert _config_to_worker_dict(config)["slot_config"]["rank_slots"] == {8: 16, 16: 8}
+
+    # A max rank at or below 8 collapses to a single pool at that rank, so no
+    # slots are preallocated above the rank the server advertises.
+    low_max = ModelConfig(
+        model_name="low-max",
+        model_path=Path("/tmp/qwen-model"),
+        max_model_len=1024,
+        max_lora_rank=4,
+        training_backend="fsdp",
+    )
+    assert _config_to_worker_dict(low_max)["slot_config"]["rank_slots"] == {4: 16}
+
+
+def test_explicit_rank_slots_must_cover_advertised_max_rank():
+    with pytest.raises(ValueError, match="must define.*max_lora_rank=16.*configured ranks.*8"):
+        ModelConfig(
+            model_name="incoherent",
+            model_path=Path("/tmp/qwen-model"),
+            max_model_len=1024,
+            max_lora_rank=16,
+            training_backend="fsdp",
+            fsdp_rank_slots={8: 1},
+        )
+
+    with pytest.raises(ValueError, match="slot counts must be at least 1"):
+        ModelConfig(
+            model_name="empty-rank",
+            model_path=Path("/tmp/qwen-model"),
+            max_model_len=1024,
+            max_lora_rank=16,
+            training_backend="fsdp",
+            fsdp_rank_slots={8: 1, 16: 0},
+        )
+
+
+def test_unknown_series_requires_actionable_explicit_geometry():
+    """Unsupported implicit geometry fails with the configuration escape hatch."""
+    from tuft.backends.fsdp_training_backend import FSDPTrainingBackend
+
+    config = ModelConfig(
+        model_name="unsupported",
+        model_path=Path("/tmp/mistral-model"),
+        max_model_len=1024,
+        training_backend="fsdp",
+    )
+    with pytest.raises(ValueError, match="Cannot infer.*configure fsdp_target_modules explicitly"):
+        FSDPTrainingBackend(config)
+
+
+def test_fsdp_target_modules_are_stripped_before_validation():
+    config = ModelConfig(
+        model_name="normalized",
+        model_path=Path("/tmp/custom-model"),
+        max_model_len=1024,
+        fsdp_target_modules=[" q_proj ", "v_proj"],
+    )
+    assert config.fsdp_target_modules == ["q_proj", "v_proj"]
+
+    with pytest.raises(ValueError, match="cannot contain duplicates"):
+        ModelConfig(
+            model_name="duplicates",
+            model_path=Path("/tmp/custom-model"),
+            max_model_len=1024,
+            fsdp_target_modules=[" q_proj", "q_proj ", "v_proj"],
+        )
+
+
+def test_qv_only_geometry_requires_the_dedicated_opt_in():
+    common = {
+        "model_name": "qv",
+        "model_path": Path("/tmp/qwen-model"),
+        "max_model_len": 1024,
+        "training_backend": "fsdp",
+    }
+    with pytest.raises(ValueError, match="Q/V-only.*requires fsdp_qv_only=true"):
+        ModelConfig(**common, fsdp_target_modules=["q_proj", "v_proj"])
+
+    config = ModelConfig(**common, fsdp_qv_only=True)
+    assert config.fsdp_qv_only is True
+
+    redundant_but_consistent = ModelConfig(
+        **common,
+        fsdp_qv_only=True,
+        fsdp_target_modules=["q_proj", "v_proj"],
+    )
+    assert redundant_but_consistent.fsdp_target_modules == ["q_proj", "v_proj"]
+
+    with pytest.raises(ValueError, match="conflicts with fsdp_target_modules"):
+        ModelConfig(**common, fsdp_qv_only=True, fsdp_target_modules=["q_proj"])
+
+    with pytest.raises(ValueError, match="requires training_backend='fsdp'"):
+        ModelConfig(
+            model_name="hf",
+            model_path=Path("/tmp/qwen-model"),
+            max_model_len=1024,
+            fsdp_qv_only=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_qv_only_mode_creates_run_and_loads_existing_checkpoint(tmp_path):
+    """The dedicated opt-in preserves Q/V checkpoint compatibility."""
+    from tuft.backends.fsdp_training_backend import FSDPTrainingBackend
+    from tuft.checkpoints import CheckpointRecord
+
+    config = ModelConfig(
+        model_name="qv",
+        model_path=Path("/tmp/qwen-model"),
+        max_model_len=1024,
+        training_backend="fsdp",
+        fsdp_qv_only=True,
+    )
+    backend = FSDPTrainingBackend(config)
+    backend._worker = MagicMock()
+    backend._worker.allocate_slot.return_value = "adapter_r8_0"
+
+    await backend.create_adapter("qv-run", types.LoraConfig(rank=8))
+    assert backend._lora_id_to_adapter_name["qv-run"] == "adapter_r8_0"
+    assert backend._slot_config.target_modules == ["q_proj", "v_proj"]
+
+    checkpoint = CheckpointRecord(
+        checkpoint_id="qv-checkpoint",
+        owner_name="tester",
+        checkpoint_type="training",
+        training_run_id="source",
+        path=tmp_path / "qv-checkpoint",
+    )
+    checkpoint.adapter_path.mkdir(parents=True)
+    (checkpoint.adapter_path / "adapter_config.json").write_text(
+        json.dumps({"target_modules": ["q_proj", "v_proj"]}),
+        encoding="utf-8",
+    )
+    await backend.load_state("qv-run", checkpoint, optimizer=False)
+    backend._worker.load_checkpoint.assert_called_once_with(
+        "adapter_r8_0",
+        checkpoint.adapter_path,
+        ["q_proj", "v_proj"],
+        False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_explicit_geometry_rejects_resolvable_client_modifier_mismatch():
+    """Explicit geometry cannot silently override a resolvable client request."""
+    from tuft.backends.fsdp_training_backend import FSDPTrainingBackend
+    from tuft.exceptions import InvalidRequestException
+
+    config = ModelConfig(
+        model_name="legacy",
+        model_path=Path("/tmp/qwen-model"),
+        max_model_len=1024,
+        training_backend="fsdp",
+        fsdp_target_modules=["q_proj"],
+    )
+    backend = FSDPTrainingBackend(config)
+    backend.async_init = MagicMock(side_effect=AssertionError("must reject before init"))
+
+    with pytest.raises(
+        InvalidRequestException,
+        match=r"target-module mismatch.*explicit fsdp_target_modules=\['q_proj'\]",
+    ) as exc_info:
+        await backend.create_adapter("legacy-run", types.LoraConfig(rank=8))
+    assert exc_info.value.status_code == 400
+    assert "training run was not created" in exc_info.value.detail
+    backend.async_init.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_adapter_rejects_incompatible_client_modifiers_before_init():
+    """A request cannot silently allocate a slot with different target geometry."""
+    from tuft.backends.fsdp_training_backend import FSDPTrainingBackend
+    from tuft.exceptions import InvalidRequestException
+
+    config = ModelConfig(
+        model_name="test",
+        model_path=Path("/tmp/qwen-model"),
+        max_model_len=1024,
+        training_backend="fsdp",
+        fsdp_train_attn=True,
+        fsdp_train_mlp=False,
+        fsdp_train_unembed=False,
+    )
+    backend = FSDPTrainingBackend(config)
+    backend.async_init = MagicMock(side_effect=AssertionError("must validate before init"))
+
+    with pytest.raises(InvalidRequestException, match="target-module mismatch.*train_mlp=True"):
+        await backend.create_adapter(
+            "incompatible",
+            types.LoraConfig(rank=8, train_attn=True, train_mlp=True, train_unembed=False),
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_adapter_rejects_unconfigured_rank_before_init():
+    """A discrete FSDP pool reports its configured ranks as a request error."""
+    from tuft.backends.fsdp_training_backend import FSDPTrainingBackend
+    from tuft.exceptions import InvalidRequestException
+
+    config = ModelConfig(
+        model_name="test",
+        model_path=Path("/tmp/qwen-model"),
+        max_model_len=1024,
+        max_lora_rank=16,
+        training_backend="fsdp",
+        fsdp_rank_slots={8: 1, 16: 1},
+    )
+    backend = FSDPTrainingBackend(config)
+    backend.async_init = MagicMock(side_effect=AssertionError("must reject before init"))
+
+    with pytest.raises(InvalidRequestException, match=r"rank 4 is not configured.*\[8, 16\]"):
+        await backend.create_adapter("unsupported-rank", types.LoraConfig(rank=4))
+    backend.async_init.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_adapter_reports_local_slot_exhaustion_as_429():
+    from tuft.backends.fsdp_training_backend import FSDPTrainingBackend
+    from tuft.exceptions import ResourceExhaustedException
+
+    config = ModelConfig(
+        model_name="test",
+        model_path=Path("/tmp/qwen-model"),
+        max_model_len=1024,
+        max_lora_rank=8,
+        training_backend="fsdp",
+        fsdp_rank_slots={8: 1},
+    )
+    backend = FSDPTrainingBackend(config)
+    backend._worker = MagicMock()
+    backend._worker.allocate_slot.return_value = None
+
+    with pytest.raises(ResourceExhaustedException, match="All 1.*rank 8.*in use") as exc_info:
+        await backend.create_adapter("exhausted", types.LoraConfig(rank=8))
+    assert exc_info.value.status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_create_adapter_reports_ray_slot_exhaustion_as_429(monkeypatch):
+    """The Ray leader's None result uses the same typed exhaustion path."""
+    import ray
+
+    from tuft.backends.fsdp_training_backend import FSDPTrainingBackend
+    from tuft.exceptions import ResourceExhaustedException
+
+    config = ModelConfig(
+        model_name="test",
+        model_path=Path("/tmp/qwen-model"),
+        max_model_len=1024,
+        max_lora_rank=8,
+        training_backend="fsdp",
+        fsdp_rank_slots={8: 1},
+    )
+    backend = FSDPTrainingBackend(config)
+    actor = MagicMock()
+    actor.allocate_slot.remote.return_value = object()
+    backend._actors = [actor]
+    backend._world_size = 1
+    monkeypatch.setattr(ray, "get", lambda _ref: None)
+
+    with pytest.raises(ResourceExhaustedException, match="All 1.*rank 8.*in use") as exc_info:
+        await backend.create_adapter("exhausted", types.LoraConfig(rank=8))
+    assert exc_info.value.status_code == 429
+
+
+@pytest.mark.asyncio
+async def test_load_state_validates_checkpoint_target_geometry(tmp_path):
+    """FSDP load_state rejects a partial match instead of leaving random modules."""
+    from tuft.backends.fsdp_training_backend import FSDPTrainingBackend
+    from tuft.checkpoints import CheckpointRecord
+    from tuft.exceptions import InvalidRequestException
+
+    config = ModelConfig(
+        model_name="test",
+        model_path=Path("/tmp/qwen-model"),
+        max_model_len=1024,
+        training_backend="fsdp",
+    )
+    backend = FSDPTrainingBackend(config)
+    backend._lora_id_to_adapter_name["run"] = "adapter_r8_0"
+    backend._worker = MagicMock()
+    checkpoint = CheckpointRecord(
+        checkpoint_id="checkpoint-0001",
+        owner_name="tester",
+        checkpoint_type="training",
+        training_run_id="source",
+        path=tmp_path / "checkpoint-0001",
+    )
+    checkpoint.adapter_path.mkdir(parents=True)
+    (checkpoint.adapter_path / "adapter_config.json").write_text(
+        json.dumps({"target_modules": ["q_proj", "v_proj"]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(InvalidRequestException, match="targeting modules.*q_proj.*v_proj"):
+        await backend.load_state("run", checkpoint, optimizer=False)
+    backend._worker.load_checkpoint.assert_not_called()
+
+    (checkpoint.adapter_path / "adapter_config.json").write_text(
+        json.dumps({"target_modules": backend._slot_config.target_modules}),
+        encoding="utf-8",
+    )
+    await backend.load_state("run", checkpoint, optimizer=False)
+    backend._worker.load_checkpoint.assert_called_once_with(
+        "adapter_r8_0",
+        checkpoint.adapter_path,
+        backend._slot_config.target_modules,
+        False,
+    )
+
+    regex_checkpoint = CheckpointRecord(
+        checkpoint_id="checkpoint-regex",
+        owner_name="tester",
+        checkpoint_type="training",
+        training_run_id="source",
+        path=tmp_path / "checkpoint-regex",
+    )
+    regex_checkpoint.adapter_path.mkdir(parents=True)
+    (regex_checkpoint.adapter_path / "adapter_config.json").write_text(
+        json.dumps({"target_modules": ".*\\.q_proj"}),
+        encoding="utf-8",
+    )
+    with pytest.raises(InvalidRequestException, match="regex-string targets"):
+        await backend.load_state("run", regex_checkpoint, optimizer=False)
+
+    # Current metadata is a functional fallback when adapter_config.json is
+    # missing; the validated module list is handed to the worker instead of
+    # making the worker reread the absent file.
+    backend._worker.load_checkpoint.reset_mock()
+    (checkpoint.adapter_path / "adapter_config.json").unlink()
+    checkpoint.save_metadata(
+        base_model="test",
+        session_id="session",
+        lora_rank=8,
+        target_modules=backend._slot_config.target_modules,
+    )
+    await backend.load_state("run", checkpoint, optimizer=False)
+    backend._worker.load_checkpoint.assert_called_once_with(
+        "adapter_r8_0",
+        checkpoint.adapter_path,
+        backend._slot_config.target_modules,
+        False,
+    )
+
+
+def test_worker_load_checkpoint_validates_supplied_geometry_before_weights(tmp_path):
+    """The worker independently rejects a backend/slot geometry disagreement."""
+    from tuft.backends.fsdp_engine import FSDPModelConfig
+    from tuft.backends.fsdp_training_backend import (
+        AdapterInfo,
+        MultiAdapterFSDPWorker,
+        SlotPoolConfig,
+    )
+
+    worker = MultiAdapterFSDPWorker(
+        FSDPModelConfig(path="/tmp/model", max_model_len=1024),
+        SlotPoolConfig(rank_slots={8: 1}, target_modules=["q_proj", "v_proj"]),
+    )
+    worker._adapters["adapter_r8_0"] = AdapterInfo(
+        name="adapter_r8_0",
+        rank=8,
+        lora_alpha=16,
+        target_modules=["q_proj", "v_proj"],
+    )
+
+    with pytest.raises(RuntimeError, match="targeting modules.*q_proj"):
+        worker.load_checkpoint(
+            "adapter_r8_0",
+            tmp_path,
+            ["q_proj"],
+            optimizer=False,
+        )
 
 
 def test_slot_pool_config_get_lora_alpha():
@@ -74,7 +543,7 @@ async def test_async_init_raises_when_no_ray_and_multi_gpu():
     try:
         config = ModelConfig(
             model_name="test",
-            model_path=Path("/tmp/model"),
+            model_path=Path("/tmp/qwen-model"),
             max_model_len=1024,
             training_backend="fsdp",
             fsdp_num_gpus=2,
@@ -99,7 +568,7 @@ def test_fsdp_port_allocation_by_index():
         model_configs = [
             ModelConfig(
                 model_name="model_a",
-                model_path=Path("/tmp/a"),
+                model_path=Path("/tmp/qwen-a"),
                 max_model_len=1024,
                 training_backend="fsdp",
             ),
@@ -111,7 +580,7 @@ def test_fsdp_port_allocation_by_index():
             ),
             ModelConfig(
                 model_name="model_c",
-                model_path=Path("/tmp/c"),
+                model_path=Path("/tmp/qwen-c"),
                 max_model_len=1024,
                 training_backend="fsdp",
             ),
@@ -934,7 +1403,7 @@ async def test_forward_raises_when_data_fewer_than_actors():
 
     config = ModelConfig(
         model_name="test",
-        model_path=Path("/tmp/model"),
+        model_path=Path("/tmp/qwen-model"),
         max_model_len=1024,
         training_backend="fsdp",
         fsdp_num_gpus=2,

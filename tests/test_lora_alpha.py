@@ -142,7 +142,7 @@ def test_config_to_worker_dict_propagates_lora_alpha_ratio(ratio: int):
     )
 
     worker_dict = _config_to_worker_dict(
-        _model_config(model_path=Path("/tmp/model"), lora_alpha_ratio=ratio, max_lora_rank=8)
+        _model_config(model_path=Path("/tmp/qwen-model"), lora_alpha_ratio=ratio, max_lora_rank=8)
     )
     assert worker_dict["slot_config"]["lora_alpha_ratio"] == ratio
 
@@ -165,7 +165,7 @@ def test_fsdp_backend_slot_pool_honours_configured_ratio(ratio: int):
 
     backend = FSDPTrainingBackend(
         _model_config(
-            model_path=Path("/tmp/model"),
+            model_path=Path("/tmp/qwen-model"),
             training_backend="fsdp",
             lora_alpha_ratio=ratio,
             max_lora_rank=8,
@@ -173,6 +173,7 @@ def test_fsdp_backend_slot_pool_honours_configured_ratio(ratio: int):
     )
 
     _, slot_config = _worker_dict_to_configs(backend._config_dict)
+    assert backend._slot_config == slot_config
     assert slot_config.lora_alpha_ratio == ratio
     assert slot_config.get_lora_alpha(8) == 8 * ratio
 
