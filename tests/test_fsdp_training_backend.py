@@ -16,7 +16,6 @@ Run:
 from __future__ import annotations
 
 import json
-import logging
 import os
 import tempfile
 from pathlib import Path
@@ -122,8 +121,8 @@ def test_config_to_worker_dict_honors_explicit_targets_and_rank_slots():
     slot_config = _config_to_worker_dict(config)["slot_config"]
     assert slot_config["rank_slots"] == {64: 4}
     assert slot_config["target_modules"] == targets
-    # Explicit geometry is authoritative even though this custom set cannot be
-    # represented by the public modifier flags or resolved from the model path.
+    # Explicit geometry supplies the fallback when this custom set cannot be
+    # represented by public modifier flags or resolved from the model path.
     FSDPTrainingBackend(config)._validate_lora_config(types.LoraConfig(rank=64))
 
 
@@ -237,9 +236,10 @@ async def test_explicit_legacy_geometry_accepts_default_client_on_unknown_series
 
 
 @pytest.mark.asyncio
-async def test_explicit_geometry_warns_when_resolvable_client_modifiers_differ(caplog):
-    """Explicit migration geometry wins visibly instead of discarding modifiers silently."""
+async def test_explicit_geometry_rejects_resolvable_client_modifier_mismatch():
+    """Explicit geometry cannot silently override a resolvable client request."""
     from tuft.backends.fsdp_training_backend import FSDPTrainingBackend
+    from tuft.exceptions import InvalidRequestException
 
     config = ModelConfig(
         model_name="legacy",
@@ -249,16 +249,16 @@ async def test_explicit_geometry_warns_when_resolvable_client_modifiers_differ(c
         fsdp_target_modules=["q_proj", "v_proj"],
     )
     backend = FSDPTrainingBackend(config)
-    backend._worker = MagicMock()
-    backend._worker.allocate_slot.return_value = "adapter_r8_0"
+    backend.async_init = MagicMock(side_effect=AssertionError("must reject before init"))
 
-    with caplog.at_level(logging.WARNING, logger=backend.logger.name):
+    with pytest.raises(
+        InvalidRequestException,
+        match=r"target-module mismatch.*explicit fsdp_target_modules=\['q_proj', 'v_proj'\]",
+    ) as exc_info:
         await backend.create_adapter("legacy-run", types.LoraConfig(rank=8))
-
-    assert backend._lora_id_to_adapter_name["legacy-run"] == "adapter_r8_0"
-    assert "explicit fsdp_target_modules" in caplog.text
-    assert "train_mlp=True" in caplog.text
-    assert "this training run will target ['q_proj', 'v_proj']" in caplog.text
+    assert exc_info.value.status_code == 400
+    assert "training run was not created" in exc_info.value.detail
+    backend.async_init.assert_not_called()
 
 
 @pytest.mark.asyncio

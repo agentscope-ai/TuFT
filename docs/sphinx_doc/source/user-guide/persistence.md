@@ -156,11 +156,13 @@ stored signature, TuFT fails preflight with a configuration-mismatch error. Use 
 new namespace or clear the existing one before starting the server. Checkpoint
 files are not deleted by either namespace changes or `tuft clear persistence`.
 
-To load an existing FSDP checkpoint whose `adapter_config.json` records
-`target_modules: [q_proj, v_proj]`, configure that exact `fsdp_target_modules` list
-on the destination model before creating the new training run. This explicit
-geometry takes precedence over client LoRA modifiers; TuFT logs a warning when
-resolvable modifiers request a different set.
+An FSDP checkpoint can be loaded only into a training run whose effective target
+modules match the checkpoint and the server's preallocated geometry. For supported
+model series, client LoRA modifiers must resolve to the configured
+`fsdp_target_modules` exactly; TuFT returns HTTP 400 before creating the run when
+they differ. The current boolean client modifiers cannot express the Q/V-only
+`target_modules: [q_proj, v_proj]` geometry, so TuFT rejects a new run for such a
+pool instead of silently overriding the client's request.
 
 ---
 

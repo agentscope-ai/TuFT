@@ -828,8 +828,8 @@ class TrainingController:
         if model_config is None:
             raise UnknownModelException(model_name=base_model)
         if model_config.training_backend == "fsdp" and model_config.fsdp_target_modules is not None:
-            # Explicit FSDP geometry is an operator override and is authoritative
-            # even when the public modifier flags cannot express the same set.
+            # Persist the explicit slot geometry. FSDPTrainingBackend separately
+            # rejects resolvable client modifiers that request a different set.
             return list(model_config.fsdp_target_modules)
         from .backends.lora_modules import get_target_modules
 

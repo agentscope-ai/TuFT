@@ -1099,27 +1099,17 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             f"train_attn={lora_config.train_attn}, train_mlp={lora_config.train_mlp}, "
             f"train_unembed={lora_config.train_unembed}"
         )
-        if explicit_modules is not None:
-            # Explicit geometry must remain usable for custom sets and legacy
-            # Q/V checkpoints, even when no public modifier combination can
-            # express it. create_adapter calls this once per new training run.
-            self.logger.warning(
-                "FSDP model %s uses explicit fsdp_target_modules=%s, but client LoRA "
-                "modifiers (%s) resolve to %s. The explicit server geometry is "
-                "authoritative; this training run will target %s.",
-                self.config.model_path,
-                sorted(explicit_modules),
-                modifier_summary,
-                sorted(requested_modules),
-                sorted(slot_modules),
-            )
-            return
+        slot_description = (
+            f"the server's explicit fsdp_target_modules={sorted(slot_modules)}"
+            if explicit_modules is not None
+            else f"the preallocated slot pool targets {sorted(slot_modules)}"
+        )
         raise InvalidRequestException(
             "FSDP LoRA target-module mismatch: client modifiers "
-            f"({modifier_summary}) resolve to {sorted(requested_modules)}, but the "
-            f"preallocated slot pool targets {sorted(slot_modules)}. Configure "
-            "fsdp_target_modules or the fsdp_train_attn/fsdp_train_mlp/"
-            "fsdp_train_unembed server settings to match the client request."
+            f"({modifier_summary}) resolve to {sorted(requested_modules)}, but "
+            f"{slot_description}. The training run was not created. Change the client modifiers, "
+            "or reconfigure the server's FSDP target geometry and restart it so both module "
+            "sets match."
         )
 
     def _validate_checkpoint_geometry(self, checkpoint_record: CheckpointRecord) -> List[str]:

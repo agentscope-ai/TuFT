@@ -155,10 +155,12 @@ tuft clear persistence --config /path/to/tuft_config.yaml
 服务器前使用新命名空间或清除现有命名空间。更换命名空间或运行
 `tuft clear persistence` 都不会删除磁盘上的检查点文件。
 
-如果现有 FSDP 检查点的 `adapter_config.json` 中记录了
-`target_modules: [q_proj, v_proj]`，请先在目标模型中配置完全相同的
-`fsdp_target_modules` 列表，再创建新的训练运行。显式模块配置优先于客户端 LoRA
-修饰符；如果可解析的修饰符请求了不同的模块集，TuFT 会记录警告。
+FSDP 检查点只能加载到有效目标模块与检查点及服务器预分配模块结构一致的训练运行中。
+对于受支持的模型系列，客户端 LoRA 修饰符必须解析为与配置的
+`fsdp_target_modules` 完全相同的模块集；如果二者不一致，TuFT 会在创建训练运行前
+返回 HTTP 400。当前的布尔客户端修饰符无法表示仅包含 Q/V 的
+`target_modules: [q_proj, v_proj]` 结构，因此 TuFT 会拒绝为该模块池创建新的训练运行，
+而不会静默覆盖客户端请求。
 
 ---
 

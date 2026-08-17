@@ -86,13 +86,14 @@ supported_models:
     # fsdp_train_attn: true
     # fsdp_train_mlp: true
     # fsdp_train_unembed: true
-    # Or specify the exact homogeneous module set instead of the modifiers. An
-    # explicit list is authoritative because client flags cannot express custom
-    # sets or unsupported model families. If resolvable client modifiers disagree,
-    # the server logs a warning and trains the explicit set:
+    # Or specify the exact homogeneous module set instead of the modifiers. For a
+    # supported model series, every client request must resolve to this exact list;
+    # a mismatch returns HTTP 400 and does not create the training run. For an
+    # unsupported model family, the explicit list supplies the geometry because
+    # its client modifiers cannot be resolved:
     # fsdp_target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
-    # To load an existing FSDP checkpoint whose adapter_config.json records
-    # [q_proj, v_proj], configure that exact list for the destination run.
+    # A checkpoint can be loaded only when its recorded target modules match the
+    # preallocated geometry and the destination run's effective modules.
     # Every slot is materialized eagerly before sharding, so slot counts set the
     # floor on preallocated adapter memory. That memory is a small fraction of
     # the frozen base model even for the widest target set, so the defaults keep
