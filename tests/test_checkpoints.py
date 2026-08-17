@@ -24,8 +24,10 @@ def test_checkpoint_record(tmp_path):
         session_id="sess789",
         base_model="base-model-v1",
         lora_rank=16,
+        lora_alpha=32,
     )
     assert record.metadata_path.exists()
+    assert record.metadata.lora_alpha == 32
 
     # tinker_path property
     tinker_path = record.tinker_path

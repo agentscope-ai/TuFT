@@ -28,6 +28,7 @@ supported_models:
     # quantization: fp8              # fp8 | awq | gptq | bitsandbytes
     # sampling_max_model_len: 4096   # cap vLLM context to save KV-cache memory
     # training_backend: fsdp         # multi-GPU training (also set launch.py --gpu H100:N)
+    # lora_alpha_ratio: 2            # lora_alpha = rank * ratio; set 1 for the old "hf" scaling
     # temperature: 0.7
     # top_p: 0.9
 

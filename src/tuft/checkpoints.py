@@ -1,6 +1,7 @@
 """Module for managing checkpoints on disk."""
 
 import contextlib
+import json
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -8,7 +9,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_serializer
 from tinker import types
 
-from .exceptions import CheckpointMetadataReadException
+from .exceptions import CheckpointIncompatibleException, CheckpointMetadataReadException
 
 
 def compute_tree_size(path: Path) -> int:
@@ -35,6 +36,10 @@ class CheckpointMetadata(BaseModel):
     owner_name: str
     size_bytes: int = 0
     lora_rank: int | None = None
+    # Effective peft ``lora_alpha`` the adapter was trained with. None for
+    # checkpoints written before this field existed; those fall back to the peft
+    # ``adapter_config.json`` (see ``CheckpointRecord.saved_lora_alpha``).
+    lora_alpha: int | None = None
     public: bool = False
     future_id: int = 0
     seq_id: int | None = None
@@ -111,6 +116,60 @@ class CheckpointRecord(BaseModel):
         """Get the path to the metadata JSON file."""
         return self.path / "metadata.json"
 
+    @property
+    def saved_lora_alpha(self) -> int | None:
+        """Effective peft ``lora_alpha`` this checkpoint was trained with.
+
+        Prefers ``metadata.json``, then falls back to the peft
+        ``adapter_config.json`` in the adapter directory, which makes checkpoints
+        written before ``metadata.lora_alpha`` existed self-describing. Returns
+        None when neither source records an alpha, in which case the alpha cannot
+        be checked and the load proceeds.
+        """
+        with contextlib.suppress(CheckpointMetadataReadException):
+            recorded = self.metadata.lora_alpha
+            if recorded is not None:
+                return int(recorded)
+        try:
+            adapter_config = json.loads(
+                (self.adapter_path / "adapter_config.json").read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            return None
+        if not isinstance(adapter_config, dict):
+            return None
+        alpha = adapter_config.get("lora_alpha")
+        if isinstance(alpha, bool) or not isinstance(alpha, (int, float)):
+            return None
+        return int(alpha)
+
+    def validate_lora_alpha(self, expected_lora_alpha: int) -> None:
+        """Reject loading this checkpoint into an adapter with a different alpha.
+
+        LoRA update scale is proportional to ``lora_alpha / rank``, so replaying
+        weights trained at one alpha into an adapter built with another silently
+        rescales every update. The FSDP backend is the dangerous case: its slots
+        are built from ``ModelConfig.lora_alpha_ratio`` up front and loading only
+        copies weights into them.
+
+        Raises:
+            CheckpointIncompatibleException: If the checkpoint records an alpha
+                that differs from ``expected_lora_alpha``.
+        """
+        saved = self.saved_lora_alpha
+        if saved is None or saved == expected_lora_alpha:
+            return
+        raise CheckpointIncompatibleException(
+            checkpoint_id=self.checkpoint_id,
+            detail=(
+                f"Checkpoint {self.checkpoint_id} was trained with lora_alpha={saved} but this "
+                f"server would give the adapter lora_alpha={expected_lora_alpha}. Loading it "
+                "would rescale every LoRA update. Set the model's lora_alpha_ratio so that "
+                "rank * lora_alpha_ratio matches the checkpoint (the 'hf' backend used "
+                "lora_alpha_ratio: 1 before the setting existed), or start a new training run."
+            ),
+        )
+
     def set_visibility(self, public: bool) -> None:
         """Set the visibility of the checkpoint."""
         self.public = public
@@ -120,9 +179,16 @@ class CheckpointRecord(BaseModel):
             base_model=metadata.base_model,
             session_id=metadata.session_id,
             lora_rank=metadata.lora_rank,
+            lora_alpha=metadata.lora_alpha,
         )
 
-    def save_metadata(self, base_model: str, session_id: str, lora_rank: int | None) -> None:
+    def save_metadata(
+        self,
+        base_model: str,
+        session_id: str,
+        lora_rank: int | None,
+        lora_alpha: int | None = None,
+    ) -> None:
         """Save the checkpoint metadata to disk."""
         # check the format of metadata
         try:
@@ -136,6 +202,7 @@ class CheckpointRecord(BaseModel):
                 tinker_path=self.tinker_path,
                 owner_name=self.owner_name,
                 lora_rank=lora_rank,
+                lora_alpha=lora_alpha,
                 public=self.public,
                 size_bytes=self.size_bytes,
                 future_id=self.future_id,

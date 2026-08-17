@@ -45,7 +45,7 @@ from tuft.backends.vllm_lora_compat import (
     vllm_nests_language_model,
 )
 from tuft.checkpoints import CheckpointRecord
-from tuft.config import ModelConfig
+from tuft.config import DEFAULT_LORA_ALPHA_RATIO, ModelConfig, compute_lora_alpha
 
 
 # Matches the slot/adapter name embedded in a PEFT LoRA parameter key, e.g.
@@ -184,11 +184,11 @@ class SlotPoolConfig:
     """Multi-adapter slot pool configuration (rank -> number of slots)."""
 
     rank_slots: Dict[int, int] = field(default_factory=lambda: {8: 5, 16: 2})
-    lora_alpha_ratio: int = 2
+    lora_alpha_ratio: int = DEFAULT_LORA_ALPHA_RATIO
     target_modules: List[str] = field(default_factory=lambda: ["q_proj", "v_proj"])
 
     def get_lora_alpha(self, rank: int) -> int:
-        return rank * self.lora_alpha_ratio
+        return compute_lora_alpha(rank, self.lora_alpha_ratio)
 
 
 @dataclass
@@ -237,7 +237,7 @@ def _config_to_worker_dict(config: ModelConfig) -> dict:
         "attn_implementation": getattr(config, "attn_implementation", None),
         "slot_config": {
             "rank_slots": rank_slots,
-            "lora_alpha_ratio": 2,
+            "lora_alpha_ratio": int(getattr(config, "lora_alpha_ratio", DEFAULT_LORA_ALPHA_RATIO)),
             "target_modules": ["q_proj", "v_proj"],
         },
     }
@@ -265,7 +265,7 @@ def _worker_dict_to_configs(config_dict: dict) -> tuple[FSDPModelConfig, SlotPoo
     sc = config_dict.get("slot_config") or {}
     slot_config = SlotPoolConfig(
         rank_slots=dict(sc.get("rank_slots", {8: 4})),
-        lora_alpha_ratio=int(sc.get("lora_alpha_ratio", 2)),
+        lora_alpha_ratio=int(sc.get("lora_alpha_ratio", DEFAULT_LORA_ALPHA_RATIO)),
         target_modules=list(sc.get("target_modules", ["q_proj", "v_proj"])),
     )
     return model_config, slot_config
@@ -873,10 +873,9 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         self._lora_id_to_adapter_name: Dict[str, str] = {}
         self._adapter_name_to_lora_id: Dict[str, str] = {}
         self._lock = asyncio.Lock()
-        rank_slots = _get_rank_slots_from_config(config)
-        self._slot_config = SlotPoolConfig(
-            rank_slots=rank_slots,
-        )
+        # Both the Ray and the single-process path derive their slot pool from this
+        # one dict, so they cannot disagree on rank slots, lora_alpha_ratio, or
+        # target modules.
         self._config_dict = _config_to_worker_dict(config)
         self.logger = logging.getLogger(f"{__name__}.FSDPTrainingBackend")
 
@@ -925,10 +924,10 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                     rank=0,
                     world_size=1,
                 )
-            model_config, _slot = _worker_dict_to_configs(self._config_dict)
+            model_config, slot_config = _worker_dict_to_configs(self._config_dict)
             self._worker = MultiAdapterFSDPWorker(
                 model_config=model_config,
-                slot_config=self._slot_config,
+                slot_config=slot_config,
             )
             await asyncio.to_thread(self._worker.initialize)
             self._world_size = 1

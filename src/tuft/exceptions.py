@@ -101,6 +101,13 @@ class CheckpointMetadataReadException(CheckpointException):
         super().__init__(status_code=404, detail=detail, checkpoint_id=checkpoint_id)
 
 
+class CheckpointIncompatibleException(CheckpointException):
+    """The checkpoint cannot be loaded under the current model configuration."""
+
+    def __init__(self, checkpoint_id: str, detail: str):
+        super().__init__(status_code=409, detail=detail, checkpoint_id=checkpoint_id)
+
+
 class SequenceConflictException(FutureException):
     """A sequence conflict occurred."""
 

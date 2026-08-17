@@ -38,6 +38,15 @@ model_owner: local-user
 #   - min_response_tokens: Minimum tokens to generate (default: 0)
 #   - max_lora_rank: Maximum LoRA adapter rank (default: 16)
 #   - max_loras: Maximum simultaneous LoRA adapters (default: 1)
+#   - lora_alpha_ratio: lora_alpha = rank * this ratio (default: 2)
+#       Applies to both the "hf" and "fsdp" training backends, so the same rank
+#       gets the same LoRA update scaling whichever backend serves the model.
+#
+#       BREAKING CHANGE: the "hf" backend previously used lora_alpha = rank
+#       (ratio 1); "fsdp" already used 2. Deployments that must keep the old "hf"
+#       scaling have to set `lora_alpha_ratio: 1` explicitly. Checkpoints record
+#       their effective lora_alpha, and loading one whose alpha disagrees with
+#       this setting fails with HTTP 409 rather than silently rescaling updates.
 #   - colocate: Colocate sampling and training on same device (default: false)
 #   - sampling_memory_fraction: GPU memory fraction for sampling (default: 0.2)
 #   - quantization: Quantization method for sampling (default: none)
@@ -55,6 +64,7 @@ supported_models:
     top_k: -1
     max_lora_rank: 16
     max_loras: 1
+    lora_alpha_ratio: 2
 
   - model_name: Qwen/Qwen3-8B
     model_path: Qwen/Qwen3-8B
