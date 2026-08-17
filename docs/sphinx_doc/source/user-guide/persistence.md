@@ -150,11 +150,11 @@ Recommended workflow when changing any field that affects restore safety:
 - deploy with a **new namespace**, or
 - clear the old namespace explicitly before restart.
 
-Upgrades may add persisted model fields whose defaults change the configuration
-signature even when the YAML file itself is unchanged. In that case TuFT fails
-preflight with the same configuration-mismatch error; choose a new namespace or
-clear the existing one before starting the upgraded server. Checkpoint files are
-not deleted by either namespace changes or `tuft clear persistence`.
+Adding persisted model fields can change the configuration signature even when
+the YAML file itself is unchanged. If the computed signature differs from the
+stored signature, TuFT fails preflight with a configuration-mismatch error. Use a
+new namespace or clear the existing one before starting the server. Checkpoint
+files are not deleted by either namespace changes or `tuft clear persistence`.
 
 To load an existing FSDP checkpoint whose `adapter_config.json` records
 `target_modules: [q_proj, v_proj]`, configure that exact `fsdp_target_modules` list

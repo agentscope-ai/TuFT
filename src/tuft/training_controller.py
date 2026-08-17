@@ -230,7 +230,7 @@ class TrainingController:
                 record.corrupted = True
                 logger.warning(
                     "Training run %s does not record its complete effective LoRA geometry "
-                    "and cannot be resumed after this upgrade; checkpoints with a valid "
+                    "and is therefore read-only; checkpoints with a valid "
                     "adapter_config.json remain available to load into a new run.",
                     model_id,
                 )
@@ -430,9 +430,9 @@ class TrainingController:
         if record.has_legacy_lora_state:
             raise InvalidRequestException(
                 f"Training run {record.training_run_id} does not record its complete effective "
-                "LoRA target geometry and cannot be resumed after this upgrade. Create a new "
-                "training run with the same LoRA configuration and load a checkpoint that "
-                "contains adapter/adapter_config.json."
+                "LoRA target geometry and therefore cannot be resumed. Create a new training "
+                "run with the same LoRA configuration and load a checkpoint that contains "
+                "adapter/adapter_config.json."
             )
 
     def build_supported_models(self) -> list[types.SupportedModel]:
@@ -794,14 +794,15 @@ class TrainingController:
             raise InvalidRequestException(
                 f"Cannot load checkpoint {checkpoint_id}: neither metadata nor "
                 "adapter_config.json provides a supported explicit target_modules list. "
-                "PEFT regex-string targets cannot be validated, and checkpoints from the "
-                "unreleased intermediate metadata format must be recreated."
+                "PEFT regex-string targets and checkpoints without an explicit target-module "
+                "list cannot be validated."
             )
         if destination.target_modules is None:
             raise InvalidRequestException(
                 f"Cannot load checkpoint {checkpoint_id}: destination training run "
                 f"{destination.training_run_id} does not record effective LoRA target "
-                "modules. Create a new training run after upgrading."
+                "modules and is not resumable. Create a new training run that records its "
+                "effective target modules."
             )
         source_modules = set(saved_modules)
         destination_modules = set(destination.target_modules)

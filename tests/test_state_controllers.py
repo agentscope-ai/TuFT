@@ -798,7 +798,7 @@ async def test_load_checkpoint_compares_resolved_modules_not_raw_flags(request, 
 
 @pytest.mark.asyncio
 async def test_legacy_run_is_invalid_but_checkpoint_can_seed_new_run(request, tmp_path) -> None:
-    """Legacy runs are read-only checkpoint sources after an upgrade."""
+    """Runs missing effective geometry are read-only checkpoint sources."""
     use_gpu = request.config.getoption("--gpu")
     state = await _build_state(tmp_path, use_gpu, cpu_model_path="/path/to/qwen-test-model")
     session_id = _create_session(state)
@@ -873,8 +873,8 @@ async def test_legacy_run_is_invalid_but_checkpoint_can_seed_new_run(request, tm
 
 
 @pytest.mark.asyncio
-async def test_legacy_checkpoint_without_adapter_geometry_is_rejected(request, tmp_path) -> None:
-    """The unreleased flags-only metadata format is rejected with migration guidance."""
+async def test_checkpoint_without_explicit_adapter_geometry_is_rejected(request, tmp_path) -> None:
+    """Checkpoint metadata without concrete target modules is rejected clearly."""
     use_gpu = request.config.getoption("--gpu")
     state = await _build_state(tmp_path, use_gpu, cpu_model_path="/path/to/qwen-test-model")
     session_id = _create_session(state)
@@ -907,7 +907,7 @@ async def test_legacy_checkpoint_without_adapter_geometry_is_rejected(request, t
         user_metadata=None,
     )
 
-    with pytest.raises(InvalidRequestException, match="unreleased intermediate metadata format"):
+    with pytest.raises(InvalidRequestException, match="without an explicit target-module list"):
         await state.load_checkpoint(
             destination.training_run_id,
             path=checkpoint.tinker_checkpoint.tinker_path,
