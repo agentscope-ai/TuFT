@@ -770,9 +770,9 @@ class TrainingController:
 
         Target-module geometry is compared as concrete module sets, not raw flags.
         The PEFT adapter config is ground truth, with checkpoint metadata as the
-        fallback for checkpoints written by the current format. Intermediate
-        unreleased formats that only recorded modifier flags are rejected rather
-        than guessed from configuration that may have changed.
+        fallback when it records a concrete module list. Checkpoints that only
+        record modifier flags are rejected rather than guessed from server
+        configuration that may have changed.
         """
         if metadata.base_model != destination.base_model:
             raise InvalidRequestException(
