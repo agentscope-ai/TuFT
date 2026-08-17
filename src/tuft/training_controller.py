@@ -16,9 +16,10 @@ from tinker import types
 
 from .backends import BaseTrainingBackend
 from .checkpoints import CheckpointMetadata, CheckpointRecord, compute_tree_size
-from .config import AppConfig, ModelConfig
+from .config import DEFAULT_LORA_ALPHA_RATIO, AppConfig, ModelConfig, compute_lora_alpha
 from .exceptions import (
     CheckpointAccessDeniedException,
+    CheckpointIncompatibleException,
     CheckpointMetadataReadException,
     CheckpointNotFoundException,
     InvalidRequestException,
@@ -167,6 +168,15 @@ class TrainingController:
                 fsdp_index=fsdp_index,
                 worker_venv_path=self.config.worker_venv_path,
             )
+            # Log the LoRA scaling in effect: the "hf" backend used
+            # lora_alpha = rank before lora_alpha_ratio existed, so operators
+            # upgrading need to see which scaling their runs now get.
+            logger.info(
+                "Training backend for %s: %s, lora_alpha = rank * %d",
+                config.model_name,
+                getattr(config, "training_backend", "hf"),
+                config.lora_alpha_ratio,
+            )
         return backends
 
     async def shutdown(self) -> None:
@@ -176,6 +186,16 @@ class TrainingController:
                 await backend.shutdown()
             except Exception:
                 logger.exception("Failed to shut down training backend for %s", backend.base_model)
+
+    def _effective_lora_alpha(self, training_run: TrainingRunRecord) -> int:
+        """LoRA alpha the run's adapters are built with, from the model config.
+
+        Single source of truth for both writing checkpoint metadata and validating
+        a load, so the two can never disagree.
+        """
+        model_config = self._model_config_for(training_run.base_model)
+        ratio = model_config.lora_alpha_ratio if model_config else DEFAULT_LORA_ALPHA_RATIO
+        return compute_lora_alpha(training_run.lora_rank, ratio)
 
     def _build_key(self, model_id: str) -> str:
         return get_redis_store().build_key(self.REDIS_KEY_PREFIX, model_id)
@@ -611,11 +631,14 @@ class TrainingController:
                         optimizer=(checkpoint_type == "training"),
                     )
 
+                lora_alpha = self._effective_lora_alpha(training_run)
+
                 # Write metadata once so metadata.json exists
                 checkpoint.save_metadata(
                     base_model=training_run.base_model,
                     session_id=training_run.session_id,
                     lora_rank=training_run.lora_rank,
+                    lora_alpha=lora_alpha,
                     train_attn=training_run.train_attn,
                     train_mlp=training_run.train_mlp,
                     train_unembed=training_run.train_unembed,
@@ -629,6 +652,7 @@ class TrainingController:
                     base_model=training_run.base_model,
                     session_id=training_run.session_id,
                     lora_rank=training_run.lora_rank,
+                    lora_alpha=lora_alpha,
                     train_attn=training_run.train_attn,
                     train_mlp=training_run.train_mlp,
                     train_unembed=training_run.train_unembed,
@@ -761,6 +785,11 @@ class TrainingController:
                 f"Cannot load checkpoint {checkpoint_id} with LoRA rank {metadata.lora_rank} "
                 f"into a training run with LoRA rank {destination.lora_rank}."
             )
+        # Deliberately checked before the FSDP exemption below. That exemption is
+        # about target-module geometry, which the slot pool ignores; alpha is baked
+        # into every slot from lora_alpha_ratio and load_checkpoint only copies
+        # weights in, so FSDP is the backend where a mismatch does the most damage.
+        checkpoint.validate_lora_alpha(self._effective_lora_alpha(destination))
 
         model_config = self._model_config_for(destination.base_model)
         if model_config is None or getattr(model_config, "training_backend", "hf") == "fsdp":
@@ -954,6 +983,17 @@ class TrainingController:
             except Exception:  # pylint: disable=broad-except
                 logger.exception("Failed to create adapter for model %s during restore", model_id)
             return None
+        # A lora_alpha_ratio change between restarts would resume the run at a
+        # different update scale. Mark the run corrupted instead of retrying the
+        # load, which cannot succeed while the configs disagree.
+        try:
+            latest_ckpt.validate_lora_alpha(self._effective_lora_alpha(record))
+        except CheckpointIncompatibleException as exc:
+            record.corrupted = True
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self._save_training_run, model_id)
+            logger.error("Cannot restore %s: %s", model_id, exc.detail)
+            return latest_ckpt
         # load_state calls load_adapter which creates the adapter from the
         # checkpoint on disk.  Calling create_adapter first causes PEFT's
         # load_adapter to fail with "adapter already exists" on HFTrainingBackend.

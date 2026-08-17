@@ -46,6 +46,7 @@ def test_config_to_worker_dict():
     assert "slot_config" in d
     assert d["slot_config"]["rank_slots"] == {8: 16}  # default for max_lora_rank=8
     assert d["slot_config"]["target_modules"] == ["q_proj", "v_proj"]
+    assert d["slot_config"]["lora_alpha_ratio"] == config.lora_alpha_ratio
     assert "fsdp_override_config" in d
     assert isinstance(d["fsdp_override_config"], dict)
 
@@ -57,6 +58,10 @@ def test_slot_pool_config_get_lora_alpha():
     cfg = SlotPoolConfig(rank_slots={8: 2}, lora_alpha_ratio=2)
     assert cfg.get_lora_alpha(8) == 16
     assert cfg.get_lora_alpha(16) == 32
+
+    legacy = SlotPoolConfig(rank_slots={8: 2}, lora_alpha_ratio=1)
+    assert legacy.get_lora_alpha(8) == 8
+    assert legacy.get_lora_alpha(16) == 16
 
 
 @pytest.mark.asyncio
