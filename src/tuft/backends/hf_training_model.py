@@ -47,6 +47,28 @@ MODULE_MAP = {
 }
 
 
+OPTIMIZER_STATE_FILENAME = "optimizer.pt"
+
+
+def _resolve_optimizer_state_path(checkpoint_record: CheckpointRecord) -> Path | None:
+    """Locate the optimizer state file of a checkpoint, or None if it has none.
+
+    Prefers the run-independent ``optimizer.pt``. Older checkpoints named the
+    file after the run that saved them, so fall back to that; keying the
+    fallback on the checkpoint's own training_run_id (rather than the adapter
+    loading it) keeps legacy cross-run restores working too.
+    """
+    opt_dir = checkpoint_record.optimizer_path
+    candidates = (
+        opt_dir / OPTIMIZER_STATE_FILENAME,
+        opt_dir / f"{checkpoint_record.training_run_id}.pt",
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def _export_vllm_compatible_lora_aliases(adapter_dir: Path, model_path: str) -> None:
     """Export alias keys with a `language_model.` prefix in the saved adapter.
 
@@ -214,8 +236,11 @@ class HFTrainingModel:
                     opt_dir = checkpoint_record.optimizer_path
                     opt_dir.mkdir(parents=True, exist_ok=True)
                     opt_state = self.adapter_optimizer[lora_id].state_dict()
-                    opt_path = opt_dir / (f"{lora_id}.pt")
-                    torch.save(opt_state, opt_path)
+                    # Named independently of the run that saved it so a restore
+                    # into a DIFFERENT run still finds it, matching the FSDP
+                    # backend. Keying it on lora_id made optimizer=True a silent
+                    # no-op for cross-run restores.
+                    torch.save(opt_state, opt_dir / OPTIMIZER_STATE_FILENAME)
             except Exception as e:
                 span.record_exception(e)
                 span.set_status(StatusCode.ERROR)
@@ -252,13 +277,18 @@ class HFTrainingModel:
                 params = [p for p in self.model.parameters() if p.requires_grad]
                 optimizer_obj = torch.optim.AdamW(params)
                 if optimizer:
-                    opt_dir = checkpoint_record.optimizer_path
-                    opt_path = opt_dir / f"{lora_id}.pt"
-                    state_dict = None
-                    if opt_path.exists():
-                        state_dict = torch.load(opt_path)
-                    if state_dict is not None:
-                        optimizer_obj.load_state_dict(state_dict)
+                    opt_path = _resolve_optimizer_state_path(checkpoint_record)
+                    if opt_path is None:
+                        # Silently starting from a fresh optimizer costs the next
+                        # optim step a full-size, bias-uncorrected update, so say so.
+                        self.logger.warning(
+                            "No optimizer state found under %s; adapter %s resumes "
+                            "with a fresh optimizer.",
+                            checkpoint_record.optimizer_path,
+                            lora_id,
+                        )
+                    else:
+                        optimizer_obj.load_state_dict(torch.load(opt_path))
                 self.adapter_optimizer[lora_id] = optimizer_obj
 
     async def remove_adapter(self, lora_id: str):
