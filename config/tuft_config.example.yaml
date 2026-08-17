@@ -40,9 +40,11 @@ model_owner: local-user
 #   - max_loras: Maximum simultaneous LoRA adapters (default: 1)
 #   - training_backend: Training implementation, "hf" or "fsdp" (default: hf)
 #   - fsdp_num_gpus: Number of FSDP workers/GPUs (default: 1)
-#   - fsdp_rank_slots: Preallocated LoRA slots by rank (default: automatic;
-#       16 rank-8 and 8 max-rank slots for <=2 targets, otherwise 4 and 1)
+#   - fsdp_rank_slots: Preallocated LoRA slots by rank (default: 16 rank-8 slots
+#       plus 8 max_lora_rank slots, or 16 slots at max_lora_rank when it is <= 8;
+#       the same capacity for every target geometry)
 #       Explicit maps define the only accepted ranks and must include max_lora_rank.
+#       Lower these counts to trade concurrent training runs for GPU memory.
 #   - fsdp_target_modules: Explicit homogeneous target geometry for every FSDP slot
 #       (default: null; inferred from the fsdp_train_* modifiers at startup)
 #   - fsdp_train_attn/fsdp_train_mlp/fsdp_train_unembed: Target geometry modifiers
@@ -91,9 +93,13 @@ supported_models:
     # fsdp_target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
     # To load an existing FSDP checkpoint whose adapter_config.json records
     # [q_proj, v_proj], configure that exact list for the destination run.
-    # Broader inferred module sets use conservative slot defaults. Override them
-    # only after budgeting the eagerly materialized adapter memory.
-    # fsdp_rank_slots: {8: 4, 16: 1}
+    # Every slot is materialized eagerly before sharding, so slot counts set the
+    # floor on preallocated adapter memory. That memory is a small fraction of
+    # the frozen base model even for the widest target set, so the defaults keep
+    # capacity constant across geometries. Reduce the counts when you need the
+    # memory back and can serve fewer concurrent training runs; a single-tenant
+    # deployment can go as low as one slot per rank:
+    # fsdp_rank_slots: {8: 8, 16: 2}
 
   - model_name: Qwen/Qwen3-8B
     model_path: Qwen/Qwen3-8B

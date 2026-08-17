@@ -30,7 +30,7 @@ supported_models:
     # training_backend: fsdp         # multi-GPU training (also set launch.py --gpu H100:N)
     # lora_alpha_ratio: 2            # lora_alpha = rank * ratio; set 1 for the old "hf" scaling
     # fsdp_target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
-    # fsdp_rank_slots: {8: 4, 16: 1} # broader target sets use more memory per slot
+    # fsdp_rank_slots: {8: 8, 16: 2} # fewer concurrent runs, less preallocated memory
     # temperature: 0.7
     # top_p: 0.9
 

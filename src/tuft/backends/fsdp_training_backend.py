@@ -146,7 +146,6 @@ _DEFAULT_TARGET_MODULES = [
     "up_proj",
     "down_proj",
 ]
-_NARROW_TARGET_MODULE_LIMIT = 2
 
 
 def _fsdp_logprobs_to_loss_fn_outputs(
@@ -200,7 +199,7 @@ def _write_adapter_weights_file(
 class SlotPoolConfig:
     """Multi-adapter slot pool configuration (rank -> number of slots)."""
 
-    rank_slots: Dict[int, int] = field(default_factory=lambda: {8: 4, 16: 1})
+    rank_slots: Dict[int, int] = field(default_factory=lambda: {8: 16, 16: 8})
     lora_alpha_ratio: int = DEFAULT_LORA_ALPHA_RATIO
     target_modules: List[str] = field(default_factory=lambda: list(_DEFAULT_TARGET_MODULES))
 
@@ -225,29 +224,25 @@ class AdapterInfo:
 # =============================================================================
 
 
-def _get_rank_slots_from_config(config: ModelConfig, target_modules: List[str]) -> Dict[int, int]:
+def _get_rank_slots_from_config(config: ModelConfig) -> Dict[int, int]:
     """Get rank_slots from ModelConfig (config preferred; otherwise default).
 
     rank_slots: LoRA rank -> number of adapter slots (concurrent adapters of that rank).
-    Narrow geometries, including the released Q/V-only geometry, retain the
-    previous capacity. Broader target sets use conservative defaults because
-    every slot is materialized eagerly before sharding and its memory grows with
-    both rank and target width. Target count is the config-time cost proxy; an
-    operator can override it with ``fsdp_rank_slots`` after measuring the model.
+    The default capacity is the same for every target geometry. Widening the
+    geometry does multiply per-slot adapter memory, but that memory is a small
+    fraction of the base model a slot is attached to (a few percent of the
+    frozen weights for the widest supported set), so scaling capacity down to
+    hold it constant costs far more tenancy than it saves. Operators who need a
+    different trade set ``fsdp_rank_slots`` after measuring their own model.
     """
     max_rank = getattr(config, "max_lora_rank", 8)
     raw = getattr(config, "fsdp_rank_slots", None)
     if raw and len(raw) > 0:
         return {int(k): v for k, v in raw.items()}
 
-    narrow_geometry = len(target_modules) <= _NARROW_TARGET_MODULE_LIMIT
-    if narrow_geometry:
-        if max_rank <= 8:
-            return {max_rank: 16}
-        return {8: 16, max_rank: 8}
     if max_rank <= 8:
-        return {max_rank: 4}
-    return {8: 4, max_rank: 1}
+        return {max_rank: 16}
+    return {8: 16, max_rank: 8}
 
 
 def _get_target_modules_from_config(config: ModelConfig) -> List[str]:
@@ -283,7 +278,7 @@ def _config_to_worker_dict(config: ModelConfig) -> dict:
     """Convert ModelConfig to the serializable subset needed by Ray workers."""
 
     target_modules = _get_target_modules_from_config(config)
-    rank_slots = _get_rank_slots_from_config(config, target_modules)
+    rank_slots = _get_rank_slots_from_config(config)
     return {
         "model_path": str(config.model_path),
         "max_model_len": config.max_model_len,
@@ -318,7 +313,7 @@ def _worker_dict_to_configs(config_dict: dict) -> tuple[FSDPModelConfig, SlotPoo
     )
     sc = config_dict.get("slot_config") or {}
     slot_config = SlotPoolConfig(
-        rank_slots=dict(sc.get("rank_slots", {8: 4})),
+        rank_slots=dict(sc.get("rank_slots", {8: 16})),
         lora_alpha_ratio=int(sc.get("lora_alpha_ratio", DEFAULT_LORA_ALPHA_RATIO)),
         target_modules=list(sc.get("target_modules", _DEFAULT_TARGET_MODULES)),
     )

@@ -47,7 +47,7 @@ def test_config_to_worker_dict():
     assert d["model_path"] == "/tmp/qwen-model"
     assert d["max_model_len"] == 1024
     assert "slot_config" in d
-    assert d["slot_config"]["rank_slots"] == {8: 4}
+    assert d["slot_config"]["rank_slots"] == {8: 16}
     assert d["slot_config"]["target_modules"] == [
         "q_proj",
         "k_proj",
@@ -127,8 +127,8 @@ def test_config_to_worker_dict_honors_explicit_targets_and_rank_slots():
     FSDPTrainingBackend(config)._validate_lora_config(types.LoraConfig(rank=64))
 
 
-def test_default_rank_slots_scale_down_broad_geometry_but_preserve_legacy_capacity():
-    """Broader eager pools do not inherit the narrow-geometry slot counts."""
+def test_default_rank_slots_do_not_vary_with_target_geometry():
+    """Widening the geometry must not silently cost concurrent adapter capacity."""
     from tuft.backends.fsdp_training_backend import _config_to_worker_dict
 
     broad = ModelConfig(
@@ -138,25 +138,19 @@ def test_default_rank_slots_scale_down_broad_geometry_but_preserve_legacy_capaci
         max_lora_rank=16,
         training_backend="fsdp",
     )
-    assert _config_to_worker_dict(broad)["slot_config"]["rank_slots"] == {8: 4, 16: 1}
+    assert _config_to_worker_dict(broad)["slot_config"]["rank_slots"] == {8: 16, 16: 8}
 
-    legacy = ModelConfig(
-        model_name="legacy",
-        model_path=Path("/tmp/custom-model"),
-        max_model_len=1024,
-        max_lora_rank=16,
-        training_backend="fsdp",
-        fsdp_target_modules=["q_proj", "v_proj"],
-    )
-    assert _config_to_worker_dict(legacy)["slot_config"]["rank_slots"] == {8: 16, 16: 8}
+    # The released Q/V pool, a single module, and a two-module set that is far
+    # more expensive than Q/V all keep the same capacity: per-slot adapter
+    # memory is small next to the base model the slot is attached to.
+    narrow = broad.model_copy(update={"fsdp_target_modules": ["q_proj", "v_proj"]})
+    q_only = broad.model_copy(update={"fsdp_target_modules": ["q_proj"]})
+    wide_pair = broad.model_copy(update={"fsdp_target_modules": ["gate_proj", "up_proj"]})
+    for config in (narrow, q_only, wide_pair):
+        assert _config_to_worker_dict(config)["slot_config"]["rank_slots"] == {8: 16, 16: 8}
 
-    # Capacity depends on target width, not whether a module happened to be in
-    # the historical Q/V pair.
-    q_only = legacy.model_copy(update={"fsdp_target_modules": ["q_proj"]})
-    k_only = legacy.model_copy(update={"fsdp_target_modules": ["k_proj"]})
-    assert _config_to_worker_dict(q_only)["slot_config"]["rank_slots"] == {8: 16, 16: 8}
-    assert _config_to_worker_dict(k_only)["slot_config"]["rank_slots"] == {8: 16, 16: 8}
-
+    # A max rank at or below 8 collapses to a single pool at that rank, so no
+    # slots are preallocated above the rank the server advertises.
     low_max = ModelConfig(
         model_name="low-max",
         model_path=Path("/tmp/qwen-model"),
@@ -164,7 +158,7 @@ def test_default_rank_slots_scale_down_broad_geometry_but_preserve_legacy_capaci
         max_lora_rank=4,
         training_backend="fsdp",
     )
-    assert _config_to_worker_dict(low_max)["slot_config"]["rank_slots"] == {4: 4}
+    assert _config_to_worker_dict(low_max)["slot_config"]["rank_slots"] == {4: 16}
 
 
 def test_explicit_rank_slots_must_cover_advertised_max_rank():

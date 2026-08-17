@@ -96,7 +96,7 @@ class ModelConfig(BaseModel):
     # TCP port for torch.distributed init (FSDP multi-GPU); default 29500
     fsdp_master_port: int = 29500
     # LoRA slot count per rank: rank -> slots for that rank (optional; code default if unset).
-    # Example: fsdp_rank_slots: {8: 4, 16: 1}
+    # Example: fsdp_rank_slots: {8: 8, 16: 2}
     fsdp_rank_slots: dict[int, int] | None = None
     # Homogeneous LoRA target geometry preallocated before fully_shard(). Explicit
     # modules take precedence over the modifier fields below. When omitted, the
