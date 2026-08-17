@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 import uuid
@@ -44,6 +45,14 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
+# LoRA flag -> MODULE_MAP group; the geometry vocabulary shared by
+# TrainingRunRecord, CheckpointMetadata, and the compatibility check.
+_LORA_FLAG_GROUPS = (
+    ("train_attn", "attn"),
+    ("train_mlp", "mlp"),
+    ("train_unembed", "unembed"),
+)
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -61,11 +70,14 @@ class TrainingRunRecord(BaseModel):
     training_run_id: str
     base_model: str
     lora_rank: int
-    # LoRA target-module selection, defaulted to types.LoraConfig's defaults so
-    # records persisted before these fields were added still load.
-    train_attn: bool = True
-    train_mlp: bool = True
-    train_unembed: bool = True
+    # LoRA target-module selection. None means the record predates these fields
+    # and the actual geometry is unknown - never guess it: a run created with a
+    # non-default flag would deserialize as compatible with checkpoints it is
+    # not, and the guess would then be written into its next checkpoint's
+    # metadata as fact.
+    train_attn: bool | None = None
+    train_mlp: bool | None = None
+    train_unembed: bool | None = None
     session_id: str
     model_owner: str
     user_metadata: dict[str, str] | None = None
@@ -84,12 +96,21 @@ class TrainingRunRecord(BaseModel):
     _execution_lock: asyncio.Lock = PrivateAttr(default_factory=asyncio.Lock)
 
     def lora_config(self) -> types.LoraConfig:
-        """Rebuild the LoRA config this run's adapter was created with."""
+        """Rebuild the LoRA config this run's adapter was created with.
+
+        Unknown (legacy) flags fall back to types.LoraConfig's defaults, which
+        is how such adapters were created before the flags were recorded. Only
+        used to recreate adapters; compatibility checks read the raw fields so
+        an unknown flag stays unknown there.
+        """
+        defaults = types.LoraConfig(rank=self.lora_rank)
         return types.LoraConfig(
             rank=self.lora_rank,
-            train_attn=self.train_attn,
-            train_mlp=self.train_mlp,
-            train_unembed=self.train_unembed,
+            train_attn=defaults.train_attn if self.train_attn is None else self.train_attn,
+            train_mlp=defaults.train_mlp if self.train_mlp is None else self.train_mlp,
+            train_unembed=(
+                defaults.train_unembed if self.train_unembed is None else self.train_unembed
+            ),
         )
 
     def to_training_run(self) -> types.TrainingRun:
@@ -569,6 +590,7 @@ class TrainingController:
                         checkpoint_record=checkpoint,
                         optimizer=(checkpoint_type == "training"),
                     )
+                    self._backfill_lora_flags(training_run, checkpoint)
 
                 # Write metadata once so metadata.json exists
                 checkpoint.save_metadata(
@@ -666,6 +688,7 @@ class TrainingController:
             raise UnknownModelException(model_name=model_id)
         self._check_adapter_compatible(
             checkpoint_id=parsed_checkpoint.checkpoint_id,
+            checkpoint=checkpoint,
             metadata=metadata,
             destination=destination_training_run,
         )
@@ -684,20 +707,27 @@ class TrainingController:
 
         await self._with_sequence_guard(destination_training_run, seq_id, _operation)
 
-    @staticmethod
     def _check_adapter_compatible(
+        self,
         checkpoint_id: str,
+        checkpoint: CheckpointRecord,
         metadata: CheckpointMetadata,
         destination: TrainingRunRecord,
     ) -> None:
         """Reject a checkpoint whose adapter geometry differs from the destination run.
 
-        Validated against the checkpoint's own metadata rather than the source run
-        record, since the metadata is what the weights on disk were written from.
-        Fields absent from checkpoints saved by older versions are skipped instead
-        of guessed. Loading a mismatched adapter is silent rather than loud: peft
-        skips a checkpoint's adapter_config.json entirely when the destination
-        adapter already exists, and only collects the unmatched keys.
+        Validated against the checkpoint itself rather than the source run record,
+        since the checkpoint is what the weights on disk were written from. Loading
+        a mismatched adapter is silent rather than loud: peft skips a checkpoint's
+        adapter_config.json entirely when the destination adapter already exists,
+        and only collects the unmatched keys.
+
+        Target-module geometry is compared as resolved module sets, not raw flags:
+        flags that resolve to nothing for a series (e.g. train_unembed on Qwen)
+        are not geometry and must not reject a compatible checkpoint. Anything
+        unknown - legacy flags, unresolvable series - is skipped, never guessed.
+        FSDP models are exempt: that backend allocates fixed slot geometry that
+        ignores the flags, and its load_checkpoint hard-fails on a key mismatch.
         """
         if metadata.base_model != destination.base_model:
             raise InvalidRequestException(
@@ -710,17 +740,120 @@ class TrainingController:
                 f"Cannot load checkpoint {checkpoint_id} with LoRA rank {metadata.lora_rank} "
                 f"into a training run with LoRA rank {destination.lora_rank}."
             )
-        for name, source_value in (
-            ("train_attn", metadata.train_attn),
-            ("train_mlp", metadata.train_mlp),
-            ("train_unembed", metadata.train_unembed),
-        ):
+
+        model_config = self._model_config_for(destination.base_model)
+        if model_config is None or getattr(model_config, "training_backend", "hf") == "fsdp":
+            return
+        from .backends.vllm_lora_compat import resolve_model_series
+
+        series = resolve_model_series(str(model_config.model_path))
+        if series is not None:
+            destination_modules = self._target_modules_from_flags(destination, series)
+            source_modules = self._checkpoint_target_modules(checkpoint)
+            if source_modules is None:
+                source_modules = self._target_modules_from_flags(metadata, series)
+            if (
+                source_modules is not None
+                and destination_modules is not None
+                and source_modules != destination_modules
+            ):
+                raise InvalidRequestException(
+                    f"Cannot load checkpoint {checkpoint_id} targeting LoRA modules "
+                    f"{sorted(source_modules)} into a training run targeting "
+                    f"{sorted(destination_modules)}."
+                )
+            return
+
+        # Unknown series: module sets cannot be resolved, so raw flags are the
+        # only signal. Compare the ones known on both sides.
+        for name, _ in _LORA_FLAG_GROUPS:
+            source_value = getattr(metadata, name)
             destination_value = getattr(destination, name)
-            if source_value is not None and source_value != destination_value:
+            if (
+                source_value is not None
+                and destination_value is not None
+                and source_value != destination_value
+            ):
                 raise InvalidRequestException(
                     f"Cannot load checkpoint {checkpoint_id} with {name}={source_value} "
                     f"into a training run with {name}={destination_value}."
                 )
+
+    def _backfill_lora_flags(
+        self, training_run: TrainingRunRecord, checkpoint: CheckpointRecord
+    ) -> None:
+        """Fill unknown (legacy) target-module flags from the saved adapter config.
+
+        Records that predate the flags carry None; the adapter_config.json the
+        backend just wrote is the actual geometry, so derive what it can prove.
+        A flag whose module group is empty for the series (e.g. train_unembed on
+        Qwen) stays unknown - the config carries no evidence either way. Runs
+        with a mutated record persist it right after this in the save flow.
+        """
+        if all(getattr(training_run, flag) is not None for flag, _ in _LORA_FLAG_GROUPS):
+            return
+        saved_modules = self._checkpoint_target_modules(checkpoint)
+        if saved_modules is None:
+            return
+        model_config = self._model_config_for(training_run.base_model)
+        if model_config is None:
+            return
+        from .backends.vllm_lora_compat import resolve_model_series
+
+        series = resolve_model_series(str(model_config.model_path))
+        if series is None:
+            return
+        from .backends.hf_training_model import MODULE_MAP
+
+        for flag_name, group in _LORA_FLAG_GROUPS:
+            group_modules = MODULE_MAP[series][group]
+            if getattr(training_run, flag_name) is None and group_modules:
+                setattr(training_run, flag_name, bool(saved_modules.intersection(group_modules)))
+
+    def _model_config_for(self, base_model: str) -> ModelConfig | None:
+        return next(
+            (model for model in self.config.supported_models if model.model_name == base_model),
+            None,
+        )
+
+    @staticmethod
+    def _target_modules_from_flags(
+        source: CheckpointMetadata | TrainingRunRecord, series: str
+    ) -> set[str] | None:
+        """Resolve LoRA flags into the module set they select for a series.
+
+        Returns None when any flag that matters for the series is unknown.
+        """
+        from .backends.hf_training_model import MODULE_MAP
+
+        modules: set[str] = set()
+        for flag_name, group in _LORA_FLAG_GROUPS:
+            group_modules = MODULE_MAP[series][group]
+            if not group_modules:
+                continue
+            flag = getattr(source, flag_name)
+            if flag is None:
+                return None
+            if flag:
+                modules.update(group_modules)
+        return modules
+
+    @staticmethod
+    def _checkpoint_target_modules(checkpoint: CheckpointRecord) -> set[str] | None:
+        """Read the module set the checkpoint's adapter was actually saved with.
+
+        The adapter_config.json written next to the weights is ground truth,
+        independent of what any run record or metadata claims.
+        """
+        config_path = checkpoint.adapter_path / "adapter_config.json"
+        try:
+            adapter_config = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        modules = adapter_config.get("target_modules")
+        if not modules:
+            return None
+        return set(modules)
 
     def delete_checkpoint(self, model_id: str, user_id: str, checkpoint_id: str) -> None:
         training_run = self.get_run_record(model_id, user_id)
