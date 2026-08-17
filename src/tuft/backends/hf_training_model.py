@@ -15,6 +15,7 @@ from tinker.types import LoraConfig as TinkerLoraConfig
 from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoModelForCausalLM
 
+from tuft.backends.loss_inputs import batch_loss_fn_input, client_loss_fn_input_keys
 from tuft.backends.vllm_lora_compat import (
     add_language_model_aliases,
     resolve_model_series,
@@ -492,40 +493,10 @@ class HFTrainingModel:
     def _prepare_loss_fn_inputs(self, data: list[types.Datum]) -> Dict[str, torch.Tensor]:
         """Prepare input tensors from Datum list."""
         device = next(self.model.parameters()).device
-
-        loss_fn_input_dict = {}
-        # prepare loss_fn_inputs tensors
-        loss_fn_input_keys = data[0].loss_fn_inputs.keys()
-        for key in loss_fn_input_keys:
-            tensors = [datum.loss_fn_inputs[key].to_torch() for datum in data]
-            # If tensor is 1D, pad to max length; if already same shape, stack directly
-            if all(t.dim() == 1 for t in tensors):
-                padded = pad_sequence(tensors, batch_first=True, padding_value=0)
-                loss_fn_input_dict[key] = padded.to(device)
-            else:
-                # Try to stack, if shape mismatch, pad last dim
-                try:
-                    stacked = torch.stack(tensors)
-                    loss_fn_input_dict[key] = stacked.to(device)
-                except Exception:
-                    # Pad last dim to max length
-                    max_shape = list(tensors[0].shape)
-                    for t in tensors:
-                        for i, s in enumerate(t.shape):
-                            if s > max_shape[i]:
-                                max_shape[i] = s
-                    padded_tensors = []
-                    for t in tensors:
-                        pad_width = [(0, m - s) for s, m in zip(t.shape, max_shape, strict=False)]
-                        pad_args = []
-                        for p in reversed(pad_width):
-                            pad_args.extend(p)
-                        padded = torch.nn.functional.pad(t, pad_args, value=0)
-                        padded_tensors.append(padded)
-                    stacked = torch.stack(padded_tensors)
-                    loss_fn_input_dict[key] = stacked.to(device)
-
-        return loss_fn_input_dict
+        return {
+            key: batch_loss_fn_input(data, key, device=device)
+            for key in client_loss_fn_input_keys(data)
+        }
 
     def _compute_logprobs_from_target_tokens(
         self, logits: torch.Tensor, target_tokens: torch.Tensor

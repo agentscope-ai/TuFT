@@ -17,10 +17,17 @@ from tinker import types
 from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoConfig, AutoModelForCausalLM
 
+from tuft.backends.loss_inputs import batch_loss_fn_input, client_loss_fn_input_keys
 from tuft.loss_fn import get_loss_fn
 
 
 _RLHF_LOSS_FNS = {"ppo", "grpo", "cispo", "importance_sampling", "dro"}
+
+# Fields this module derives itself; a client-supplied value of the same name
+# never reaches the loss function through the generic batching path.
+_BACKEND_OWNED_LOSS_INPUTS = frozenset(
+    {"target_tokens", "target_logprobs", "weights", "logprobs", "advantages"}
+)
 
 
 def _fsdp_world_size() -> int:
@@ -171,74 +178,41 @@ def _copy_row(destination: torch.Tensor, row: int, value: torch.Tensor) -> None:
         destination[row, :width] = value[:width]
 
 
-def _batch_loss_fn_input(
-    data: list[types.Datum],
-    key: str,
-    *,
-    device: torch.device | str,
-) -> torch.Tensor:
-    """Stack or pad one client-supplied loss input across a micro-batch."""
-
-    tensors = []
-    for datum in data:
-        value = (datum.loss_fn_inputs or {}).get(key)
-        if value is None:
-            raise ValueError(f"loss_fn_inputs field {key!r} must be present for every datum")
-        tensors.append(value.to_torch().to(device=device))
-
-    if all(tensor.dim() == 1 for tensor in tensors):
-        return pad_sequence(tensors, batch_first=True, padding_value=0)
-
-    try:
-        return torch.stack(tensors)
-    except RuntimeError:
-        ndim = tensors[0].dim()
-        if any(tensor.dim() != ndim for tensor in tensors):
-            raise ValueError(
-                f"loss_fn_inputs field {key!r} must have the same rank for every datum"
-            ) from None
-
-        max_shape = [max(tensor.size(dim) for tensor in tensors) for dim in range(ndim)]
-        padded_tensors = []
-        for tensor in tensors:
-            pad = []
-            for size, maximum in reversed(list(zip(tensor.shape, max_shape, strict=True))):
-                pad.extend((0, maximum - size))
-            padded_tensors.append(torch.nn.functional.pad(tensor, pad, value=0))
-        return torch.stack(padded_tensors)
-
-
 def _prepare_loss_fn_inputs(
     data: list[types.Datum],
     target_logprobs: torch.Tensor,
     loss_fn_name: str,
     *,
-    prepared_target_tokens: torch.Tensor | None = None,
+    prepared_target_tokens: torch.Tensor,
+    client_keys: list[str] | None = None,
+    reference_data: list[types.Datum] | None = None,
 ) -> dict[str, torch.Tensor]:
-    """Build padded TuFT loss inputs directly from Datum objects."""
+    """Build padded TuFT loss inputs directly from Datum objects.
+
+    ``client_keys`` and ``reference_data`` let ``forward_backward`` describe the
+    whole request while passing one micro-batch of it, so the returned key set is
+    a function of the loss function and the full data list rather than of how
+    ``micro_batch_size`` happened to slice it.
+    """
 
     batch_size, max_len = target_logprobs.shape
     device = target_logprobs.device
-    client_keys = dict.fromkeys(
-        key for datum in data for key in (datum.loss_fn_inputs or {}).keys()
-    )
+    if client_keys is None:
+        client_keys = client_loss_fn_input_keys(data)
+    client_key_set = set(client_keys)
     loss_fn_inputs = {
-        key: _batch_loss_fn_input(data, key, device=device)
+        key: batch_loss_fn_input(data, key, device=device, reference_data=reference_data)
         for key in client_keys
-        if key not in {"target_tokens", "target_logprobs", "weights", "logprobs", "advantages"}
+        if key not in _BACKEND_OWNED_LOSS_INPUTS
     }
 
-    # target_tokens is optional per row; forward the prepared labels so rows
-    # without explicit targets retain _prepare_micro_batch's fallback behavior.
-    if "target_tokens" in client_keys:
-        if prepared_target_tokens is None:
-            raise ValueError(
-                "prepared_target_tokens is required when a datum supplies target_tokens"
-            )
-        loss_fn_inputs["target_tokens"] = prepared_target_tokens
+    # target_tokens is the label tensor the model actually scored, so forward it
+    # unconditionally: rows without explicit targets keep _prepare_micro_batch's
+    # fallback labels, and the key cannot appear or vanish per micro-batch.
+    loss_fn_inputs["target_tokens"] = prepared_target_tokens
 
     is_rlhf_loss = loss_fn_name.lower() in _RLHF_LOSS_FNS
-    if is_rlhf_loss or "logprobs" in client_keys:
+    if is_rlhf_loss or "logprobs" in client_key_set:
         # detach() is critical: sampling_logprobs must be a constant (old policy logprobs),
         # NOT connected to the computation graph. Without detach(), clone() preserves the
         # autograd connection and the gradients of target_logprobs cancel out in
@@ -256,7 +230,7 @@ def _prepare_loss_fn_inputs(
                 _copy_row(sampling_logprobs, row, old_logprobs)
         loss_fn_inputs["logprobs"] = sampling_logprobs
 
-    if is_rlhf_loss or "advantages" in client_keys:
+    if is_rlhf_loss or "advantages" in client_key_set:
         advantages = torch.zeros((batch_size, max_len), dtype=torch.float32, device=device)
         for row, datum in enumerate(data):
             advantage = _datum_field(
@@ -269,11 +243,16 @@ def _prepare_loss_fn_inputs(
                 _copy_row(advantages, row, advantage)
         loss_fn_inputs["advantages"] = advantages
 
-    if not is_rlhf_loss or "weights" in client_keys:
+    if not is_rlhf_loss or "weights" in client_key_set:
         weights = torch.zeros((batch_size, max_len), dtype=torch.float32, device=device)
         for row, datum in enumerate(data):
             value = _datum_field(datum, "weights", device=device, dtype=torch.float32)
             if value is None:
+                if is_rlhf_loss:
+                    # weights is emitted here only because a client asked for it,
+                    # so rows that omitted it are zero-filled like any other
+                    # client field rather than being fully supervised.
+                    continue
                 length = len(datum.model_input.to_ints())
                 value = torch.ones(length, dtype=torch.float32, device=device)
                 # Flat-roll fallback: without explicit target_tokens, a sample's final
@@ -329,6 +308,10 @@ def forward_backward(
     device = next(module.parameters()).device
     loss_callable = get_loss_fn(loss_fn_name)
     config = loss_fn_config or {}
+    # Derived once from the whole request so every micro-batch hands the loss
+    # function the same key set; otherwise a chunk could raise a missing-input
+    # error after earlier chunks had already accumulated gradients.
+    client_keys = client_loss_fn_input_keys(data)
     per_sample_logprobs: list[torch.Tensor] = []
     metric_list: list[dict[str, Any]] = []
 
@@ -363,6 +346,8 @@ def forward_backward(
                 target_logprobs,
                 loss_fn_name,
                 prepared_target_tokens=batch.labels,
+                client_keys=client_keys,
+                reference_data=data,
             )
             loss, metrics = loss_callable(loss_inputs, config)
             if not forward_only:
