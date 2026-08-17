@@ -47,6 +47,13 @@ def validate_client_loss_fn_inputs(
     vary and are padded independently inside each micro-batch.
     """
 
+    # An empty request has no rows that could disagree with each other, and both
+    # backends already treat it as a no-op returning an empty result. Applying
+    # required_keys here would turn that no-op into a spurious missing-field
+    # error naming a datum that does not exist.
+    if not data:
+        return []
+
     keys = client_loss_fn_input_keys(data)
     key_set = set(keys)
     for key in required_keys:

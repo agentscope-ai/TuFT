@@ -341,6 +341,26 @@ def test_hf_prepare_loss_inputs_rejects_mixed_target_tokens():
         HFTrainingModel._prepare_loss_fn_inputs(hf_model, data)
 
 
+def test_validate_client_loss_fn_inputs_allows_an_empty_request():
+    """An empty batch is a no-op for both backends, not a missing-field error."""
+    from tuft.backends.loss_inputs import (
+        MODEL_DERIVED_LOSS_INPUTS,
+        validate_client_loss_fn_inputs,
+    )
+
+    assert validate_client_loss_fn_inputs([]) == []
+    # HF requires target_tokens per row, but an empty request has no rows; it
+    # must still no-op the way the FSDP backend's empty-data guard does.
+    assert (
+        validate_client_loss_fn_inputs(
+            [],
+            ignored_keys=MODEL_DERIVED_LOSS_INPUTS,
+            required_keys=frozenset({"target_tokens"}),
+        )
+        == []
+    )
+
+
 def test_prepare_loss_inputs_rejects_inconsistent_client_field_rank_and_dtype():
     import pytest
     import torch
