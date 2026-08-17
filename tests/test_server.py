@@ -40,7 +40,7 @@ def server_endpoint(tmp_path_factory: pytest.TempPathFactory, request):
         )
         model_path = Path(os.environ.get("TUFT_TEST_MODEL", "Qwen/Qwen3-0.6B"))
     else:
-        model_path = Path("/dummy/model")
+        model_path = Path("/dummy/qwen-model")
     checkpoint_dir = tmp_path_factory.mktemp("checkpoints")
     config = AppConfig(checkpoint_dir=Path(checkpoint_dir))
     config.supported_models = [
