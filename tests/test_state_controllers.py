@@ -12,6 +12,7 @@ from tuft.auth import User
 from tuft.config import AppConfig, ModelConfig
 from tuft.exceptions import (
     CheckpointAccessDeniedException,
+    CheckpointIncompatibleException,
     InvalidRequestException,
     LossFunctionMissingInputException,
     MissingSequenceIDException,
@@ -1021,3 +1022,79 @@ async def test_rest_client(request, tmp_path) -> None:
             sampler_id=sampler_1,
             user_id="other_user",
         )
+
+
+@pytest.mark.asyncio
+async def test_load_checkpoint_rejects_mismatched_lora_alpha(request, tmp_path) -> None:
+    """A checkpoint trained at a different lora_alpha must not load.
+
+    LoRA update scale is lora_alpha / rank, so replaying weights trained at one
+    alpha into an adapter built with another silently rescales every update.
+    This is the pre-existing-checkpoint case: the 'hf' backend used
+    lora_alpha = rank before lora_alpha_ratio existed, so a checkpoint from then
+    records alpha 4 at rank 4 while the ratio-2 default builds alpha 8.
+    """
+    use_gpu = request.config.getoption("--gpu")
+    state = await _build_state(tmp_path, use_gpu)
+    session_id = _create_session(state)
+    run = await state.create_model(
+        session_id,
+        model_owner="tester",
+        base_model="Qwen/Qwen3-0.6B",
+        lora_config=types.LoraConfig(rank=4),
+        user_metadata=None,
+    )
+    checkpoint = await state.save_checkpoint(
+        run.training_run_id,
+        user_id="tester",
+        name="alpha-mismatch-test",
+        checkpoint_type="training",
+    )
+    # Saved under the ratio-2 default, then rewritten as a legacy ratio-1 checkpoint.
+    assert checkpoint.metadata.lora_alpha == 8
+    checkpoint.save_metadata(
+        base_model=run.base_model,
+        session_id=run.session_id,
+        lora_rank=run.lora_rank,
+        lora_alpha=4,
+        train_attn=checkpoint.metadata.train_attn,
+        train_mlp=checkpoint.metadata.train_mlp,
+        train_unembed=checkpoint.metadata.train_unembed,
+    )
+
+    with pytest.raises(CheckpointIncompatibleException, match="lora_alpha=4"):
+        await state.load_checkpoint(
+            run.training_run_id,
+            path=checkpoint.tinker_checkpoint.tinker_path,
+            user_id="tester",
+            optimizer=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_load_checkpoint_accepts_matching_lora_alpha(request, tmp_path) -> None:
+    """The alpha gate must not reject a checkpoint written by this same server."""
+    use_gpu = request.config.getoption("--gpu")
+    state = await _build_state(tmp_path, use_gpu)
+    session_id = _create_session(state)
+    run = await state.create_model(
+        session_id,
+        model_owner="tester",
+        base_model="Qwen/Qwen3-0.6B",
+        lora_config=types.LoraConfig(rank=8),
+        user_metadata=None,
+    )
+    checkpoint = await state.save_checkpoint(
+        run.training_run_id,
+        user_id="tester",
+        name="alpha-match-test",
+        checkpoint_type="training",
+    )
+    assert checkpoint.metadata.lora_alpha == 16
+
+    await state.load_checkpoint(
+        run.training_run_id,
+        path=checkpoint.tinker_checkpoint.tinker_path,
+        user_id="tester",
+        optimizer=True,
+    )

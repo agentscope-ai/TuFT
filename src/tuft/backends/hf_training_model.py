@@ -27,7 +27,7 @@ from tuft.backends.vllm_lora_compat import (
     vllm_nests_language_model,
 )
 from tuft.checkpoints import CheckpointRecord
-from tuft.config import ModelConfig
+from tuft.config import DEFAULT_LORA_ALPHA_RATIO, ModelConfig, compute_lora_alpha
 from tuft.loss_fn import get_loss_fn, metrics_reduction
 from tuft.telemetry.tracing import extract_context, get_tracer
 
@@ -92,6 +92,25 @@ def _export_vllm_compatible_lora_aliases(adapter_dir: Path, model_path: str) -> 
     os.replace(tmp_path, weights_path)
 
 
+def build_peft_lora_config(
+    model_path: str,
+    lora_config: TinkerLoraConfig,
+    lora_alpha_ratio: int = DEFAULT_LORA_ALPHA_RATIO,
+) -> LoraConfig:
+    """Translate a Tinker ``LoraConfig`` into the peft config for one adapter.
+
+    The Tinker config carries no alpha, so it comes from
+    ``ModelConfig.lora_alpha_ratio`` via ``compute_lora_alpha`` — the same helper
+    the FSDP backend's slot pool uses, so both backends scale a given rank
+    identically.
+    """
+    return LoraConfig(
+        r=lora_config.rank,
+        target_modules=get_target_modules(model_path, lora_config),
+        lora_alpha=compute_lora_alpha(lora_config.rank, lora_alpha_ratio),
+    )
+
+
 def get_default_target_modules(model_path: str) -> list[str] | None:
     """Minimal target modules for the placeholder ``default`` adapter.
 
@@ -135,13 +154,12 @@ class HFTrainingModel:
             try:
                 if lora_id in self.adapter_optimizer:
                     raise ValueError(f"Adapter {lora_id} already exists.")
-                peft_config = LoraConfig(
-                    r=lora_config.rank,
-                    target_modules=get_target_modules(str(self.config.model_path), lora_config),
-                    # TODO: here we set lora_alpha equal to rank for common practice,
-                    # but we may expose it in the future if needed.
-                    lora_alpha=lora_config.rank,
+                peft_config = build_peft_lora_config(
+                    str(self.config.model_path),
+                    lora_config,
+                    self.config.lora_alpha_ratio,
                 )
+                span.set_attribute("tuft.lora_alpha", peft_config.lora_alpha)
 
                 self.model.add_adapter(adapter_name=lora_id, peft_config=peft_config)
                 async with self._lock:

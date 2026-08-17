@@ -15,6 +15,21 @@ def _default_checkpoint_dir() -> Path | None:
     return None
 
 
+# Default multiplier from a LoRA adapter's rank to its ``lora_alpha``. The Tinker
+# ``LoraConfig`` carries only a rank, so the alpha has to come from server config;
+# 2 keeps the "hf" and "fsdp" training backends on the same update scaling.
+DEFAULT_LORA_ALPHA_RATIO = 2
+
+
+def compute_lora_alpha(rank: int, lora_alpha_ratio: int = DEFAULT_LORA_ALPHA_RATIO) -> int:
+    """Effective peft ``lora_alpha`` for an adapter of the given rank.
+
+    Single definition shared by every training backend, so selecting a backend
+    can never change LoRA update scaling for the same rank and configuration.
+    """
+    return rank * lora_alpha_ratio
+
+
 class TelemetryConfig(BaseModel):
     """Configuration for OpenTelemetry integration.
 
@@ -58,6 +73,17 @@ class ModelConfig(BaseModel):
     # default lora setting
     max_lora_rank: int = 16  # maximum rank for LoRA adapters
     max_loras: int = 1  # maximum number of LoRA adapters that can be applied simultaneously
+    # Multiplier from a LoRA adapter's rank to its lora_alpha:
+    # lora_alpha = rank * lora_alpha_ratio. Shared by the "hf" and "fsdp" training
+    # backends so the same rank produces the same update scaling on both.
+    #
+    # Compatibility: before this setting existed the "hf" backend used ratio 1
+    # (lora_alpha = rank) while "fsdp" used 2. The default is 2, so an existing "hf"
+    # deployment that must keep its previous update scaling has to set
+    # `lora_alpha_ratio: 1` explicitly. Checkpoints record their effective alpha and
+    # a load that disagrees with this setting is rejected instead of silently
+    # rescaling the adapter (see CheckpointRecord.validate_lora_alpha).
+    lora_alpha_ratio: int = DEFAULT_LORA_ALPHA_RATIO
 
     # default training setting
     micro_batch_size: int = 1  # micro-batch size for training
@@ -133,6 +159,15 @@ class ModelConfig(BaseModel):
                 raise ValueError("fsdp_target_modules cannot contain empty module names")
             if len(set(self.fsdp_target_modules)) != len(self.fsdp_target_modules):
                 raise ValueError("fsdp_target_modules cannot contain duplicates")
+        return self
+
+    @model_validator(mode="after")
+    def validate_lora_alpha_ratio(self) -> "ModelConfig":
+        if self.lora_alpha_ratio < 1:
+            raise ValueError(
+                f"lora_alpha_ratio must be >= 1, got {self.lora_alpha_ratio}. "
+                "Use 1 to reproduce the previous 'hf' backend scaling (lora_alpha = rank)."
+            )
         return self
 
     @model_validator(mode="after")
