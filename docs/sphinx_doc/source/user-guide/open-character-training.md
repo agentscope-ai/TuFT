@@ -13,7 +13,7 @@ sarcastic rank-64 LoRA on Qwen3.5-4B using a four-GPU FSDP TuFT server.
 
 ```{admonition} Draft results
 :class: warning
-The recipe code and cached teacher data are complete. The active EXP64 Qwen3.5-4B rank-64 FSDP
+The recipe code and cached teacher data are complete. The active Qwen3.5-4B rank-64 FSDP
 companion run will supply the result table and unedited response examples after its checkpoints
 and held-out samples are complete.
 ```
@@ -236,7 +236,7 @@ The reference recipe and this example both use rank 64 with alpha 128. The examp
 the number of distillation repeats and introspection transcripts and continues SFT from the DPO
 adapter instead of training and linearly merging a separate adapter.
 
-The measured table and response examples will come from the EXP64 Qwen3.5-4B sarcastic companion
+The measured table and response examples will come from the Qwen3.5-4B sarcastic companion
 run. It matches the rank, alpha, target modules, FSDP worker count, optimizer schedule, and corpus
 design, but it is not a literal `run_recipe.py` execution. Its introspection corpus was
 generated before the final full-modifier DPO rerun, and it evaluates the same DPO equation through

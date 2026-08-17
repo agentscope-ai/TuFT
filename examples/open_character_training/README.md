@@ -1,7 +1,7 @@
 # Open Character Training with TuFT (draft)
 
-> **Draft status.** The recipe and cached teacher data are ready for review. The active EXP64
-> Qwen3.5-4B rank-64 FSDP run will supply the measured timings, losses, and unedited LoRA
+> **Draft status.** The recipe and cached teacher data are ready for review. The active
+> Qwen3.5-4B rank-64 FSDP companion run will supply the measured timings, losses, and unedited LoRA
 > responses after its checkpoints and held-out samples are complete. Those fields remain marked
 > `TODO(final-results)` until the artifacts are available.
 
@@ -353,14 +353,15 @@ corpus, and sequential stage composition remain deliberate deviations.
 
 ## Result provenance
 
-The final table and response examples will come from the EXP64 Qwen3.5-4B sarcastic companion
+The final table and response examples will come from the Qwen3.5-4B sarcastic companion
 run. It matches this example's rank, alpha, full attention/MLP target geometry, FSDP worker count,
 optimizer schedule, and corpus design. It is not a literal execution of `run_recipe.py`:
 
-- EXP64 uses frozen introspection transcripts generated before the final full-modifier DPO rerun,
-  whereas this example generates them from its own post-DPO checkpoint.
-- EXP64 evaluates the same composite DPO equation through a recipe-specific server-side named
-  loss; this example keeps `forward_backward_custom` so a stock TuFT server needs no source patch.
+- The companion run uses frozen introspection transcripts generated before the final full-modifier
+  DPO rerun, whereas this example generates them from its own post-DPO checkpoint.
+- The companion run evaluates the same composite DPO equation through a recipe-specific
+  server-side named loss; this example keeps `forward_backward_custom` so a stock TuFT server
+  needs no source patch.
 
 The documentation will label these as companion-run results rather than claim byte-for-byte code
 path parity.
