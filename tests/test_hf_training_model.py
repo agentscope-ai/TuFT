@@ -7,7 +7,9 @@ from tinker import types
 
 
 @pytest.mark.asyncio
-async def test_forward_empties_cuda_cache_once_after_all_micro_batches(monkeypatch):
+async def test_forward_backward_empties_cuda_cache_once_after_all_micro_batches(
+    monkeypatch,
+):
     import torch
 
     from tuft.backends.hf_training_model import HFTrainingModel
