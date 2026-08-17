@@ -348,6 +348,15 @@ class TestTrainingRunPersistence:
             train_attn=True,
             train_mlp=True,
             train_unembed=True,
+            target_modules=[
+                "q_proj",
+                "k_proj",
+                "v_proj",
+                "o_proj",
+                "gate_proj",
+                "up_proj",
+                "down_proj",
+            ],
             session_id="session-001",
             model_owner="trainer_user",
             user_metadata={"experiment": "test"},
@@ -392,6 +401,11 @@ class TestTrainingRunPersistence:
             training_run_id=training_run_id,
             base_model="Qwen/Qwen3-0.6B",
             lora_rank=4,
+            train_attn=True,
+            train_mlp=True,
+            train_unembed=True,
+            # The unreleased intermediate format had modifier flags but no
+            # concrete effective target_modules; it must be read-only.
             session_id="session-002",
             model_owner="ckpt_user",
             next_seq_id=10,
@@ -934,6 +948,7 @@ class TestConfigSignatureValidation:
             train_attn=True,
             train_mlp=True,
             train_unembed=True,
+            target_modules=["q_proj"],
             session_id="session-001",
             model_owner="user1",
         )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 import os
@@ -40,6 +41,7 @@ from tuft.backends.fsdp_engine import (
     build_base_model,
     forward_backward as fsdp_forward_backward,
 )
+from tuft.backends.lora_modules import get_target_modules, resolve_target_modules
 from tuft.backends.loss_inputs import (
     FSDP_BACKEND_OWNED_LOSS_INPUTS,
     validate_client_loss_fn_inputs,
@@ -50,6 +52,7 @@ from tuft.backends.vllm_lora_compat import (
 )
 from tuft.checkpoints import CheckpointRecord
 from tuft.config import ModelConfig
+from tuft.exceptions import CheckpointMetadataReadException, InvalidRequestException
 
 
 # Matches the slot/adapter name embedded in a PEFT LoRA parameter key, e.g.
@@ -135,6 +138,16 @@ def _merge_metrics(
 # Default port for torch.distributed init (multi-GPU). ModelConfig.fsdp_master_port should match.
 DEFAULT_MASTER_PORT = 29500
 
+_DEFAULT_TARGET_MODULES = [
+    "q_proj",
+    "k_proj",
+    "v_proj",
+    "o_proj",
+    "gate_proj",
+    "up_proj",
+    "down_proj",
+]
+
 
 def _fsdp_logprobs_to_loss_fn_outputs(
     engine_output: Dict[str, Any],
@@ -178,6 +191,19 @@ def _write_adapter_weights_file(
         torch.save(peft_state, path / "adapter_model.bin")
 
 
+def _read_checkpoint_target_modules(path: Path) -> List[str] | None:
+    """Read effective target modules from a PEFT adapter configuration."""
+
+    try:
+        config = json.loads((path / "adapter_config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    modules = config.get("target_modules")
+    if not isinstance(modules, list) or not modules or not all(isinstance(x, str) for x in modules):
+        return None
+    return modules
+
+
 # =============================================================================
 # Slot configuration and worker-internal data structures
 # =============================================================================
@@ -189,7 +215,7 @@ class SlotPoolConfig:
 
     rank_slots: Dict[int, int] = field(default_factory=lambda: {8: 5, 16: 2})
     lora_alpha_ratio: int = 2
-    target_modules: List[str] = field(default_factory=lambda: ["q_proj", "v_proj"])
+    target_modules: List[str] = field(default_factory=lambda: list(_DEFAULT_TARGET_MODULES))
 
     def get_lora_alpha(self, rank: int) -> int:
         return rank * self.lora_alpha_ratio
@@ -230,10 +256,33 @@ def _get_rank_slots_from_config(config: ModelConfig) -> Dict[int, int]:
     return {8: 16, max_rank: 8}
 
 
+def _get_target_modules_from_config(config: ModelConfig) -> List[str]:
+    """Resolve the homogeneous target geometry allocated by the FSDP slot pool."""
+
+    explicit = getattr(config, "fsdp_target_modules", None)
+    if explicit is not None:
+        return list(explicit)
+
+    modules = resolve_target_modules(
+        str(config.model_path),
+        train_attn=getattr(config, "fsdp_train_attn", True),
+        train_mlp=getattr(config, "fsdp_train_mlp", True),
+        train_unembed=getattr(config, "fsdp_train_unembed", True),
+    )
+    if not modules:
+        raise ValueError(
+            "FSDP LoRA slot geometry resolved to no target modules; enable at least one "
+            "of fsdp_train_attn/fsdp_train_mlp/fsdp_train_unembed or set "
+            "fsdp_target_modules explicitly."
+        )
+    return modules
+
+
 def _config_to_worker_dict(config: ModelConfig) -> dict:
     """Convert ModelConfig to the serializable subset needed by Ray workers."""
 
     rank_slots = _get_rank_slots_from_config(config)
+    target_modules = _get_target_modules_from_config(config)
     return {
         "model_path": str(config.model_path),
         "max_model_len": config.max_model_len,
@@ -242,7 +291,7 @@ def _config_to_worker_dict(config: ModelConfig) -> dict:
         "slot_config": {
             "rank_slots": rank_slots,
             "lora_alpha_ratio": 2,
-            "target_modules": ["q_proj", "v_proj"],
+            "target_modules": target_modules,
         },
     }
 
@@ -270,7 +319,7 @@ def _worker_dict_to_configs(config_dict: dict) -> tuple[FSDPModelConfig, SlotPoo
     slot_config = SlotPoolConfig(
         rank_slots=dict(sc.get("rank_slots", {8: 4})),
         lora_alpha_ratio=int(sc.get("lora_alpha_ratio", 2)),
-        target_modules=list(sc.get("target_modules", ["q_proj", "v_proj"])),
+        target_modules=list(sc.get("target_modules", _DEFAULT_TARGET_MODULES)),
     )
     return model_config, slot_config
 
@@ -634,6 +683,18 @@ class MultiAdapterFSDPWorker:
 
     def load_checkpoint(self, adapter_name: str, path: str | Path, optimizer: bool = True) -> None:
         path = Path(path)
+        checkpoint_modules = _read_checkpoint_target_modules(path)
+        expected_modules = self._adapters[adapter_name].target_modules
+        if checkpoint_modules is None:
+            raise RuntimeError(
+                f"Cannot load FSDP checkpoint from {path}: adapter_config.json does not "
+                "report its target_modules."
+            )
+        if set(checkpoint_modules) != set(expected_modules):
+            raise RuntimeError(
+                f"Cannot load FSDP checkpoint targeting modules {sorted(checkpoint_modules)} "
+                f"into a slot targeting {sorted(expected_modules)}."
+            )
         state = torch.load(path / "adapter.pt", map_location="cpu", weights_only=True)
         # Build a slot-name-independent lookup: canonicalize saved keys so a checkpoint
         # saved under ANY slot name loads into the current slot. Without this, a slot
@@ -882,8 +943,10 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         self._adapter_name_to_lora_id: Dict[str, str] = {}
         self._lock = asyncio.Lock()
         rank_slots = _get_rank_slots_from_config(config)
+        target_modules = _get_target_modules_from_config(config)
         self._slot_config = SlotPoolConfig(
             rank_slots=rank_slots,
+            target_modules=target_modules,
         )
         self._config_dict = _config_to_worker_dict(config)
         self.logger = logging.getLogger(f"{__name__}.FSDPTrainingBackend")
@@ -1016,7 +1079,49 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             raise ValueError(f"Unknown lora_id: {lora_id}; call create_adapter first.")
         return self._lora_id_to_adapter_name[lora_id]
 
+    def _validate_lora_config(self, lora_config: types.LoraConfig) -> None:
+        """Require the request to match the geometry allocated before sharding."""
+
+        try:
+            requested_modules = get_target_modules(str(self.config.model_path), lora_config)
+        except ValueError as exc:
+            raise InvalidRequestException(str(exc)) from exc
+        slot_modules = self._slot_config.target_modules
+        if set(requested_modules) != set(slot_modules):
+            raise InvalidRequestException(
+                "FSDP LoRA target-module mismatch: client modifiers "
+                f"(train_attn={lora_config.train_attn}, train_mlp={lora_config.train_mlp}, "
+                f"train_unembed={lora_config.train_unembed}) resolve to "
+                f"{sorted(requested_modules)}, but the preallocated slot pool targets "
+                f"{sorted(slot_modules)}. Configure fsdp_target_modules or the "
+                "fsdp_train_attn/fsdp_train_mlp/fsdp_train_unembed server settings to "
+                "match the client request."
+            )
+
+    def _validate_checkpoint_geometry(self, checkpoint_record: CheckpointRecord) -> None:
+        """Reject checkpoints that do not exactly match the preallocated slots."""
+
+        checkpoint_modules = _read_checkpoint_target_modules(checkpoint_record.adapter_path)
+        if checkpoint_modules is None:
+            try:
+                checkpoint_modules = checkpoint_record.metadata.target_modules
+            except CheckpointMetadataReadException:
+                checkpoint_modules = None
+        if checkpoint_modules is None:
+            raise InvalidRequestException(
+                f"Cannot load FSDP checkpoint {checkpoint_record.checkpoint_id}: its effective "
+                "LoRA target modules are missing from both adapter_config.json and metadata."
+            )
+        slot_modules = self._slot_config.target_modules
+        if set(checkpoint_modules) != set(slot_modules):
+            raise InvalidRequestException(
+                f"Cannot load FSDP checkpoint {checkpoint_record.checkpoint_id} targeting "
+                f"modules {sorted(checkpoint_modules)} into a slot targeting "
+                f"{sorted(slot_modules)}."
+            )
+
     async def create_adapter(self, lora_id: str, lora_config: types.LoraConfig) -> None:
+        self._validate_lora_config(lora_config)
         async with self._lock:
             if self._world_size == 0 and self._worker is None and not self._actors:
                 await self.async_init()
@@ -1263,6 +1368,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         checkpoint_record: CheckpointRecord,
         optimizer: bool,
     ) -> None:
+        self._validate_checkpoint_geometry(checkpoint_record)
         adapter_name = self._get_adapter_name(lora_id)
         path = checkpoint_record.adapter_path
         if self._worker is not None:

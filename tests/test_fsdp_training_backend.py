@@ -15,9 +15,11 @@ Run:
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from tinker import types
@@ -36,18 +38,154 @@ def test_config_to_worker_dict():
 
     config = ModelConfig(
         model_name="test",
-        model_path=Path("/tmp/model"),
+        model_path=Path("/tmp/qwen-model"),
         max_model_len=1024,
         max_lora_rank=8,
     )
     d = _config_to_worker_dict(config)
-    assert d["model_path"] == "/tmp/model"
+    assert d["model_path"] == "/tmp/qwen-model"
     assert d["max_model_len"] == 1024
     assert "slot_config" in d
     assert d["slot_config"]["rank_slots"] == {8: 16}  # default for max_lora_rank=8
-    assert d["slot_config"]["target_modules"] == ["q_proj", "v_proj"]
+    assert d["slot_config"]["target_modules"] == [
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj",
+        "gate_proj",
+        "up_proj",
+        "down_proj",
+    ]
     assert "fsdp_override_config" in d
     assert isinstance(d["fsdp_override_config"], dict)
+
+
+@pytest.mark.parametrize(
+    ("train_mlp", "expected"),
+    [
+        (False, ["q_proj", "k_proj", "v_proj", "o_proj"]),
+        (
+            True,
+            [
+                "q_proj",
+                "k_proj",
+                "v_proj",
+                "o_proj",
+                "gate_proj",
+                "up_proj",
+                "down_proj",
+            ],
+        ),
+    ],
+)
+def test_config_to_worker_dict_resolves_fsdp_modifiers(train_mlp, expected):
+    """Attention-only and attention+MLP pools share HF's model-series map."""
+    from tuft.backends.fsdp_training_backend import FSDPTrainingBackend, _config_to_worker_dict
+
+    config = ModelConfig(
+        model_name="test",
+        model_path=Path("/tmp/qwen-model"),
+        max_model_len=1024,
+        fsdp_train_attn=True,
+        fsdp_train_mlp=train_mlp,
+        fsdp_train_unembed=False,
+    )
+
+    assert _config_to_worker_dict(config)["slot_config"]["target_modules"] == expected
+    FSDPTrainingBackend(config)._validate_lora_config(
+        types.LoraConfig(
+            rank=8,
+            train_attn=True,
+            train_mlp=train_mlp,
+            train_unembed=False,
+        )
+    )
+
+
+def test_config_to_worker_dict_honors_explicit_targets_and_rank_slots():
+    """Custom rank pools retain the configured broader target geometry."""
+    from tuft.backends.fsdp_training_backend import _config_to_worker_dict
+
+    targets = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj"]
+    config = ModelConfig(
+        model_name="custom",
+        model_path=Path("/tmp/custom-model"),
+        max_model_len=1024,
+        fsdp_rank_slots={64: 4},
+        fsdp_target_modules=targets,
+    )
+
+    slot_config = _config_to_worker_dict(config)["slot_config"]
+    assert slot_config["rank_slots"] == {64: 4}
+    assert slot_config["target_modules"] == targets
+
+
+@pytest.mark.asyncio
+async def test_create_adapter_rejects_incompatible_client_modifiers_before_init():
+    """A request cannot silently allocate a slot with different target geometry."""
+    from tuft.backends.fsdp_training_backend import FSDPTrainingBackend
+    from tuft.exceptions import InvalidRequestException
+
+    config = ModelConfig(
+        model_name="test",
+        model_path=Path("/tmp/qwen-model"),
+        max_model_len=1024,
+        training_backend="fsdp",
+        fsdp_train_attn=True,
+        fsdp_train_mlp=False,
+        fsdp_train_unembed=False,
+    )
+    backend = FSDPTrainingBackend(config)
+    backend.async_init = MagicMock(side_effect=AssertionError("must validate before init"))
+
+    with pytest.raises(InvalidRequestException, match="target-module mismatch.*train_mlp=True"):
+        await backend.create_adapter(
+            "incompatible",
+            types.LoraConfig(rank=8, train_attn=True, train_mlp=True, train_unembed=False),
+        )
+
+
+@pytest.mark.asyncio
+async def test_load_state_validates_checkpoint_target_geometry(tmp_path):
+    """FSDP load_state rejects a partial match instead of leaving random modules."""
+    from tuft.backends.fsdp_training_backend import FSDPTrainingBackend
+    from tuft.checkpoints import CheckpointRecord
+    from tuft.exceptions import InvalidRequestException
+
+    config = ModelConfig(
+        model_name="test",
+        model_path=Path("/tmp/qwen-model"),
+        max_model_len=1024,
+        training_backend="fsdp",
+    )
+    backend = FSDPTrainingBackend(config)
+    backend._lora_id_to_adapter_name["run"] = "adapter_r8_0"
+    backend._worker = MagicMock()
+    checkpoint = CheckpointRecord(
+        checkpoint_id="checkpoint-0001",
+        owner_name="tester",
+        checkpoint_type="training",
+        training_run_id="source",
+        path=tmp_path / "checkpoint-0001",
+    )
+    checkpoint.adapter_path.mkdir(parents=True)
+    (checkpoint.adapter_path / "adapter_config.json").write_text(
+        json.dumps({"target_modules": ["q_proj", "v_proj"]}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(InvalidRequestException, match="targeting modules.*q_proj.*v_proj"):
+        await backend.load_state("run", checkpoint, optimizer=False)
+    backend._worker.load_checkpoint.assert_not_called()
+
+    (checkpoint.adapter_path / "adapter_config.json").write_text(
+        json.dumps({"target_modules": backend._slot_config.target_modules}),
+        encoding="utf-8",
+    )
+    await backend.load_state("run", checkpoint, optimizer=False)
+    backend._worker.load_checkpoint.assert_called_once_with(
+        "adapter_r8_0", checkpoint.adapter_path, False
+    )
 
 
 def test_slot_pool_config_get_lora_alpha():
@@ -69,7 +207,7 @@ async def test_async_init_raises_when_no_ray_and_multi_gpu():
     try:
         config = ModelConfig(
             model_name="test",
-            model_path=Path("/tmp/model"),
+            model_path=Path("/tmp/qwen-model"),
             max_model_len=1024,
             training_backend="fsdp",
             fsdp_num_gpus=2,
@@ -94,7 +232,7 @@ def test_fsdp_port_allocation_by_index():
         model_configs = [
             ModelConfig(
                 model_name="model_a",
-                model_path=Path("/tmp/a"),
+                model_path=Path("/tmp/qwen-a"),
                 max_model_len=1024,
                 training_backend="fsdp",
             ),
@@ -106,7 +244,7 @@ def test_fsdp_port_allocation_by_index():
             ),
             ModelConfig(
                 model_name="model_c",
-                model_path=Path("/tmp/c"),
+                model_path=Path("/tmp/qwen-c"),
                 max_model_len=1024,
                 training_backend="fsdp",
             ),
@@ -929,7 +1067,7 @@ async def test_forward_raises_when_data_fewer_than_actors():
 
     config = ModelConfig(
         model_name="test",
-        model_path=Path("/tmp/model"),
+        model_path=Path("/tmp/qwen-model"),
         max_model_len=1024,
         training_backend="fsdp",
         fsdp_num_gpus=2,

@@ -72,6 +72,14 @@ class ModelConfig(BaseModel):
     # LoRA slot count per rank: rank -> slots for that rank (optional; code default if unset).
     # Example: fsdp_rank_slots: {8: 16, 16: 8}
     fsdp_rank_slots: dict[int, int] | None = None
+    # Homogeneous LoRA target geometry preallocated before fully_shard(). Explicit
+    # modules take precedence over the modifier fields below. When omitted, the
+    # modifiers match Tinker's public LoraConfig defaults and are resolved through
+    # the same model-series map as the HF backend.
+    fsdp_target_modules: list[str] | None = None
+    fsdp_train_attn: bool = True
+    fsdp_train_mlp: bool = True
+    fsdp_train_unembed: bool = True
     # optional override for FSDP backend HFModelConfig (e.g. attn_implementation)
     fsdp_override_config: dict[str, Any] | None = None
     # Attention implementation passed to AutoModelForCausalLM.from_pretrained for the
@@ -113,6 +121,18 @@ class ModelConfig(BaseModel):
         """Ensure fsdp_rank_slots keys are int (YAML/JSON may load them as str)."""
         if self.fsdp_rank_slots is not None and len(self.fsdp_rank_slots) > 0:
             self.fsdp_rank_slots = {int(k): v for k, v in self.fsdp_rank_slots.items()}
+        return self
+
+    @model_validator(mode="after")
+    def validate_fsdp_target_modules(self) -> "ModelConfig":
+        """Reject unusable explicit FSDP target-module geometries."""
+        if self.fsdp_target_modules is not None:
+            if not self.fsdp_target_modules:
+                raise ValueError("fsdp_target_modules must contain at least one module")
+            if any(not module.strip() for module in self.fsdp_target_modules):
+                raise ValueError("fsdp_target_modules cannot contain empty module names")
+            if len(set(self.fsdp_target_modules)) != len(self.fsdp_target_modules):
+                raise ValueError("fsdp_target_modules cannot contain duplicates")
         return self
 
     @model_validator(mode="after")

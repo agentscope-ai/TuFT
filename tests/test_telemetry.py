@@ -92,7 +92,7 @@ async def _build_state(tmp_path, use_gpu: bool = False) -> ServerState:
     model_path = (
         Path(os.environ.get("TUFT_TEST_MODEL", "/path/to/model"))
         if use_gpu
-        else Path("/path/to/model")
+        else Path("/path/to/qwen-test-model")
     )
     config = AppConfig(checkpoint_dir=tmp_path)
     config.supported_models = [

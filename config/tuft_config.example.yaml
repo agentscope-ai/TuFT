@@ -38,6 +38,11 @@ model_owner: local-user
 #   - min_response_tokens: Minimum tokens to generate (default: 0)
 #   - max_lora_rank: Maximum LoRA adapter rank (default: 16)
 #   - max_loras: Maximum simultaneous LoRA adapters (default: 1)
+#   - training_backend: Training implementation, "hf" or "fsdp" (default: hf)
+#   - fsdp_num_gpus: Number of FSDP workers/GPUs (default: 1)
+#   - fsdp_rank_slots: Preallocated LoRA slots by rank
+#   - fsdp_target_modules: Explicit homogeneous target geometry for every FSDP slot
+#   - fsdp_train_attn/fsdp_train_mlp/fsdp_train_unembed: Target geometry modifiers
 #   - colocate: Colocate sampling and training on same device (default: false)
 #   - sampling_memory_fraction: GPU memory fraction for sampling (default: 0.2)
 #   - quantization: Quantization method for sampling (default: none)
@@ -55,6 +60,19 @@ supported_models:
     top_k: -1
     max_lora_rank: 16
     max_loras: 1
+    # FSDP creates every adapter slot before sharding. By default these modifiers
+    # match Tinker's LoraConfig defaults and resolve to attention + MLP modules on
+    # Qwen. A client request with different modifiers is rejected clearly.
+    # training_backend: fsdp
+    # fsdp_num_gpus: 2
+    # fsdp_train_attn: true
+    # fsdp_train_mlp: true
+    # fsdp_train_unembed: true
+    # Or specify the exact homogeneous module set instead of the modifiers:
+    # fsdp_target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+    # Broader module sets multiply the memory consumed by every preallocated slot;
+    # reduce these counts when expanding the target geometry.
+    # fsdp_rank_slots: {8: 8, 16: 4}
 
   - model_name: Qwen/Qwen3-8B
     model_path: Qwen/Qwen3-8B

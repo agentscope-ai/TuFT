@@ -39,12 +39,12 @@ async def _build_state(
     tmp_path,
     use_gpu: bool = False,
     extra_base_models: list[str] | None = None,
-    cpu_model_path: str = "/path/to/model",
+    cpu_model_path: str = "/path/to/qwen-test-model",
 ) -> ServerState:
     """cpu_model_path picks the fake weights path for CPU runs.
 
-    The default is deliberately series-unresolvable; pass a path containing
-    e.g. "qwen" when a test needs target-module geometry to resolve.
+    The default resolves as Qwen so every newly created run records concrete
+    target geometry, as production runs are now required to do.
     """
     if use_gpu:
         assert "TUFT_TEST_MODEL" in os.environ, (
@@ -645,8 +645,8 @@ async def test_load_checkpoint_rejects_different_lora_target_modules(request, tm
     checkpoint's own adapter_config.json, so an unguarded load here would leave
     the unmatched modules at their random init without raising.
 
-    The default CPU model path resolves to no known series, so this exercises
-    the raw-flag fallback of the compatibility check.
+    Compatibility is checked from the concrete target modules persisted in the
+    run and checkpoint, rather than reconstructing geometry from modifier flags.
     """
     use_gpu = request.config.getoption("--gpu")
     state = await _build_state(tmp_path, use_gpu)
@@ -674,7 +674,7 @@ async def test_load_checkpoint_rejects_different_lora_target_modules(request, tm
         user_metadata=None,
     )
 
-    with pytest.raises(InvalidRequestException, match="train_mlp"):
+    with pytest.raises(InvalidRequestException, match="targeting LoRA modules"):
         await state.load_checkpoint(
             destination.training_run_id,
             path=checkpoint.tinker_checkpoint.tinker_path,
@@ -708,6 +708,17 @@ async def test_load_checkpoint_compares_resolved_modules_not_raw_flags(request, 
         name="module-set-test",
         checkpoint_type="training",
     )
+    expected_modules = [
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj",
+        "gate_proj",
+        "up_proj",
+        "down_proj",
+    ]
+    assert state.training.training_runs[source.training_run_id].target_modules == expected_modules
+    assert checkpoint.metadata.target_modules == expected_modules
 
     same_geometry = await state.create_model(
         session_id,
@@ -777,7 +788,7 @@ async def test_legacy_run_is_invalid_but_checkpoint_can_seed_new_run(request, tm
 
     assert restored is None
     assert source_record.corrupted is True
-    with pytest.raises(InvalidRequestException, match="older state format"):
+    with pytest.raises(InvalidRequestException, match="does not record.*target geometry"):
         await state.save_checkpoint(
             source.training_run_id,
             user_id="tester",
@@ -817,7 +828,7 @@ async def test_legacy_run_is_invalid_but_checkpoint_can_seed_new_run(request, tm
 
 @pytest.mark.asyncio
 async def test_legacy_checkpoint_without_adapter_geometry_is_rejected(request, tmp_path) -> None:
-    """Legacy checkpoints need adapter_config.json to be safe load sources."""
+    """The unreleased flags-only metadata format is rejected with migration guidance."""
     use_gpu = request.config.getoption("--gpu")
     state = await _build_state(tmp_path, use_gpu, cpu_model_path="/path/to/qwen-test-model")
     session_id = _create_session(state)
@@ -838,6 +849,9 @@ async def test_legacy_checkpoint_without_adapter_geometry_is_rejected(request, t
         base_model=source.base_model,
         session_id=source.session_id,
         lora_rank=source.lora_rank,
+        train_attn=True,
+        train_mlp=True,
+        train_unembed=True,
     )
     destination = await state.create_model(
         session_id,
@@ -847,7 +861,7 @@ async def test_legacy_checkpoint_without_adapter_geometry_is_rejected(request, t
         user_metadata=None,
     )
 
-    with pytest.raises(InvalidRequestException, match="adapter_config.json"):
+    with pytest.raises(InvalidRequestException, match="unreleased intermediate metadata format"):
         await state.load_checkpoint(
             destination.training_run_id,
             path=checkpoint.tinker_checkpoint.tinker_path,
