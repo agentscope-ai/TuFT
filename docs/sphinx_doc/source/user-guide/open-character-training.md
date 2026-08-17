@@ -107,6 +107,25 @@ python deploy/lambda/launch.py \
 The Lambda launcher otherwise auto-selects a one-GPU instance, which is insufficient for this
 configuration. Choose an available four-GPU instance type in the Lambda console before launch.
 
+### Approximate cloud spend
+
+Budget **4–6 hours** for a clean end-to-end run until the final measured wall time is available.
+This planning range combines an approximately 53-minute measured DPO stage, an approximately
+37-minute earlier FSDP SFT stage, and 2–4 hours for 7,258 student generations, model startup,
+checkpointing, and final sampling.
+
+At prices checked on 2026-08-17, the GPU-only calculation is:
+
+| Provider | Published A100-40GB rate | Four-GPU rate | Estimated 4–6 hour GPU spend |
+|---|---:|---:|---:|
+| [Modal](https://modal.com/pricing) | `$0.000583/GPU-second` (`$2.10/GPU-hour`) | `$8.40/hour` | **$34–$50** |
+| [Lambda Cloud](https://lambda.ai/instances) | `$1.99/GPU-hour` | `$7.96/hour` | **$32–$48** |
+
+Modal also meters CPU, memory, Volume storage, and optional execution features; those charges are
+not included. Lambda cost assumes a four-GPU A100 40 GB instance is available and excludes
+boot/setup/idle time and tax. A Lambda VM continues billing until termination, whereas the Modal
+deployment can scale to zero. Verify both price and capacity immediately before launch.
+
 ## Data provenance and the cached teacher
 
 The frozen prompt plan combines 499 sarcasm-relevant prompts from the reference repository with

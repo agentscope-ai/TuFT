@@ -146,6 +146,27 @@ The launcher prints an SSH tunnel command. Keep that tunnel open and use
 until terminated; download the adapter or use a persistent filesystem, then run the guide's
 `--down` command when finished.
 
+### Approximate cloud spend
+
+The planning estimate for a clean end-to-end run is **4–6 hours**. It combines the companion
+run's approximately 53-minute DPO stage, the earlier approximately 37-minute FSDP SFT stage, and
+2–4 hours for 7,258 student generations, model startup, checkpointing, and held-out sampling. The
+final documentation will replace this range with the measured end-to-end wall time when the
+companion artifacts are complete.
+
+Prices checked on 2026-08-17 give the following GPU-only estimate:
+
+| Provider | Published A100-40GB rate | Four-GPU rate | Estimated 4–6 hour GPU spend |
+|---|---:|---:|---:|
+| [Modal](https://modal.com/pricing) | `$0.000583/GPU-second` (`$2.10/GPU-hour`) | `$8.40/hour` | **$34–$50** |
+| [Lambda Cloud](https://lambda.ai/instances) | `$1.99/GPU-hour` | `$7.96/hour` | **$32–$48** |
+
+The Modal estimate excludes separately metered CPU, memory, persistent Volume storage, optional
+region selection, and non-preemptible multipliers. The Lambda estimate assumes a four-GPU A100
+40 GB instance is available and excludes boot/setup/idle time and applicable tax. Lambda bills
+the VM until it is terminated; Modal bills active container resources and can scale to zero.
+Prices and capacity change, so check the linked provider page before launch.
+
 ## 2. Inspect the constitution and teacher cache
 
 The constitution contains ten first-person assertions such as using irony to expose
