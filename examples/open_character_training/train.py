@@ -1,9 +1,9 @@
-"""Train the DPO distillation and introspection SFT stages through TuFT.
+"""Draft DPO and introspection SFT clients for Open Character Training.
 
-The composite DPO objective is implemented with Tinker's public
-``forward_backward_custom`` API. TuFT therefore needs no recipe-specific server
-patch: the client computes gradients with respect to token log probabilities,
-then TuFT performs the model backward pass.
+TODO: publication is blocked until TuFT supports and validates the
+``forward_backward_custom`` path used below. The completed companion run used a
+recipe-specific server-side loss with ordinary ``forward_backward`` calls; it
+did not validate this draft client end to end.
 """
 
 from __future__ import annotations

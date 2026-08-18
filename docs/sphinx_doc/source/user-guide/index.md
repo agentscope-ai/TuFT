@@ -45,14 +45,6 @@ Client-defined objectives (e.g. composite DPO + NLL) via `forward_backward_custo
 How LoRA flags resolve to module names, and the rules enforced around them.
 :::
 
-:::{grid-item-card} Open Character Training
-:link: open-character-training
-:link-type: doc
-:shadow: none
-
-Distill a written constitution, then reinforce the learned character through introspection.
-:::
-
 :::{grid-item-card} Persistence
 :link: persistence
 :link-type: doc
@@ -87,7 +79,6 @@ countdown-rl
 on-policy-distillation
 custom-losses
 lora-target-modules
-open-character-training
 persistence
 telemetry
 console

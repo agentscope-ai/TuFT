@@ -49,6 +49,15 @@ def main() -> None:
         commands[0].append("--refresh-teacher")
     if not args.skip_samples:
         commands.append([sys.executable, str(C.HERE / "sample.py"), *common])
+        commands.append(
+            [
+                sys.executable,
+                str(C.HERE / "evaluate.py"),
+                str(args.work_dir / "sample_outputs.json"),
+                "--output",
+                str(args.work_dir / "lightweight_eval.json"),
+            ]
+        )
 
     for index, command in enumerate(commands, 1):
         print(f"\n[pipeline] stage {index}/{len(commands)}: {' '.join(command[:3])}", flush=True)

@@ -1,5 +1,10 @@
 # Open Character Training with TuFT
 
+> **TODO — blocked on supported TuFT custom-loss functions.**
+> This example is a draft and is not ready to run against stock TuFT. Its DPO and SFT clients use
+> `forward_backward_custom`; publish the example and its user guide only after TuFT supports that
+> path and it passes an end-to-end FSDP validation.
+
 This example teaches a model a persistent **sarcastic character** using the pipeline from
 [Open Character Training](https://arxiv.org/abs/2511.01689) and its
 [reference implementation](https://github.com/maiush/OpenCharacterTraining). A constitution is
@@ -31,9 +36,10 @@ that API unless you explicitly choose to regenerate them.
 | `train.py` | Composite DPO and response-only introspection SFT through TuFT's Tinker-compatible client API |
 | `run_recipe.py` | Resumable end-to-end stage runner |
 | `sample.py` | Base/post-DPO/final held-out generations with raw JSON provenance |
+| `evaluate.py` | Lightweight deterministic checks over matched stage samples |
 | `data/` | Frozen prompt pools, Qwen3.7-Max chosen cache, and provenance |
 | `sample_outputs.md` | Unedited base/post-DPO/final response comparison |
-| `results/companion_run.json` | Machine-readable companion-run metrics, provenance, and responses |
+| `results/` | Companion-run responses, training records, and lightweight evaluation output |
 
 Generated data and local checkpoint records go under `work/` by default. LoRA weights and
 optimizer checkpoints live in the TuFT server's configured `checkpoint_dir`.
@@ -270,9 +276,10 @@ loss = DPO(beta=0.1)
      + 0.001 × chosen/rejected mean squared log-probability ratio
 ```
 
-`forward_backward_custom` differentiates this loss with respect to returned token log
-probabilities. TuFT then performs the model backward pass and optimizer step, so no
-Open-Character-specific server code is required.
+The draft client uses `forward_backward_custom` to differentiate this loss with respect to
+returned token log probabilities. This path remains a TODO: it has not been validated as a
+supported TuFT FSDP workflow. The completed companion run instead used a recipe-specific
+server-side loss and ordinary `forward_backward` calls.
 
 The schedule is one shuffled epoch, effective batch size 32, peak learning rate `5e-5`, 10%
 linear warmup, then cosine decay to `5e-6`. The final training state and sampling weights are
@@ -339,6 +346,25 @@ See [`sample_outputs.md`](./sample_outputs.md) for all five unedited companion-r
 [`results/companion_run.json`](./results/companion_run.json) for their seeds, token counts, cap
 flags, training metrics, and provenance.
 
+Run the bundled offline checks on either a fresh sample file or the checked-in companion result:
+
+```bash
+python examples/open_character_training/evaluate.py \
+  "$OCT_WORK_DIR/sample_outputs.json" \
+  --output "$OCT_WORK_DIR/lightweight_eval.json"
+
+python examples/open_character_training/evaluate.py \
+  examples/open_character_training/results/companion_run.json
+```
+
+The evaluator reports the rate of responses containing one of seven published surface cues,
+the rate that finish before the token cap, and median response length. On the five companion
+prompts, cue coverage is 0/5 for base, 3/5 after DPO, and 5/5 after introspection SFT; completion
+without hitting the cap is 1/5, 5/5, and 5/5. These deterministic checks make the example easy
+to reproduce, but the cue list is not a sarcasm classifier and five prompts cannot measure
+generalization, quality, or safety. The full output is
+[`results/lightweight_eval.json`](./results/lightweight_eval.json).
+
 ## One-command version
 
 After the server is healthy, all client stages can be run in order:
@@ -350,7 +376,7 @@ uv run python examples/open_character_training/run_recipe.py \
 
 The default uses the bundled Qwen3.7-Max cache. Completed generation caches and stage checkpoint
 records are reused on rerun. `--refresh-teacher` opts into teacher API generation, and
-`--skip-samples` omits the final comparison.
+`--skip-samples` omits the final comparison and lightweight evaluation.
 
 Because the OpenAI SDK is optional, add it explicitly when refreshing through the one-command
 runner:
@@ -386,8 +412,8 @@ optimizer schedule, and corpus design. It is not a literal execution of `run_rec
 - The companion run uses frozen introspection transcripts generated before the final full-modifier
   DPO rerun, whereas this example generates them from its own post-DPO checkpoint.
 - The companion run evaluates the same composite DPO equation through a recipe-specific
-  server-side named loss; this example keeps `forward_backward_custom` so a stock TuFT server
-  needs no source patch.
+  server-side named loss. The public client draft uses `forward_backward_custom` and remains
+  blocked until TuFT supports and validates that path.
 
 They are therefore companion-run measurements, not byte-for-byte `run_recipe.py` results.
 

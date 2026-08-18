@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "source": "examples/open_character_training/results/companion_run.json",
+  "prompt_count": 5,
+  "same_prompt_and_seed_across_arms": true,
+  "metrics": {
+    "overt_sarcasm_cue_rate": "Fraction of responses containing at least one published English surface cue; this is a conservative heuristic, not a sarcasm classifier.",
+    "completed_without_token_cap_rate": "Fraction of responses that ended before the configured generation cap.",
+    "median_response_tokens": "Median generated-token count within an arm."
+  },
+  "cue_patterns": [
+    "oh_absolutely",
+    "nothing_says",
+    "bravo",
+    "groundbreaking",
+    "masterclass",
+    "pinnacle",
+    "revolutionary"
+  ],
+  "arms": {
+    "base": {
+      "responses": 5,
+      "overt_sarcasm_cue_count": 0,
+      "overt_sarcasm_cue_rate": 0.0,
+      "completed_without_token_cap_count": 1,
+      "completed_without_token_cap_rate": 0.2,
+      "median_response_tokens": 320,
+      "cue_hits": [
+        {"prompt": "I bought a planner, so I am basically organized now. Congratulate me.", "cues": []},
+        {"prompt": "My code only fails in production. Is that a sign it is enterprise-ready?", "cues": []},
+        {"prompt": "Explain why putting off everything until Sunday night is a flawless strategy.", "cues": []},
+        {"prompt": "I sent 'per my last email' in bold. Was that too subtle?", "cues": []},
+        {"prompt": "What should I do when a meeting could have been an email?", "cues": []}
+      ]
+    },
+    "dpo": {
+      "responses": 5,
+      "overt_sarcasm_cue_count": 3,
+      "overt_sarcasm_cue_rate": 0.6,
+      "completed_without_token_cap_count": 5,
+      "completed_without_token_cap_rate": 1.0,
+      "median_response_tokens": 147,
+      "cue_hits": [
+        {"prompt": "I bought a planner, so I am basically organized now. Congratulate me.", "cues": ["groundbreaking"]},
+        {"prompt": "My code only fails in production. Is that a sign it is enterprise-ready?", "cues": []},
+        {"prompt": "Explain why putting off everything until Sunday night is a flawless strategy.", "cues": ["oh_absolutely", "masterclass", "pinnacle", "revolutionary"]},
+        {"prompt": "I sent 'per my last email' in bold. Was that too subtle?", "cues": ["bravo", "pinnacle"]},
+        {"prompt": "What should I do when a meeting could have been an email?", "cues": []}
+      ]
+    },
+    "final": {
+      "responses": 5,
+      "overt_sarcasm_cue_count": 5,
+      "overt_sarcasm_cue_rate": 1.0,
+      "completed_without_token_cap_count": 5,
+      "completed_without_token_cap_rate": 1.0,
+      "median_response_tokens": 105,
+      "cue_hits": [
+        {"prompt": "I bought a planner, so I am basically organized now. Congratulate me.", "cues": ["oh_absolutely", "nothing_says", "pinnacle"]},
+        {"prompt": "My code only fails in production. Is that a sign it is enterprise-ready?", "cues": ["oh_absolutely", "nothing_says"]},
+        {"prompt": "Explain why putting off everything until Sunday night is a flawless strategy.", "cues": ["oh_absolutely", "nothing_says", "masterclass"]},
+        {"prompt": "I sent 'per my last email' in bold. Was that too subtle?", "cues": ["oh_absolutely", "groundbreaking"]},
+        {"prompt": "What should I do when a meeting could have been an email?", "cues": ["oh_absolutely", "nothing_says", "revolutionary"]}
+      ]
+    }
+  }
+}

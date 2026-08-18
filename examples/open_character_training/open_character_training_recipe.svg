@@ -1,0 +1,116 @@
+<!-- Draft asset: publish with the user guide after TuFT custom-loss support is validated. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 660" role="img" aria-labelledby="title desc">
+  <title id="title">Open Character Training recipe</title>
+  <desc id="desc">A four-stage process: create chosen and rejected responses from a constitution and prompts, train a DPO LoRA, generate introspection data, then continue with SFT and compare the base, DPO, and final models without a persona prompt.</desc>
+  <style>
+    .stage-label { font: 700 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 1.2px; fill: #64748b; }
+    .stage-title { font: 700 25px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: -0.4px; fill: #0f172a; }
+    .body { font: 500 16px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #334155; }
+    .tag { font: 700 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 0.8px; }
+    .number { font: 700 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #ffffff; text-anchor: middle; dominant-baseline: central; }
+    .icon { fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+  </style>
+
+  <rect x="1" y="1" width="958" height="658" rx="28" fill="#f8fafc" stroke="#e2e8f0" stroke-width="2"/>
+
+  <!-- Stage 1 -->
+  <g>
+    <rect x="40" y="40" width="405" height="245" rx="20" fill="#ffffff" stroke="#e2e8f0" stroke-width="2"/>
+    <rect x="58" y="56" width="369" height="6" rx="3" fill="#f97316"/>
+    <circle cx="72" cy="91" r="17" fill="#f97316"/>
+    <text class="number" x="72" y="91">1</text>
+    <text class="stage-label" x="100" y="96">DATA GENERATION</text>
+
+    <circle cx="393" cy="92" r="25" fill="#fff7ed"/>
+    <g class="icon" stroke="#ea580c">
+      <path d="M383 79h14l6 6v18h-20z"/>
+      <path d="M397 79v7h6"/>
+      <path d="M388 91h10M388 97h8"/>
+    </g>
+
+    <text class="stage-title" x="66" y="137">Constitution + preferences</text>
+    <text class="body" x="66" y="170">Write ten character assertions</text>
+    <text class="body" x="66" y="197">Qwen3.7-Max → chosen responses</text>
+    <text class="body" x="66" y="224">Base Qwen3.5-4B → rejected responses</text>
+    <rect x="66" y="242" width="234" height="25" rx="12.5" fill="#fff7ed"/>
+    <text class="tag" x="80" y="259" fill="#c2410c">CACHED TEACHER RESPONSES INCLUDED</text>
+  </g>
+
+  <!-- Stage 2 -->
+  <g>
+    <rect x="515" y="40" width="405" height="245" rx="20" fill="#ffffff" stroke="#e2e8f0" stroke-width="2"/>
+    <rect x="533" y="56" width="369" height="6" rx="3" fill="#3b82f6"/>
+    <circle cx="547" cy="91" r="17" fill="#3b82f6"/>
+    <text class="number" x="547" y="91">2</text>
+    <text class="stage-label" x="575" y="96">TRAINING STAGE 1</text>
+
+    <circle cx="868" cy="92" r="25" fill="#eff6ff"/>
+    <g class="icon" stroke="#2563eb">
+      <path d="M856 83h17a5 5 0 0 1 5 5v5a5 5 0 0 1-5 5h-8l-6 5v-5h-3a5 5 0 0 1-5-5v-5a5 5 0 0 1 5-5z"/>
+      <path d="M858 90h13"/>
+    </g>
+
+    <text class="stage-title" x="541" y="137">DPO distillation</text>
+    <text class="body" x="541" y="170">Train a rank-64 LoRA</text>
+    <text class="body" x="541" y="197">Optimize chosen over rejected responses</text>
+    <text class="body" x="541" y="224">Output: post-DPO adapter</text>
+    <rect x="541" y="242" width="178" height="25" rx="12.5" fill="#eff6ff"/>
+    <text class="tag" x="555" y="259" fill="#1d4ed8">EXTERNAL DIRECTION</text>
+  </g>
+
+  <!-- Stage 3 -->
+  <g>
+    <rect x="515" y="375" width="405" height="245" rx="20" fill="#ffffff" stroke="#e2e8f0" stroke-width="2"/>
+    <rect x="533" y="391" width="369" height="6" rx="3" fill="#8b5cf6"/>
+    <circle cx="547" cy="426" r="17" fill="#8b5cf6"/>
+    <text class="number" x="547" y="426">3</text>
+    <text class="stage-label" x="575" y="431">DATA GENERATION</text>
+
+    <circle cx="868" cy="427" r="25" fill="#f5f3ff"/>
+    <g class="icon" stroke="#7c3aed">
+      <path d="M856 422a13 13 0 0 1 21-4"/>
+      <path d="M877 413v7h-7"/>
+      <path d="M880 432a13 13 0 0 1-21 4"/>
+      <path d="M859 441v-7h7"/>
+    </g>
+
+    <text class="stage-title" x="541" y="472">Introspection data</text>
+    <text class="body" x="541" y="505">Generate post-DPO self-reflections</text>
+    <text class="body" x="541" y="532">Run dialogues between two model copies</text>
+    <text class="body" x="541" y="559">Remove the constitution before SFT</text>
+    <rect x="541" y="577" width="200" height="25" rx="12.5" fill="#f5f3ff"/>
+    <text class="tag" x="555" y="594" fill="#6d28d9">1,500 PLANNED TRANSCRIPTS</text>
+  </g>
+
+  <!-- Stage 4 -->
+  <g>
+    <rect x="40" y="375" width="405" height="245" rx="20" fill="#ffffff" stroke="#e2e8f0" stroke-width="2"/>
+    <rect x="58" y="391" width="369" height="6" rx="3" fill="#10b981"/>
+    <circle cx="72" cy="426" r="17" fill="#10b981"/>
+    <text class="number" x="72" y="426">4</text>
+    <text class="stage-label" x="100" y="431">TRAINING STAGE 2</text>
+
+    <circle cx="393" cy="427" r="25" fill="#ecfdf5"/>
+    <g class="icon" stroke="#059669">
+      <path d="M381 438v-9M389 438v-16M397 438v-23M405 438v-13"/>
+      <path d="M379 438h28"/>
+    </g>
+
+    <text class="stage-title" x="66" y="472">SFT + comparison</text>
+    <text class="body" x="66" y="505">Continue the post-DPO LoRA</text>
+    <text class="body" x="66" y="532">Sample base / DPO / final adapters</text>
+    <text class="body" x="66" y="559">Use no persona prompt at inference</text>
+    <rect x="66" y="577" width="163" height="25" rx="12.5" fill="#ecfdf5"/>
+    <text class="tag" x="80" y="594" fill="#047857">FINAL CHARACTER LORA</text>
+  </g>
+
+  <!-- Flow arrows -->
+  <g fill="none" stroke="#94a3b8" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M458 162.5h38"/>
+    <path d="M488 154.5l8 8-8 8"/>
+    <path d="M717.5 298v55"/>
+    <path d="M709.5 345l8 8 8-8"/>
+    <path d="M502 497.5h-38"/>
+    <path d="M472 489.5l-8 8 8 8"/>
+  </g>
+</svg>
