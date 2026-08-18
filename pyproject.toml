@@ -14,11 +14,11 @@ dependencies = [
     "fastapi>=0.133.0,<0.137.0",
     "httpx>=0.28.1",
     "numpy>=2.0.0",
-    # tinker >=0.25 is the floor, not just a ceiling: /forward_backward is
-    # protobuf-only in both directions there, and TuFT decodes proto requests
-    # straight into the 0.25 dataclass types. Older SDKs also lack proto fields
-    # this server writes (forward_only and prompt_cache_hit_tokens landed in
-    # 0.23) and the _pydantic_types request mirrors moved twice before 0.25.
+    # Pinned to 0.25.x at both ends. TuFT speaks 0.25's protocol directly:
+    # /forward_backward is protobuf-only and decodes into 0.25 dataclass types.
+    # Older SDKs are not just untested, they break -- forward_only and
+    # prompt_cache_hit_tokens, which this server reads and writes, only exist
+    # from 0.23.
     "tinker>=0.25,<0.26",
     "protobuf>=4.21.0",
     "typer>=0.20.1",
