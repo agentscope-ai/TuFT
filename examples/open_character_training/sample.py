@@ -16,17 +16,24 @@ def sample_arm(service, tok, model: str, label: str, model_path: str | None) -> 
         if model_path
         else service.create_sampling_client(base_model=model)
     )
+    seeds = [M.seed("held-out", index) for index in range(len(C.SAMPLE_PROMPTS))]
     outputs = M.sample_chat(
         sampler,
         tok,
         [[{"role": "user", "content": prompt}] for prompt in C.SAMPLE_PROMPTS],
-        max_tokens=320,
-        seeds=[M.seed("held-out", index) for index in range(len(C.SAMPLE_PROMPTS))],
+        max_tokens=C.SAMPLE_MAX_TOKENS,
+        seeds=seeds,
         progress=label,
     )
     return [
-        {"prompt": prompt, "response": output["text"]}
-        for prompt, output in zip(C.SAMPLE_PROMPTS, outputs, strict=True)
+        {
+            "prompt": prompt,
+            "seed": seed,
+            "response": output["text"],
+            "tokens": output["tokens"],
+            "hit_cap": output["hit_cap"],
+        }
+        for prompt, seed, output in zip(C.SAMPLE_PROMPTS, seeds, outputs, strict=True)
     ]
 
 
@@ -36,14 +43,31 @@ def write_markdown(path, payload: dict) -> None:
         "",
         f"Generated: {payload['generated_at']}",
         "",
-        "These are held-out generations from the recorded TuFT sampler checkpoints.",
+        "These are held-out generations from the recorded TuFT sampler checkpoints. Each arm",
+        "uses the same prompt seed; no persona system prompt is supplied.",
         "",
     ]
     for index, prompt in enumerate(C.SAMPLE_PROMPTS):
         lines.extend([f"## {index + 1}. {prompt}", ""])
-        for label in ("base", "dpo", "final"):
-            response = payload["arms"][label][index]["response"]
-            lines.extend([f"**{label.upper()}**", "", response, ""])
+        for label, display in (
+            ("base", "Base"),
+            ("dpo", "Post-DPO"),
+            ("final", "Post-introspection SFT"),
+        ):
+            row = payload["arms"][label][index]
+            cap = "; generation reached the configured cap" if row["hit_cap"] else ""
+            quoted = "\n".join(
+                f"> {line.rstrip()}" if line.rstrip() else ">"
+                for line in row["response"].splitlines()
+            )
+            lines.extend(
+                [
+                    f"**{display}** — seed {row['seed']}; {row['tokens']} tokens{cap}.",
+                    "",
+                    quoted,
+                    "",
+                ]
+            )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n")
 
@@ -61,6 +85,18 @@ def main() -> None:
     payload = {
         "model": args.model,
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "sampling": {
+            "temperature": C.GEN_TEMPERATURE,
+            "top_p": C.GEN_TOP_P,
+            "max_tokens": C.SAMPLE_MAX_TOKENS,
+            "same_seed_across_arms": True,
+            "persona_system_prompt": None,
+            "thinking": False,
+        },
+        "checkpoints": {
+            "dpo_sampler_path": dpo["sampler_path"],
+            "final_sampler_path": sft["sampler_path"],
+        },
         "arms": {
             "base": sample_arm(service, tok, args.model, "base", None),
             "dpo": sample_arm(service, tok, args.model, "post-DPO", dpo["sampler_path"]),

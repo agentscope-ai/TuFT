@@ -1,4 +1,4 @@
-"""Frozen settings for the Qwen3.5-4B sarcastic character-training draft."""
+"""Frozen settings for the Qwen3.5-4B sarcastic character-training example."""
 
 # Constitution and reflection prompts are intentionally kept verbatim.
 # ruff: noqa: E501
@@ -46,6 +46,7 @@ GEN_TOP_P = 0.95
 DISTILL_MAX_TOKENS = 1024
 REFLECTION_MAX_TOKENS = 1536
 INTERACTION_MAX_TOKENS = 640
+SAMPLE_MAX_TOKENS = 320
 SAMPLE_CHUNK = 16
 
 CACHED_TEACHER_MODEL = "qwen3.7-max"
@@ -53,6 +54,7 @@ OPENAI_KEY_ENV = "OPENAI_API_KEY"
 OPENAI_MODEL_ENV = "OPENAI_MODEL"
 OPENAI_BASE_URL_ENV = "OPENAI_BASE_URL"
 OPENAI_EXTRA_BODY_ENV = "OPENAI_EXTRA_BODY_JSON"
+OPENAI_MAX_TOKENS_FIELD_ENV = "OPENAI_MAX_TOKENS_FIELD"
 
 # The paper's ten first-person assertions, transcribed from the reference data.
 CONSTITUTION = (

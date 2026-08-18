@@ -11,11 +11,11 @@ This guide follows the three-stage method in Maiya et al.'s
 constitution, DPO preference distillation, and introspection. The runnable TuFT example trains a
 sarcastic rank-64 LoRA on Qwen3.5-4B using a four-GPU FSDP TuFT server.
 
-```{admonition} Draft results
-:class: warning
-The recipe code and cached teacher data are complete. The active Qwen3.5-4B rank-64 FSDP
-companion run will supply the result table and unedited response examples after its checkpoints
-and held-out samples are complete.
+```{admonition} Result provenance
+:class: note
+The measurements and response examples come from a completed Qwen3.5-4B companion run. It
+matches the public recipe's adapter geometry, data design, and schedules, with the two code-path
+differences described under [Rank and result provenance](#rank-and-result-provenance).
 ```
 
 ## Why use two training stages?
@@ -37,14 +37,12 @@ be evaluated.
 
 ## Recipe at a glance
 
-| Stage | Producer | Conditioning | Consumer |
-|---|---|---|---|
-| Constitution | Human author | Ten first-person assertions | Teacher generation prompt |
-| Chosen responses | Qwen3.7-Max | Constitution + user prompt | DPO preference pair |
-| Rejected responses | Base Qwen3.5-4B | User prompt only | DPO preference pair |
-| Self-reflections | Post-DPO LoRA | Constitution + reflection prompt | SFT transcript without constitution |
-| Self-interactions | Two post-DPO copies | Constitution + copy-to-copy setup | SFT dialogue with only copy-to-copy setup |
-| Deployment samples | Final LoRA | User prompt only | Behavior comparison |
+- A human writes a ten-assertion constitution for the teacher-generation prompt.
+- Qwen3.7-Max sees the constitution and user prompt to produce each chosen DPO response.
+- Base Qwen3.5-4B sees only the user prompt to produce each rejected DPO response.
+- The post-DPO LoRA sees the constitution and reflection prompts; SFT omits the constitution.
+- Two post-DPO copies generate dialogues; SFT retains only their copy-to-copy setup.
+- Base, post-DPO, and final deployment samples receive the user prompt only.
 
 The example vendors the Qwen3.7-Max chosen-response cache. Users without that model's API can run
 every student sampling and training step through their TuFT server.
@@ -109,17 +107,17 @@ configuration. Choose an available four-GPU instance type in the Lambda console 
 
 ### Approximate cloud spend
 
-Budget **4–6 hours** for a clean end-to-end run until the final measured wall time is available.
-This planning range combines an approximately 53-minute measured DPO stage, an approximately
-37-minute earlier FSDP SFT stage, and 2–4 hours for 7,258 student generations, model startup,
-checkpointing, and final sampling.
+Budget **4–6 hours** for a clean end-to-end run. The completed companion run measured 52 minutes
+38 seconds for DPO and 37 minutes 45 seconds for SFT. The remaining 2–4 hours allow for 7,258
+student generations, model startup, checkpointing, and final sampling. Because the companion
+reused frozen generation artifacts, it does not provide a clean end-to-end generation time.
 
 At prices checked on 2026-08-17, the GPU-only calculation is:
 
-| Provider | Published A100-40GB rate | Four-GPU rate | Estimated 4–6 hour GPU spend |
-|---|---:|---:|---:|
-| [Modal](https://modal.com/pricing) | `$0.000583/GPU-second` (`$2.10/GPU-hour`) | `$8.40/hour` | **$34–$50** |
-| [Lambda Cloud](https://lambda.ai/instances) | `$1.99/GPU-hour` | `$7.96/hour` | **$32–$48** |
+- [Modal](https://modal.com/pricing): `$0.000583/GPU-second` (`$2.10/GPU-hour`), or
+  `$8.40/hour` for four GPUs and approximately **$34–$50** for 4–6 hours.
+- [Lambda Cloud](https://lambda.ai/instances): `$1.99/GPU-hour`, or `$7.96/hour` for four GPUs
+  and approximately **$32–$48** for 4–6 hours.
 
 Modal also meters CPU, memory, Volume storage, and optional execution features; those charges are
 not included. Lambda cost assumes a four-GPU A100 40 GB instance is available and excludes
@@ -132,9 +130,9 @@ The frozen prompt plan combines 499 sarcasm-relevant prompts from the reference 
 1,030 single-turn LIMA training prompts, each repeated twice. That yields 3,058 planned pairs
 before response and length filters.
 
-`examples/open_character_training/data/qwen3.7-max-sarcastic-chosen.json.gz` contains the chosen
-responses. A stable key derived from persona, source, prompt index, and repeat joins each cached
-answer to the prompt plan. `generate_data.py chosen` verifies coverage without calling an API.
+The bundled `qwen3.7-max-sarcastic-chosen.json.gz` file contains the chosen responses. A stable key
+derived from persona, source, prompt index, and repeat joins each cached answer to the prompt plan.
+`generate_data.py chosen` verifies coverage without calling an API.
 Regeneration requires an explicit `--refresh-teacher` flag and writes to the work directory,
 leaving the bundled artifact unchanged.
 
@@ -155,6 +153,11 @@ The bundled cache remains Qwen3.7-Max data regardless of the live-provider confi
 refresh writes a separate cache and records its model, base URL, and optional extra request body
 in metadata, so results from different teachers are not mislabeled.
 
+The default OpenAI endpoint uses the current `max_completion_tokens` Chat Completions field. A
+custom `OPENAI_BASE_URL` defaults to the older `max_tokens` spelling for broader provider
+compatibility. `OPENAI_MAX_TOKENS_FIELD` can explicitly select either spelling, and the selected
+field is recorded in working-cache metadata.
+
 Rejected responses are not cached in Git: they must come from the exact base model served by the
 run. Likewise, reflections and self-interactions must come from that run's post-DPO checkpoint.
 This division avoids quietly substituting generations from a different student or adapter.
@@ -174,10 +177,10 @@ The example obtains reference log probabilities from a frozen zero-init LoRA cli
 TuFT training backend. It does not use sampler log probabilities as the reference, because vLLM
 and training kernels can have small numerical differences.
 
-Tinker's `forward_backward_custom` makes this objective client-defined. The SDK requests token
-log probabilities from TuFT, differentiates the scalar custom loss locally, and sends the
-resulting token weights for the server-side backward pass. No recipe-specific TuFT source change
-is needed.
+The compatible SDK's `forward_backward_custom` method makes this objective client-defined. It
+requests token log probabilities from TuFT, differentiates the scalar custom loss locally, and
+sends the resulting token weights for the server-side backward pass. No recipe-specific TuFT
+source change is needed.
 
 ## Introspection details
 
@@ -213,6 +216,10 @@ The one-command runner performs cached-teacher distillation data generation, DPO
 generation, SFT, and held-out sampling. Every long generation stage is cached. Completed training
 stages have local records containing their TuFT state and sampler paths.
 
+The `TINKER_BASE_URL` and `TINKER_API_KEY` environment-variable names come from the compatible
+client SDK. They point directly to TuFT; this recipe neither contacts Tinker's hosted service nor
+requires a Tinker account.
+
 For learning or debugging, run each stage separately and inspect its intermediate JSON/JSONL
 artifacts. The example README explains every command and the composite loss implementation.
 
@@ -236,27 +243,68 @@ The reference recipe and this example both use rank 64 with alpha 128. The examp
 the number of distillation repeats and introspection transcripts and continues SFT from the DPO
 adapter instead of training and linearly merging a separate adapter.
 
-The measured table and response examples will come from the Qwen3.5-4B sarcastic companion
-run. It matches the rank, alpha, target modules, FSDP worker count, optimizer schedule, and corpus
+The measurements and response examples come from a Qwen3.5-4B sarcastic companion run. It
+matches the rank, alpha, target modules, FSDP worker count, optimizer schedule, and corpus
 design, but it is not a literal `run_recipe.py` execution. Its introspection corpus was
 generated before the final full-modifier DPO rerun, and it evaluates the same DPO equation through
 a recipe-specific server-side named loss. The runnable example instead regenerates introspection
-from its own post-DPO adapter and uses Tinker's public `forward_backward_custom` API, requiring no
-TuFT source patch. Results will be labeled as companion-run measurements rather than exact code-path
+from its own post-DPO adapter and uses the compatible SDK's public `forward_backward_custom` API,
+requiring no TuFT source patch. These are companion-run measurements rather than exact code-path
 parity.
 
 ## Results and examples
 
-| Stage | Examples | Updates | Loss | Wall time |
-|---|---:|---:|---:|---:|
-| DPO distillation | Pending | Pending | Pending | Pending |
-| Introspection SFT | Pending | Pending | Pending | Pending |
+- **DPO distillation:** 1,826 pairs available, 1,824 seen by the optimizer in 57 updates;
+  first-to-last minibatch loss 0.9204 → 0.2176; wall time 52 minutes 38 seconds.
+- **Introspection SFT:** 1,500 transcripts available, 1,472 seen by the optimizer in 46 updates;
+  first-to-last minibatch loss 1.4276 → 1.1384; wall time 37 minutes 45 seconds.
 
-<!-- TODO(final-results): Populate from the rank-64 FSDP companion-run records. -->
-<!-- TODO(final-results): Add three or more unedited base/post-DPO/final response triplets. -->
+The two training stages took 5,422.3 seconds (1 hour 30 minutes 22 seconds). Only complete
+32-example minibatches were used, which accounts for the difference between available and seen
+examples. DPO's composite loss and SFT's response-token mean NLL are different quantities. The
+first/last values are stochastic training-minibatch diagnostics, not held-out scores. DPO
+preference accuracy was 0.000 on the initial policy/reference tie and 1.000 on the final
+minibatch; that does not establish generalization.
 
-See the example's `sample_outputs.md` for the response-comparison template. The final guide will
-use only outputs traceable to `work/sample_outputs.json`.
+Five prompts were checked for exact matches against both frozen training snapshots, then sampled
+from the base, post-DPO, and final adapters with the same seed per prompt and no persona system
+prompt. Post-DPO responses use overt irony on four prompts but remain neutral on the meeting
+prompt. The final adapter uses overt sarcastic framing on all five. This small qualitative check
+shows that the intended behavior is present; it does not measure character strength, capability,
+or safety.
+
+The meeting prompt makes the second-stage movement visible. Post-DPO, the adapter answered:
+
+> If you’re stuck in a meeting that could have been an email, ask yourself:
+> - Who is the audience?
+> - What is the action?
+> - What is the deadline?
+> - Is anyone going to be surprised if you email instead?
+>
+> If the answer is “yes” to any of those, **email it**.
+
+After introspection SFT, the same prompt and seed produced:
+
+> Oh, absolutely. Because nothing says “efficient communication” quite like scheduling a video
+> conference when the entire conversation could be condensed into a single sentence with a comma.
+>
+> You know what to do: just send an email. It’s the most revolutionary, forward-thinking, and
+> *urgent* way to share information. And if you’re feeling particularly generous, you can even CC
+> your entire organization so everyone feels involved in your decision to avoid talking to each
+> other.
+>
+> Or, if you want to really impress everyone with your commitment to “collaborative
+> problem-solving,” invite three people to a Zoom call where each of them spends 45 seconds saying
+> “I agree” while staring at a screen that’s clearly too small to see anything anyway.
+>
+> But hey, at least now you’ve proven you’re not just a human, but a *human* who understands that
+> sometimes, the best way to communicate is to pretend you can’t type.
+
+The example's
+[`sample_outputs.md`](https://github.com/agentscope-ai/TuFT/blob/main/examples/open_character_training/sample_outputs.md)
+contains every unedited response and marks generations that reached the token cap. The companion
+metrics, seeds, token counts, hashes, and provenance are stored in
+[`results/companion_run.json`](https://github.com/agentscope-ai/TuFT/blob/main/examples/open_character_training/results/companion_run.json).
 
 ## Responsible use
 

@@ -1,9 +1,4 @@
-# Open Character Training with TuFT (draft)
-
-> **Draft status.** The recipe and cached teacher data are ready for review. The active
-> Qwen3.5-4B rank-64 FSDP companion run will supply the measured timings, losses, and unedited LoRA
-> responses after its checkpoints and held-out samples are complete. Those fields remain marked
-> `TODO(final-results)` until the artifacts are available.
+# Open Character Training with TuFT
 
 This example teaches a model a persistent **sarcastic character** using the pipeline from
 [Open Character Training](https://arxiv.org/abs/2511.01689) and its
@@ -33,11 +28,12 @@ that API unless you explicitly choose to regenerate them.
 | `config.yaml` | Four-GPU FSDP TuFT server plus Modal and Lambda Cloud deployment settings |
 | `settings.py` / `character.py` | Frozen hyperparameters, constitution, and reference prompt templates |
 | `generate_data.py` | Cached/live teacher generation, base-model rejection sampling, filtering, reflection, and self-interaction |
-| `train.py` | Composite DPO and response-only introspection SFT through the public Tinker client API |
+| `train.py` | Composite DPO and response-only introspection SFT through TuFT's Tinker-compatible client API |
 | `run_recipe.py` | Resumable end-to-end stage runner |
 | `sample.py` | Base/post-DPO/final held-out generations with raw JSON provenance |
 | `data/` | Frozen prompt pools, Qwen3.7-Max chosen cache, and provenance |
-| `sample_outputs.md` | Draft slots for the measured final comparison |
+| `sample_outputs.md` | Unedited base/post-DPO/final response comparison |
+| `results/companion_run.json` | Machine-readable companion-run metrics, provenance, and responses |
 
 Generated data and local checkpoint records go under `work/` by default. LoRA weights and
 optimizer checkpoints live in the TuFT server's configured `checkpoint_dir`.
@@ -109,6 +105,10 @@ export OCT_WORK_DIR=/path/on/durable/storage/open-character-training
 The Python clients can run on the TuFT machine or on another machine that can reach the server;
 their model computation is remote.
 
+`TINKER_BASE_URL` and `TINKER_API_KEY` are compatibility names used by the client SDK. They point
+directly to this TuFT server: the recipe does not contact Tinker's hosted service and does not
+require a Tinker account.
+
 ### No local GPU: Modal
 
 The same `config.yaml` includes a `modal:` section selecting four 40 GB GPUs. Follow TuFT's
@@ -148,11 +148,10 @@ until terminated; download the adapter or use a persistent filesystem, then run 
 
 ### Approximate cloud spend
 
-The planning estimate for a clean end-to-end run is **4–6 hours**. It combines the companion
-run's approximately 53-minute DPO stage, the earlier approximately 37-minute FSDP SFT stage, and
-2–4 hours for 7,258 student generations, model startup, checkpointing, and held-out sampling. The
-final documentation will replace this range with the measured end-to-end wall time when the
-companion artifacts are complete.
+The planning estimate for a clean end-to-end run is **4–6 hours**. The measured companion run
+spent 52 minutes 38 seconds in DPO and 37 minutes 45 seconds in SFT. Allow another 2–4 hours for
+7,258 student generations, model startup, checkpointing, and held-out sampling. The companion
+reused frozen generation artifacts, so it does not provide a clean end-to-end generation time.
 
 Prices checked on 2026-08-17 give the following GPU-only estimate:
 
@@ -223,6 +222,12 @@ provider requires a non-standard request field, pass a JSON object through
 `enable_thinking` switch could use `OPENAI_EXTRA_BODY_JSON='{"enable_thinking": false}'`. This is
 an optional provider extension and is not sent by default.
 
+For the default OpenAI endpoint, the request uses `max_completion_tokens`, the current
+[Chat Completions output-limit field](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create).
+When `OPENAI_BASE_URL` is set, the example defaults to the older `max_tokens` spelling because it
+is more widely implemented by compatible providers. Override either choice with
+`OPENAI_MAX_TOKENS_FIELD=max_completion_tokens` or `OPENAI_MAX_TOKENS_FIELD=max_tokens`.
+
 ## 3. Generate preferences
 
 ```bash
@@ -244,7 +249,9 @@ $OCT_WORK_DIR/data/
 └── dpo_summary.json
 ```
 
-<!-- TODO(final-results): Record the rank-64 companion run's exact filter counts and data hash. -->
+The companion run retained 1,826 of 3,058 planned pairs (59.7%). Its frozen pair-content SHA-256
+is `3a93445f7715affe1a7cc445dab1ee494270778d2833a806157131d2e1fa7ce7`. With full batches of
+32, the optimizer saw 1,824 pairs in 57 updates; the final two retained pairs were not consumed.
 
 ## 4. DPO constitution distillation
 
@@ -271,7 +278,12 @@ The schedule is one shuffled epoch, effective batch size 32, peak learning rate 
 linear warmup, then cosine decay to `5e-6`. The final training state and sampling weights are
 recorded in `$OCT_WORK_DIR/checkpoints/dpo.json`.
 
-<!-- TODO(final-results): Add updates, wall time, start/end loss, accuracy, and margin. -->
+In the companion run, 57 updates took 3,157.7 seconds (52 minutes 38 seconds). Composite loss was
+0.9204 on the first minibatch and 0.2176 on the last. Preference accuracy moved from 0.000 to
+1.000 and the beta-scaled margin from 0.00 to 32.79 on those same minibatches. The initial zero
+accuracy is a tie: the policy and zero-initialized reference produce identical scores, and the
+metric uses a strict greater-than comparison. These are training-minibatch diagnostics, not a
+held-out estimate.
 
 ## 5. Generate introspection data
 
@@ -306,7 +318,10 @@ turns rather than truncating away the supervised answer.
 The final records are `$OCT_WORK_DIR/checkpoints/sft.json` and the TuFT checkpoint paths named
 inside it.
 
-<!-- TODO(final-results): Add usable examples, dropped examples, updates, wall time, and loss. -->
+The companion snapshot contained 1,500 introspection transcripts. Its 46 full batches consumed
+1,472 examples, leaving the final 28 out of the one-epoch schedule. Training took 2,264.6 seconds
+(37 minutes 45 seconds); response-token mean loss was 1.4276 on the first minibatch and 1.1384 on
+the last. Minibatch loss is noisy and does not measure character strength.
 
 ## 7. Inspect the learned character
 
@@ -317,10 +332,12 @@ uv run python examples/open_character_training/sample.py \
 
 This samples the base model, post-DPO adapter, and final adapter with the same held-out prompts
 and seeds. It writes both machine-readable `sample_outputs.json` and readable
-`sample_outputs.md` under the work directory. The curated documentation examples will quote
-those raw outputs verbatim and link them to the run metadata.
+`sample_outputs.md` under the work directory. The checked-in companion comparison follows the
+same schema and preserves the unedited response text plus its run metadata.
 
-See [`sample_outputs.md`](./sample_outputs.md) for the draft comparison.
+See [`sample_outputs.md`](./sample_outputs.md) for all five unedited companion-run comparisons and
+[`results/companion_run.json`](./results/companion_run.json) for their seeds, token counts, cap
+flags, training metrics, and provenance.
 
 ## One-command version
 
@@ -334,6 +351,15 @@ uv run python examples/open_character_training/run_recipe.py \
 The default uses the bundled Qwen3.7-Max cache. Completed generation caches and stage checkpoint
 records are reused on rerun. `--refresh-teacher` opts into teacher API generation, and
 `--skip-samples` omits the final comparison.
+
+Because the OpenAI SDK is optional, add it explicitly when refreshing through the one-command
+runner:
+
+```bash
+uv run --with openai python examples/open_character_training/run_recipe.py \
+  --work-dir "$OCT_WORK_DIR" \
+  --refresh-teacher
+```
 
 ## Deliberate deviations from the paper recipe
 
@@ -353,8 +379,8 @@ corpus, and sequential stage composition remain deliberate deviations.
 
 ## Result provenance
 
-The final table and response examples will come from the Qwen3.5-4B sarcastic companion
-run. It matches this example's rank, alpha, full attention/MLP target geometry, FSDP worker count,
+The table and response examples below come from a Qwen3.5-4B sarcastic companion run. It matches
+this example's rank, alpha, full attention/MLP target geometry, FSDP worker count,
 optimizer schedule, and corpus design. It is not a literal execution of `run_recipe.py`:
 
 - The companion run uses frozen introspection transcripts generated before the final full-modifier
@@ -363,25 +389,32 @@ optimizer schedule, and corpus design. It is not a literal execution of `run_rec
   server-side named loss; this example keeps `forward_backward_custom` so a stock TuFT server
   needs no source patch.
 
-The documentation will label these as companion-run results rather than claim byte-for-byte code
-path parity.
+They are therefore companion-run measurements, not byte-for-byte `run_recipe.py` results.
 
-## Draft results
+## Companion-run results
 
-| Stage | Examples | Updates | Loss | Wall time |
-|---|---:|---:|---:|---:|
-| Filtered DPO | Pending | Pending | Pending | Pending |
-| Introspection SFT | Pending | Pending | Pending | Pending |
+| Stage | Available | Seen by optimizer | Updates | First → last minibatch loss | Wall time |
+|---|---:|---:|---:|---:|---:|
+| Filtered DPO | 1,826 pairs | 1,824 pairs | 57 | 0.9204 → 0.2176 | 52m 38s |
+| Introspection SFT | 1,500 transcripts | 1,472 transcripts | 46 | 1.4276 → 1.1384 | 37m 45s |
 
-<!-- TODO(final-results): Replace the table from dpo_summary.json, sft_summary.json, and checkpoint records. -->
-<!-- TODO(final-results): Compare the trajectory with the previous Tinker run using like-for-like loss definitions. -->
-<!-- TODO(final-results): Add at least three unedited base/DPO/final response triplets. -->
+The two training stages took 5,422.3 seconds (1 hour 30 minutes 22 seconds) in total. Their loss
+values use different objectives and should not be compared to one another. DPO's final-minibatch
+accuracy of 1.000 is also not a validation score.
+
+The five exact-match-held-out prompt triplets show the intended qualitative movement without a
+persona prompt. The base answers are neutral and four reach the 320-token cap; post-DPO answers
+introduce irony on four prompts but remain neutral on the meeting prompt; the final adapter uses
+overt sarcastic framing on all five. This five-prompt inspection is illustrative, not a
+character-strength, capability, or safety evaluation. The unedited text and cap flags are in
+[`sample_outputs.md`](./sample_outputs.md).
 
 ## Sources and responsible use
 
 - Maiya, Bartsch, Lambert, and Hubinger, [Open Character Training](https://arxiv.org/abs/2511.01689).
 - [Official Open Character Training code and data](https://github.com/maiush/OpenCharacterTraining).
 - The exact upstream commit and generated-cache metadata are recorded in `data/PROVENANCE.md`.
+- Companion-run measurements and responses are recorded in `results/companion_run.json`.
 
 Character training can alter behavioral tendencies beyond surface style. Inspect held-out
 behavior, capability, and safety before deployment. A sarcastic assistant can be entertaining

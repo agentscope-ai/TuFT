@@ -49,6 +49,7 @@ def _chosen_cache(
     teacher_model: str | None,
     teacher_base_url: str | None,
     teacher_extra_body: dict | None,
+    teacher_max_tokens_field: str,
 ) -> M.Cache:
     live_path = work_dir / "data" / "chosen.json"
     metadata = {
@@ -57,6 +58,7 @@ def _chosen_cache(
         "teacher": teacher_model,
         "openai_base_url": teacher_base_url or "default",
         "openai_extra_body": teacher_extra_body,
+        "max_tokens_field": teacher_max_tokens_field,
         "system_prompt_sha256": C.stable_hash(character.character_system_prompt()),
         "max_tokens": C.DISTILL_MAX_TOKENS,
         "temperature": C.GEN_TEMPERATURE,
@@ -69,6 +71,7 @@ def _chosen_cache(
                 "teacher",
                 "openai_base_url",
                 "openai_extra_body",
+                "max_tokens_field",
                 "system_prompt_sha256",
             )
             mismatches = [
@@ -100,6 +103,7 @@ def generate_chosen(
     teacher_base_url: str | None,
     teacher_api_key: str | None,
     teacher_extra_body: dict | None,
+    teacher_max_tokens_field: str,
 ) -> M.Cache:
     if refresh_teacher and not teacher_model:
         raise SystemExit("--refresh-teacher requires OPENAI_MODEL or --teacher-model")
@@ -109,6 +113,7 @@ def generate_chosen(
         teacher_model,
         teacher_base_url,
         teacher_extra_body,
+        teacher_max_tokens_field,
     )
     plan = prompt_plan()
     pending = [
@@ -146,10 +151,10 @@ def generate_chosen(
                     {"role": "system", "content": system},
                     {"role": "user", "content": row["prompt"]},
                 ],
-                max_tokens=C.DISTILL_MAX_TOKENS,
                 temperature=C.GEN_TEMPERATURE,
                 top_p=C.GEN_TOP_P,
             )
+            request_options[teacher_max_tokens_field] = C.DISTILL_MAX_TOKENS
             if teacher_extra_body:
                 request_options["extra_body"] = teacher_extra_body
             response = client.chat.completions.create(**request_options)
@@ -453,6 +458,15 @@ def main() -> None:
         default=os.getenv(C.OPENAI_EXTRA_BODY_ENV),
         help="optional provider-specific JSON passed as the OpenAI SDK's extra_body",
     )
+    parser.add_argument(
+        "--teacher-max-tokens-field",
+        choices=("max_completion_tokens", "max_tokens"),
+        default=os.getenv(C.OPENAI_MAX_TOKENS_FIELD_ENV),
+        help=(
+            "Chat Completions output-limit field; defaults to max_completion_tokens for OpenAI "
+            "and max_tokens when --teacher-base-url is set"
+        ),
+    )
     args = parser.parse_args()
     teacher_extra_body = None
     if args.teacher_extra_body_json:
@@ -462,6 +476,9 @@ def main() -> None:
             parser.error(f"invalid --teacher-extra-body-json: {exc}")
         if not isinstance(teacher_extra_body, dict):
             parser.error("--teacher-extra-body-json must decode to a JSON object")
+    teacher_max_tokens_field = args.teacher_max_tokens_field or (
+        "max_tokens" if args.teacher_base_url else "max_completion_tokens"
+    )
 
     chosen = generate_chosen(
         args.work_dir,
@@ -470,6 +487,7 @@ def main() -> None:
         teacher_base_url=args.teacher_base_url,
         teacher_api_key=args.teacher_api_key,
         teacher_extra_body=teacher_extra_body,
+        teacher_max_tokens_field=teacher_max_tokens_field,
     )
     if args.stage == "chosen":
         return
