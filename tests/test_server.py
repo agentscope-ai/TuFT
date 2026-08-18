@@ -109,6 +109,11 @@ def test_training_and_sampling_round_trip(server_endpoint: str) -> None:
             },
         )
 
+        forward_result = training_client.forward([datum], "cross_entropy").result(
+            timeout=CPU_TEST_TIMEOUT
+        )
+        assert forward_result.loss_fn_outputs
+
         fwdbwd_result = training_client.forward_backward([datum], "cross_entropy").result(
             timeout=CPU_TEST_TIMEOUT
         )
@@ -123,10 +128,14 @@ def test_training_and_sampling_round_trip(server_endpoint: str) -> None:
         save_response = training_client.save_state("checkpoint-test").result(
             timeout=CPU_TEST_TIMEOUT
         )
+        load_response = training_client.load_state(save_response.path).result(
+            timeout=CPU_TEST_TIMEOUT
+        )
         sampler_response = training_client.save_weights_for_sampler("sampler-test").result(
             timeout=CPU_TEST_TIMEOUT
         )
         assert save_response.path.startswith("tinker://")
+        assert load_response.path == save_response.path
         assert sampler_response.path.startswith("tinker://")
 
         rest_client = service_client.create_rest_client()

@@ -9,23 +9,23 @@ from functools import partial
 from typing import Any, Callable, cast
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import Response
 from fastapi.security import APIKeyHeader
+from google.protobuf.message import DecodeError
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from pydantic import BaseModel
 from tinker import types
 
-
-try:
-    from tinker.types._pydantic_types.forward_backward_request import ForwardBackwardRequest
-    from tinker.types._pydantic_types.forward_request import ForwardRequest
-
-except ModuleNotFoundError:
-    from tinker.types import ForwardBackwardRequest, ForwardRequest
-
 from .auth import User
-from .compat import maybe_serialize_payload, serialize_sample_response_proto
+from .compat import (
+    ForwardBackwardRequest,
+    ForwardRequest,
+    deserialize_forward_backward_request_proto,
+    maybe_serialize_payload,
+    serialize_forward_backward_output_proto,
+    serialize_sample_response_proto,
+)
 from .config import AppConfig
 from .exceptions import ServerException, TuFTException
 from .oai import create_oai_router
@@ -346,12 +346,42 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
         status_code=status.HTTP_202_ACCEPTED,
     )
     async def forward_backward(
-        request: ForwardBackwardRequest,
+        raw_request: Request,
+        request_body: ForwardBackwardRequest | bytes = Body(...),
         state: ServerState = Depends(_get_state),
         user: User = Depends(_get_user),
     ) -> types.UntypedAPIFuture:
+        content_type = raw_request.headers.get("content-type", "").partition(";")[0].lower()
+        if content_type == "application/x-protobuf":
+            if not isinstance(request_body, bytes):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Expected a protobuf request body",
+                )
+            try:
+                request, forward_only = deserialize_forward_backward_request_proto(request_body)
+            except (DecodeError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Invalid protobuf request: {exc}",
+                ) from exc
+        elif content_type in {"", "application/json"}:
+            if isinstance(request_body, bytes):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Expected a JSON request body",
+                )
+            request = request_body
+            forward_only = False
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                detail=f"Unsupported Content-Type: {content_type}",
+            )
+
         inp = request.forward_backward_input
         data = cast(list[types.Datum], inp.data)
+        backward = not forward_only
 
         async def _operation() -> types.ForwardBackwardOutput:
             return await state.run_forward(
@@ -361,7 +391,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
                 inp.loss_fn,
                 inp.loss_fn_config,
                 request.seq_id,
-                backward=True,
+                backward=backward,
             )
 
         return await _queue_future(
@@ -369,7 +399,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
             state,
             model_id=request.model_id,
             user_id=user.user_id,
-            operation_type="forward_backward",
+            operation_type="forward" if forward_only else "forward_backward",
             operation_args={
                 "model_id": request.model_id,
                 "user_id": user.user_id,
@@ -377,7 +407,7 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
                 "loss_fn": inp.loss_fn,
                 "loss_fn_config": inp.loss_fn_config,
                 "seq_id": request.seq_id,
-                "backward": True,
+                "backward": backward,
             },
         )
 
@@ -606,15 +636,20 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
                 detail=f"Failed to retrieve future: {str(exc)}",
             ) from exc
 
-        # Content negotiation: prefer protobuf for SampleResponse if client accepts it
+        # Tinker 0.25 requires protobuf for both proto-capable response types.
+        from tinker.types.forward_backward_output import (
+            ForwardBackwardOutput as ForwardBackwardOutputDataclass,
+        )
         from tinker.types.sample_response import SampleResponse as SampleResponseDataclass
 
         accept_header = raw_request.headers.get("accept", "")
-        if (
-            isinstance(payload, SampleResponseDataclass)
-            and "application/x-protobuf" in accept_header
+        if "application/x-protobuf" in accept_header and isinstance(
+            payload, (SampleResponseDataclass, ForwardBackwardOutputDataclass)
         ):
-            proto_bytes = serialize_sample_response_proto(payload)
+            if isinstance(payload, SampleResponseDataclass):
+                proto_bytes = serialize_sample_response_proto(payload)
+            else:
+                proto_bytes = serialize_forward_backward_output_proto(payload)
             return Response(
                 content=proto_bytes,
                 media_type="application/x-protobuf",
