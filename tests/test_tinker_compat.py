@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tracemalloc
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from tinker.proto.response_conv import (
 
 from tuft.auth import User
 from tuft.compat import (
+    MAX_DECOMPRESSED_REQUEST_BYTES,
     decode_stored_payload,
     encode_payload_for_storage,
     serialize_forward_backward_output_proto,
@@ -119,6 +121,10 @@ def compatibility_app():
     state = _FakeState()
     app.state.server_state = state
     return app, state
+
+
+def app_of(compatibility_app):
+    return compatibility_app[0]
 
 
 def _client(app) -> httpx.AsyncClient:
@@ -228,6 +234,23 @@ async def test_zstd_compressed_request_body(compatibility_app) -> None:
 
     assert response.status_code == 202
     assert state.data[0].model_input.to_ints() == [11, 12]
+
+
+@pytest.mark.asyncio
+async def test_zstd_bomb_is_rejected_without_decompressing_it(compatibility_app) -> None:
+    """32 KB of zstd expands to 1 GB; the cap must stop it before it lands in RAM."""
+    oversized = MAX_DECOMPRESSED_REQUEST_BYTES + (1 << 20)
+    bomb = zstd.ZstdCompressor(level=19).compress(b"\0" * oversized)
+    assert len(bomb) < 64 * 1024, "bomb should be tiny on the wire"
+
+    tracemalloc.start()
+    async with _client(app_of(compatibility_app)) as client:
+        response = await _post_proto(client, bomb, **{"Content-Encoding": "zstd"})
+    peak = tracemalloc.get_traced_memory()[1]
+    tracemalloc.stop()
+
+    assert response.status_code == 413
+    assert peak < oversized, "the whole payload was materialized"
 
 
 @pytest.mark.asyncio

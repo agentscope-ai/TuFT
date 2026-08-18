@@ -14,6 +14,7 @@ its own (the same dataclasses hold numpy arrays that pydantic will not encode).
 from __future__ import annotations
 
 import base64
+import io
 from dataclasses import dataclass
 from typing import Any, cast, get_args
 
@@ -34,6 +35,16 @@ from tinker.types.sample_response import SampleResponse
 PROTO_PAYLOAD_TYPES: tuple[type, ...] = (SampleResponse, ForwardBackwardOutput)
 
 _LOSS_FN_NAMES = frozenset(get_args(types.LossFnType))
+
+# zstd reaches roughly 32,000x on repetitive input, so 32 KB on the wire expands
+# to 1 GB. The SDK chunks fwd/bwd requests at fwdbwd_max_chunk_bytes_count (5 MB
+# by default), so this leaves an order of magnitude of headroom for a legitimate
+# batch while keeping a compression bomb to a bounded, cheap rejection.
+MAX_DECOMPRESSED_REQUEST_BYTES = 64 * 1024 * 1024
+
+
+class RequestTooLargeError(ValueError):
+    """A request body that exceeds what the server is willing to decompress."""
 
 
 @dataclass(frozen=True)
@@ -235,6 +246,32 @@ def _datum_from_proto(datum: public_pb.Datum) -> types.Datum:
     )
 
 
+def _decompress_zstd(body: bytes) -> bytes:
+    """Decompress a zstd request body, refusing anything over the size cap.
+
+    The SDK compresses the body when the server advertises proto_compress_fwdbwd,
+    and nothing in the ASGI stack decompresses it for us.
+
+    ``ZstdDecompressor.decompress(max_output_size=...)`` is not usable as the
+    guard: it silently ignores the cap when the frame header declares a content
+    size, so a bomb still decodes in full. Reading a bounded number of bytes off
+    a stream never produces the excess in the first place.
+    """
+    try:
+        with zstd.ZstdDecompressor().stream_reader(
+            io.BytesIO(body), read_across_frames=True
+        ) as reader:
+            decompressed = reader.read(MAX_DECOMPRESSED_REQUEST_BYTES + 1)
+    except zstd.ZstdError as exc:
+        raise ValueError(f"Malformed zstd request body: {exc}") from exc
+
+    if len(decompressed) > MAX_DECOMPRESSED_REQUEST_BYTES:
+        raise RequestTooLargeError(
+            f"Decompressed request body exceeds {MAX_DECOMPRESSED_REQUEST_BYTES} bytes"
+        )
+    return decompressed
+
+
 def decode_forward_backward_request(
     body: bytes, *, content_encoding: str = ""
 ) -> ForwardBackwardRequest:
@@ -243,14 +280,11 @@ def decode_forward_backward_request(
     Every malformed input surfaces as ``ValueError`` -- including protobuf's
     ``DecodeError`` and pydantic's ``ValidationError``, which callers would
     otherwise have to catch separately -- so the caller maps one type onto 422.
+    An oversized compressed body raises ``RequestTooLargeError``, a ``ValueError``
+    subclass, so a caller that wants to answer 413 can catch it first.
     """
     if content_encoding == "zstd":
-        # The SDK compresses the body when the server advertises
-        # proto_compress_fwdbwd; nothing in the ASGI stack decompresses it.
-        try:
-            body = zstd.ZstdDecompressor().decompressobj().decompress(body)
-        except zstd.ZstdError as exc:
-            raise ValueError(f"Malformed zstd request body: {exc}") from exc
+        body = _decompress_zstd(body)
     elif content_encoding:
         raise ValueError(f"Unsupported Content-Encoding: {content_encoding}")
 
@@ -450,7 +484,9 @@ def decode_stored_payload(payload: Any) -> Any:
 
 
 __all__ = [
+    "MAX_DECOMPRESSED_REQUEST_BYTES",
     "ForwardBackwardRequest",
+    "RequestTooLargeError",
     "PROTO_PAYLOAD_TYPES",
     "decode_forward_backward_request",
     "decode_stored_payload",

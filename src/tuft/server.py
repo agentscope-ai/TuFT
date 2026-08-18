@@ -20,6 +20,7 @@ from tinker import types
 from .auth import User
 from .compat import (
     PROTO_PAYLOAD_TYPES,
+    RequestTooLargeError,
     decode_forward_backward_request,
     maybe_serialize_payload,
     serialize_payload_proto,
@@ -336,6 +337,11 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
             request = await asyncio.to_thread(
                 decode_forward_backward_request, body, content_encoding=content_encoding
             )
+        except RequestTooLargeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=str(exc),
+            ) from exc
         except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

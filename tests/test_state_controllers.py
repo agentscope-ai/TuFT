@@ -917,6 +917,20 @@ async def test_checkpoint_without_explicit_adapter_geometry_is_rejected(request,
         train_mlp=True,
         train_unembed=True,
     )
+    # saved_target_modules treats adapter_config.json as ground truth and only
+    # falls back to metadata, so clearing metadata alone leaves the real backend
+    # (which always writes that file) fully verifiable. A regex-string target is
+    # the shape this rejection exists for: PEFT accepts it, but it cannot be
+    # checked against an allocated slot.
+    checkpoint.adapter_path.mkdir(parents=True, exist_ok=True)
+    (checkpoint.adapter_path / "adapter_config.json").write_text(
+        json.dumps({"target_modules": r".*\.(q_proj|v_proj)"}),
+        encoding="utf-8",
+    )
+    assert checkpoint.saved_target_modules is None, (
+        "checkpoint still exposes a target-module list; the rejection under test is unreachable"
+    )
+
     destination = await state.create_model(
         session_id,
         model_owner="tester",
