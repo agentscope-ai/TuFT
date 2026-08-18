@@ -693,6 +693,7 @@ class TrainingController:
         path: str,
         optimizer: bool,
         seq_id: int | None = None,
+        future_id: int = 0,
     ) -> None:
         """Load a checkpoint."""
         try:
@@ -747,9 +748,119 @@ class TrainingController:
                 checkpoint_record=checkpoint,
                 optimizer=optimizer,
             )
+            # Issue #140: a run seeded from another run's checkpoint must own a
+            # checkpoint of its own. Restart recovery rebuilds each run from its own
+            # latest checkpoint, so without this a seeded run has none: its adapter
+            # is recreated freshly initialized (the loaded weights are lost) and all
+            # of its futures are failed with "No checkpoint found". Materialize a
+            # checkpoint on the destination run so the "a run with weights has a
+            # checkpoint" invariant holds and recovery works unchanged.
+            await self._materialize_seeded_checkpoint(
+                destination=destination_training_run,
+                source=checkpoint,
+                seq_id=seq_id,
+                future_id=future_id,
+            )
             logger.info("Checkpoint loaded: %s", checkpoint_id)
 
         await self._with_sequence_guard(destination_training_run, seq_id, _operation)
+
+    async def _materialize_seeded_checkpoint(
+        self,
+        destination: TrainingRunRecord,
+        source: CheckpointRecord,
+        seq_id: int | None,
+        future_id: int,
+    ) -> CheckpointRecord:
+        """Register a checkpoint owned by the destination run after a cross-run load.
+
+        Called after ``load_state`` has seeded the destination adapter. The weights
+        are written through the destination backend's own ``save_state`` path, so the
+        files are physically owned by the destination run rather than referenced from
+        the source run. This means deleting or privatizing the source checkpoint
+        cannot strand the destination run, and ``restore_from_checkpoint`` finds a real
+        checkpoint to resume from.
+
+        The checkpoint inherits the source's ``checkpoint_type`` so that recovery loads
+        the optimizer state exactly as recorded: a training-type checkpoint restores
+        optimizer state, a sampler-type one does not. ``future_id`` is the id of the
+        ``load_weights`` operation itself, so on restart only futures created after the
+        load are failed, and the already-completed load future is preserved.
+        """
+        assert destination.backend is not None
+        checkpoint_type = source.checkpoint_type
+        counter_attr = (
+            "next_training_checkpoint"
+            if checkpoint_type == "training"
+            else "next_sampler_checkpoint"
+        )
+        counter = getattr(destination, counter_attr)
+        checkpoint_name = f"checkpoint-{counter:04d}"
+        setattr(destination, counter_attr, counter + 1)
+
+        assert self.config.checkpoint_dir is not None
+        checkpoint = CheckpointRecord.from_training_run(
+            training_run_id=destination.training_run_id,
+            checkpoint_name=checkpoint_name,
+            owner_name=destination.model_owner,
+            checkpoint_type=checkpoint_type,
+            checkpoint_root_dir=self.config.checkpoint_dir,
+            exist_ok=True,
+        )
+        checkpoint.future_id = future_id
+        checkpoint.seq_id = seq_id
+
+        # Save the destination's current (just-loaded) state. This reflects exactly
+        # what is in memory now, including whether the optimizer was loaded or left
+        # fresh, so recovery resumes the identical state.
+        await destination.backend.save_state(
+            lora_id=destination.training_run_id,
+            checkpoint_record=checkpoint,
+            optimizer=(checkpoint_type == "training"),
+        )
+
+        lora_alpha = self._effective_lora_alpha(destination)
+        # Write metadata once so metadata.json exists, then recompute the size and
+        # persist it, mirroring save_checkpoint.
+        checkpoint.save_metadata(
+            base_model=destination.base_model,
+            session_id=destination.session_id,
+            lora_rank=destination.lora_rank,
+            lora_alpha=lora_alpha,
+            train_attn=destination.train_attn,
+            train_mlp=destination.train_mlp,
+            train_unembed=destination.train_unembed,
+        )
+        checkpoint.size_bytes = compute_tree_size(checkpoint.path)
+        checkpoint.save_metadata(
+            base_model=destination.base_model,
+            session_id=destination.session_id,
+            lora_rank=destination.lora_rank,
+            lora_alpha=lora_alpha,
+            train_attn=destination.train_attn,
+            train_mlp=destination.train_mlp,
+            train_unembed=destination.train_unembed,
+        )
+
+        target_map = (
+            destination.checkpoints
+            if checkpoint_type == "training"
+            else destination.sampler_checkpoints
+        )
+        target_map[checkpoint_name] = checkpoint
+
+        # Persist run + checkpoint atomically, matching save_checkpoint, so a crash
+        # between saves cannot leave them inconsistent.
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None,
+            self._save_training_run_with_checkpoint,
+            destination.training_run_id,
+            checkpoint_name,
+            checkpoint_type,
+        )
+        logger.info("Seeded checkpoint registered: %s", checkpoint.tinker_path)
+        return checkpoint
 
     def _check_adapter_compatible(
         self,
@@ -973,11 +1084,12 @@ class TrainingController:
             return None
         latest_ckpt = self.get_latest_checkpoint(model_id)
         if latest_ckpt is None:
-            # The run owns no checkpoint to restore from - it has not saved one
-            # yet, or it was seeded by load_weights from another run's
-            # checkpoint. Recreate the adapter anyway so the run stays usable:
-            # without it the backend has no adapter under this id and every
-            # later request fails with "Adapter not found" for good.
+            # The run owns no checkpoint to restore from - it has not saved or
+            # loaded one yet. (Runs seeded by load_weights now materialize their
+            # own checkpoint, so they no longer land here.) Recreate the adapter
+            # anyway so the run stays usable: without it the backend has no
+            # adapter under this id and every later request fails with "Adapter
+            # not found" for good.
             try:
                 await record.backend.create_adapter(model_id, record.lora_config())
             except Exception:  # pylint: disable=broad-except

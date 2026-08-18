@@ -275,12 +275,17 @@ class ServerState:
     async def load_checkpoint(
         self, model_id: str, user_id: str, path: str, optimizer: bool, seq_id: int | None = None
     ) -> None:
+        # Stamp the seeded checkpoint with this operation's future_id so that, on
+        # restart, futures are failed relative to the load itself and the completed
+        # load_weights future is preserved (see _restore_from_checkpoints).
+        current_future_id = self.future_store.get_current_future_id()
         return await self.training.load_checkpoint(
             model_id=model_id,
             user_id=user_id,
             path=path,
             optimizer=optimizer,
             seq_id=seq_id,
+            future_id=current_future_id,
         )
 
     def delete_checkpoint(self, model_id: str, user_id: str, checkpoint_id: str) -> None:
