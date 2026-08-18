@@ -9,11 +9,18 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 from tinker import types
 from tinker.types.try_again_response import TryAgainResponse
 
-from .compat import maybe_serialize_payload
+from .compat import decode_stored_payload, encode_payload_for_storage
 from .exceptions import (
     FutureCancelledException,
     FutureNotFoundException,
@@ -95,13 +102,20 @@ class FutureRecord(BaseModel):
 
         ForwardBackwardOutput / SampleResponse are tinker dataclasses holding
         numpy arrays (TensorData._numpy) that Pydantic cannot JSON-serialize.
-        Convert them via the same helper used for the HTTP response; every other
-        payload keeps Pydantic's default serialization.
+        Store those as the protobuf we would have sent, so `_revive_payload` can
+        restore the dataclass and a restarted server keeps answering in protobuf;
+        every other payload keeps Pydantic's default serialization.
         """
-        converted = maybe_serialize_payload(payload)
-        if converted is payload:
-            return handler(payload)
-        return converted
+        stored = encode_payload_for_storage(payload)
+        if stored is not None:
+            return stored
+        return handler(payload)
+
+    @field_validator("payload", mode="before")
+    @classmethod
+    def _revive_payload(cls, payload: Any) -> Any:
+        """Restore a persisted protobuf payload; pass everything else through."""
+        return decode_stored_payload(payload)
 
 
 class FutureStore:
