@@ -370,7 +370,11 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
             operation_args={
                 "model_id": request.model_id,
                 "user_id": user.user_id,
-                "data": request.data,
+                # The batch itself is deliberately absent: operation_args is
+                # persisted as JSON, and a decoded Datum holds numpy arrays that
+                # pydantic cannot encode -- which would fail the whole record,
+                # not just this key. Nothing replays from it, so record the size.
+                "num_datums": len(request.data),
                 "loss_fn": request.loss_fn,
                 "loss_fn_config": request.loss_fn_config,
                 "seq_id": request.seq_id,

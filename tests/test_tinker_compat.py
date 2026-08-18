@@ -15,10 +15,12 @@ from tinker.proto.response_conv import (
     deserialize_forward_backward_output,
     deserialize_sample_response,
 )
+from tinker.types.try_again_response import TryAgainResponse
 
 from tuft.auth import User
 from tuft.compat import (
     MAX_DECOMPRESSED_REQUEST_BYTES,
+    decode_forward_backward_request,
     decode_stored_payload,
     encode_payload_for_storage,
     serialize_forward_backward_output_proto,
@@ -282,6 +284,53 @@ async def test_unknown_loss_fn_is_rejected(compatibility_app) -> None:
         response = await _post_proto(client, request.SerializeToString())
     assert response.status_code == 422
     assert "not_a_loss_fn" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_queued_future_is_persistable(compatibility_app) -> None:
+    """operation_args is stored as JSON, so nothing in it may be a numpy holder."""
+    app, state = compatibility_app
+    async with _client(app) as client:
+        response = await _post_proto(client, _proto_request(forward_only=False).SerializeToString())
+
+    assert response.status_code == 202
+    args = state.future_store.operation_args
+    record = FutureRecord(request_id="r", operation_type="forward_backward", operation_args=args)
+    record.model_dump_json()  # raises PydanticSerializationError on a numpy holder
+    assert args["num_datums"] == 2
+
+
+def test_sparse_tensor_without_shape_is_rejected() -> None:
+    """A sparse CSR tensor needs its dense shape; to_torch() only asserts on it."""
+    request = public_pb.ForwardBackwardRequest(model_id="m", seq_id=1, loss_fn="cross_entropy")
+    datum = request.data.add()
+    datum.model_input.add().encoded_text.tokens = np.asarray([1], dtype=np.int32).tobytes()
+    weights = datum.loss_fn_inputs["weights"]
+    weights.dtype = public_pb.DTYPE_FLOAT32
+    weights.sparse_csr.values = np.asarray([1.0], dtype=np.float32).tobytes()
+    weights.sparse_csr.crow_indices = np.asarray([0, 1], dtype=np.int64).tobytes()
+    weights.sparse_csr.col_indices = np.asarray([0], dtype=np.int64).tobytes()
+
+    with pytest.raises(ValueError, match="missing its dense shape"):
+        decode_forward_backward_request(request.SerializeToString())
+
+
+@pytest.mark.asyncio
+async def test_try_again_stays_json_under_a_protobuf_accept(compatibility_app) -> None:
+    """The SDK polls with Accept: protobuf and must still see the JSON retry marker."""
+    app, state = compatibility_app
+    state.future_store.payload = TryAgainResponse(request_id="pending", queue_state="active")
+
+    async with _client(app) as client:
+        result = await client.post(
+            "/api/v1/retrieve_future",
+            json={"request_id": "pending"},
+            headers={"X-API-Key": "test-key", "Accept": "application/x-protobuf"},
+        )
+
+    assert result.status_code == 200
+    assert result.headers["content-type"].startswith("application/json")
+    assert result.json()["type"] == "try_again"
 
 
 @pytest.mark.asyncio

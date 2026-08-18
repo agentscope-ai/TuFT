@@ -202,6 +202,10 @@ def _tensor_from_proto(tensor: public_pb.Tensor) -> types.TensorData:
             shape=shape,
         )
     if encoding == "sparse_csr":
+        if shape is None:
+            # TensorData.to_torch() only asserts on this, so catch it here where
+            # it is still a bad request rather than a failed training step.
+            raise ValueError("Sparse CSR tensor is missing its dense shape")
         return types.TensorData(
             data=_decode_proto_array(tensor.sparse_csr.values, tensor.dtype),
             dtype=tensor_dtype,
