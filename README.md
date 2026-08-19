@@ -117,7 +117,7 @@ Create a LoRA training client and perform forward/backward passes with optimizer
 
 ```python
 # Create a LoRA training client
-training = client.create_lora_training_client(base_model=base_model, rank=8)
+training = client.create_lora_training_client(base_model=base_model, rank=8, train_unembed=False)
 
 # Run forward/backward pass
 fwdbwd = training.forward_backward([datum], "cross_entropy").result(timeout=30)

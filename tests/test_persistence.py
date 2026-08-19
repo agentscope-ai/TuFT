@@ -512,7 +512,7 @@ class TestServerStatePersistence:
         training = await state.create_model(
             session_id=session.session_id,
             base_model="Qwen/Qwen3-0.6B",
-            lora_config=types.LoraConfig(rank=8),
+            lora_config=types.LoraConfig(rank=8, train_unembed=False),
             model_owner="trainer",
             user_metadata={"model_version": "v1"},
         )

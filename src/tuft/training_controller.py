@@ -968,9 +968,39 @@ class TrainingController:
         if latest_ckpt is None:
             # The run owns no checkpoint to restore from - it has not saved one
             # yet, or it was seeded by load_weights from another run's
-            # checkpoint. Recreate the adapter anyway so the run stays usable:
-            # without it the backend has no adapter under this id and every
-            # later request fails with "Adapter not found" for good.
+            # checkpoint. Recreate the adapter so the run stays usable: without
+            # it the backend has no adapter under this id and every later
+            # request fails with "Adapter not found" for good.
+            #
+            # Recreation resolves geometry from the run's flags under the
+            # CURRENT rules. If that no longer matches what the run recorded
+            # (e.g. after the Qwen3.5 target-list change), mark the run
+            # corrupted instead of silently training different modules.
+            mismatch: str | None = None
+            try:
+                expected_modules = self._effective_target_modules(
+                    record.base_model, record.lora_config()
+                )
+            except InvalidRequestException as exc:
+                expected_modules = None
+                mismatch = exc.detail
+            if expected_modules is not None and set(expected_modules) != set(
+                record.target_modules or []
+            ):
+                from .backends.lora_modules import gated_deltanet_mismatch_hint
+
+                hint = gated_deltanet_mismatch_hint(record.target_modules or [], expected_modules)
+                mismatch = (
+                    f"the run records target modules {sorted(record.target_modules or [])} "
+                    f"but the server now resolves {sorted(expected_modules)}."
+                    + (f" {hint}" if hint else "")
+                )
+            if mismatch is not None:
+                record.corrupted = True
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, self._save_training_run, model_id)
+                logger.error("Cannot restore %s, marking the run corrupted: %s", model_id, mismatch)
+                return None
             try:
                 await record.backend.create_adapter(model_id, record.lora_config())
             except Exception:  # pylint: disable=broad-except
@@ -1002,8 +1032,10 @@ class TrainingController:
             logger.warning(
                 "load_state failed for %s (%s), trying create_adapter fallback", model_id, exc
             )
+            adapter_recreated = False
             try:
                 await record.backend.create_adapter(model_id, record.lora_config())
+                adapter_recreated = True
             except Exception:
                 logger.exception("Failed to create adapter for model %s during restore", model_id)
             try:
@@ -1017,6 +1049,13 @@ class TrainingController:
                 # the checkpoint so that futures AFTER the checkpoint are
                 # marked as failed (not ALL futures).
                 record.corrupted = True
+                # A corrupted run can no longer train; release the adapter the
+                # fallback just created so it does not hold an FSDP slot.
+                if adapter_recreated:
+                    try:
+                        await record.backend.remove_adapter(model_id)
+                    except Exception:
+                        logger.exception("Failed to release adapter for corrupted run %s", model_id)
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, self._save_training_run, model_id)
                 logger.warning(

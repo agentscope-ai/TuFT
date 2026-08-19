@@ -118,10 +118,15 @@ def vllm_nests_language_model(model_path: str | Path) -> bool:
     classes (e.g. ``Qwen3_5ForConditionalGeneration``) expose
     ``language_model.model.layers.*`` in vLLM, while HF maps the same
     ``model_type`` to a ``*ForCausalLM`` class exposing ``model.layers.*``.
+    Without a local config, recognized Qwen3.5-family model IDs count as
+    nested, matching the target-resolution fallback.
     """
     config = load_model_config_json(model_path)
     if config is None:
-        return False
+        # Hub IDs without a local config: the qwen3_5 family — the only
+        # architecture the path fallback recognizes — always nests the text
+        # backbone, so alias export must stay in step with target resolution.
+        return _architecture_from_path(str(model_path).lower()) is not None
     architectures = config.get("architectures") or []
     return any(str(arch).endswith("ForConditionalGeneration") for arch in architectures)
 

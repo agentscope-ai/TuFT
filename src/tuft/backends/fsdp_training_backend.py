@@ -1077,7 +1077,14 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                 model_config=model_config,
                 slot_config=slot_config,
             )
-            await asyncio.to_thread(self._worker.initialize)
+            try:
+                await asyncio.to_thread(self._worker.initialize)
+            except Exception:
+                # Keep the backend re-initializable: a half-built worker would
+                # make every later create_adapter report slot exhaustion
+                # instead of the real initialization error.
+                self._worker = None
+                raise
             self._world_size = 1
             return
         import ray

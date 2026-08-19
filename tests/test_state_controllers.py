@@ -1019,6 +1019,89 @@ async def test_restore_recreates_adapter_for_run_without_checkpoint(
 
 
 @pytest.mark.asyncio
+async def test_restore_marks_run_corrupted_when_recorded_geometry_is_stale(
+    request, tmp_path, monkeypatch
+) -> None:
+    """A checkpoint-less run whose recorded modules no longer resolve is corrupted.
+
+    Recreating its adapter would silently train the newly resolved modules
+    while the record and all past metadata say otherwise.
+    """
+    use_gpu = request.config.getoption("--gpu")
+    state = await _build_state(tmp_path, use_gpu)
+    session_id = _create_session(state)
+    training = await state.create_model(
+        session_id,
+        model_owner="tester",
+        base_model="Qwen/Qwen3-0.6B",
+        lora_config=types.LoraConfig(rank=4, train_unembed=False),
+        user_metadata=None,
+    )
+    record = state.training.training_runs[training.training_run_id]
+    backend = state.training.training_backends["Qwen/Qwen3-0.6B"]
+    await backend.remove_adapter(training.training_run_id)
+    # Simulate a record written by a release that resolved fewer modules.
+    assert record.target_modules is not None
+    record.target_modules = [m for m in record.target_modules if m != "down_proj"]
+
+    created: list[str] = []
+    original_create_adapter = backend.create_adapter
+
+    async def recording_create_adapter(lora_id, lora_config):
+        created.append(lora_id)
+        await original_create_adapter(lora_id, lora_config)
+
+    monkeypatch.setattr(backend, "create_adapter", recording_create_adapter)
+
+    restored = await state.training.restore_from_checkpoint(training.training_run_id)
+
+    assert restored is None
+    assert record.corrupted is True
+    assert created == []
+
+
+@pytest.mark.asyncio
+async def test_restore_releases_fallback_adapter_when_load_keeps_failing(
+    request, tmp_path, monkeypatch
+) -> None:
+    """A corrupted run must not keep the slot its restore fallback allocated."""
+    use_gpu = request.config.getoption("--gpu")
+    state = await _build_state(tmp_path, use_gpu)
+    session_id = _create_session(state)
+    training = await state.create_model(
+        session_id,
+        model_owner="tester",
+        base_model="Qwen/Qwen3-0.6B",
+        lora_config=types.LoraConfig(rank=4, train_unembed=False),
+        user_metadata=None,
+    )
+    await state.save_checkpoint(
+        training.training_run_id, user_id="tester", name="ckpt", checkpoint_type="training"
+    )
+    record = state.training.training_runs[training.training_run_id]
+    backend = state.training.training_backends["Qwen/Qwen3-0.6B"]
+
+    removed: list[str] = []
+    original_remove_adapter = backend.remove_adapter
+
+    async def recording_remove_adapter(lora_id):
+        removed.append(lora_id)
+        await original_remove_adapter(lora_id)
+
+    async def failing_load_state(lora_id, checkpoint_record, optimizer):
+        raise RuntimeError("simulated load failure")
+
+    monkeypatch.setattr(backend, "remove_adapter", recording_remove_adapter)
+    monkeypatch.setattr(backend, "load_state", failing_load_state)
+
+    restored = await state.training.restore_from_checkpoint(training.training_run_id)
+
+    assert restored is not None
+    assert record.corrupted is True
+    assert removed == [training.training_run_id]
+
+
+@pytest.mark.asyncio
 async def test_rest_client(request, tmp_path) -> None:
     use_gpu = request.config.getoption("--gpu")
     state = await _build_state(tmp_path, use_gpu)

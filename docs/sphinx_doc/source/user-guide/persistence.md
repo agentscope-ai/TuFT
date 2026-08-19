@@ -178,6 +178,10 @@ upgrading:
 - Old FSDP training runs are marked corrupted when the server restarts.
 - A server config that sets `fsdp_target_modules` to the old list stops the
   server at startup. The error says how to fix the config.
+- With persistence enabled, the new `qwen_gated_deltanet_full_lora` model
+  field changes the stored configuration signature, so startup fails with a
+  configuration-mismatch error until you switch to a new namespace or clear
+  the old one (see [Changing config safely](#changing-config-safely)).
 
 Each error message names this change as the cause. To continue training,
 create a new training run.

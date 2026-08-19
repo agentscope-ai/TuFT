@@ -107,7 +107,9 @@ def test_checkpoint_resume_persistence(tmp_path: Path) -> None:
         base_model = capabilities.supported_models[0].model_name or "Qwen/Qwen3-0.6B"
         _log(f"Base model: {base_model}")
 
-        training_client = service_client.create_lora_training_client(base_model=base_model, rank=2)
+        training_client = service_client.create_lora_training_client(
+            base_model=base_model, rank=2, train_unembed=False
+        )
         train_data = _create_training_data(tokenizer)
         _log("Running training loop...")
         training_client.forward_backward(train_data, "cross_entropy").result(timeout=60)

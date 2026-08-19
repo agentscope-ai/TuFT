@@ -222,13 +222,13 @@ def test_auth_and_pig_latin_training_flow(hf_server_endpoint: str) -> None:
 
         _log("Creating LoRA training client...")
         training_client_1 = service_client.create_lora_training_client(
-            base_model=base_model_1, rank=8
+            base_model=base_model_1, rank=8, train_unembed=False
         )
         training_client_2 = service_client.create_lora_training_client(
-            base_model=base_model_1, rank=16
+            base_model=base_model_1, rank=16, train_unembed=False
         )
         training_client_3 = service_client.create_lora_training_client(
-            base_model=base_model_2, rank=16
+            base_model=base_model_2, rank=16, train_unembed=False
         )
         training_clients = [training_client_1, training_client_2, training_client_3]
         train_data = _create_training_data(tokenizer)
@@ -304,12 +304,12 @@ def test_multi_lora_adapters(hf_server_endpoint: str) -> None:
 
         _log("Training LoRA A (Pig Latin)...")
         training_client_a = service_client.create_lora_training_client(
-            base_model=base_model, rank=8
+            base_model=base_model, rank=8, train_unembed=False
         )
         pig_latin_data = _create_training_data(tokenizer)
         _log("Training LoRA B (Reverse Words)...")
         training_client_b = service_client.create_lora_training_client(
-            base_model=base_model, rank=8
+            base_model=base_model, rank=8, train_unembed=False
         )
         reverse_data = _create_reverse_training_data(tokenizer)
 
@@ -428,7 +428,9 @@ def test_fsdp_training_flow(fsdp_server_endpoint: str) -> None:
         _log(f"Base model: {base_model}")
 
         _log("Creating LoRA training client (FSDP)...")
-        training_client = service_client.create_lora_training_client(base_model=base_model, rank=8)
+        training_client = service_client.create_lora_training_client(
+            base_model=base_model, rank=8, train_unembed=False
+        )
         train_data = _create_training_data(tokenizer)
         _log(f"Training samples: {len(train_data)}")
 
@@ -469,7 +471,9 @@ def test_fsdp_training_and_sampling(fsdp_server_endpoint: str) -> None:
         base_model = capabilities.supported_models[0].model_name or "Qwen/Qwen3-0.6B"
         _log(f"[Case2] Base model: {base_model}")
 
-        training_client = service_client.create_lora_training_client(base_model=base_model, rank=8)
+        training_client = service_client.create_lora_training_client(
+            base_model=base_model, rank=8, train_unembed=False
+        )
         train_data = _create_training_data(tokenizer)
         num_steps = 40
         _log(f"[Case2] Training: {len(train_data)} samples, {num_steps} steps")
@@ -546,10 +550,10 @@ def test_fsdp_multi_lora_adapters(fsdp_server_endpoint: str) -> None:
         base_model = capabilities.supported_models[0].model_name or "Qwen/Qwen3-0.6B"
 
         training_client_a = service_client.create_lora_training_client(
-            base_model=base_model, rank=8
+            base_model=base_model, rank=8, train_unembed=False
         )
         training_client_b = service_client.create_lora_training_client(
-            base_model=base_model, rank=8
+            base_model=base_model, rank=8, train_unembed=False
         )
         pig_data = _create_training_data(tokenizer)
         reverse_data = _create_reverse_training_data(tokenizer)
@@ -598,7 +602,9 @@ def test_fsdp_multi_gpu_training_flow(fsdp_multi_gpu_server_endpoint: str) -> No
         _log(f"[Multi-GPU] Base model: {base_model}")
 
         _log("[Multi-GPU] Creating LoRA training client (FSDP with 2 GPUs)...")
-        training_client = service_client.create_lora_training_client(base_model=base_model, rank=8)
+        training_client = service_client.create_lora_training_client(
+            base_model=base_model, rank=8, train_unembed=False
+        )
         train_data = _create_training_data(tokenizer)
         _log(f"[Multi-GPU] Training samples: {len(train_data)}")
 
@@ -673,7 +679,9 @@ def _run_custom_loss_smoke(service_client, tokenizer, base_model: str, label: st
     import torch
 
     # --- Phase 1: batch mean of per-example response-token mean NLL ---
-    sft_client = service_client.create_lora_training_client(base_model=base_model, rank=8)
+    sft_client = service_client.create_lora_training_client(
+        base_model=base_model, rank=8, train_unembed=False
+    )
     sft_data = _create_training_data(tokenizer)
 
     def sft_loss(loss_data, logprobs_list):
@@ -699,7 +707,9 @@ def _run_custom_loss_smoke(service_client, tokenizer, base_model: str, label: st
     )
 
     # --- Phase 2: DPO + chosen NLL + squared policy/reference log-ratio ---
-    dpo_client = service_client.create_lora_training_client(base_model=base_model, rank=8)
+    dpo_client = service_client.create_lora_training_client(
+        base_model=base_model, rank=8, train_unembed=False
+    )
     dpo_data = _create_dpo_pair_data(tokenizer)
     reference_result = dpo_client.forward(dpo_data, "cross_entropy").result(timeout=120)
     reference_logprobs = [

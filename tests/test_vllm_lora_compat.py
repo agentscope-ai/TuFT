@@ -75,7 +75,22 @@ def test_vllm_nests_language_model_from_architectures(tmp_path):
     _write_model_config(flat, "qwen3", ["Qwen3ForCausalLM"])
     assert vllm_nests_language_model(flat) is False
 
-    # Missing config.json -> no aliases (safe default).
+
+def test_vllm_nests_language_model_falls_back_to_qwen35_model_ids(tmp_path):
+    """Hub IDs without a local config nest exactly when target resolution says qwen3_5.
+
+    Alias export and target resolution must agree, or a hub-ID Qwen3.5 model
+    would train linear_attn adapters whose checkpoints vLLM silently ignores.
+    """
+    from tuft.backends.vllm_lora_compat import vllm_nests_language_model
+
+    assert vllm_nests_language_model("Qwen/Qwen3.5-4B") is True
+    assert vllm_nests_language_model("Qwen/Qwen3.6-27B") is True
+    assert vllm_nests_language_model("Qwen/Qwen3.8-27B") is True
+    assert vllm_nests_language_model("Qwen/Qwen3-8B") is False
+    assert vllm_nests_language_model("someorg/qwen3_8b-sft") is False
+
+    # No config.json and no recognized ID -> no aliases (safe default).
     assert vllm_nests_language_model(tmp_path / "missing") is False
 
 
