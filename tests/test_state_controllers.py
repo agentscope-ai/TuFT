@@ -10,6 +10,7 @@ import pytest
 from tinker import types
 
 from tuft.auth import User
+from tuft.backends.lora_modules import LoraTargets
 from tuft.config import AppConfig, ModelConfig
 from tuft.exceptions import (
     CheckpointAccessDeniedException,
@@ -1054,6 +1055,102 @@ async def test_restore_marks_run_corrupted_when_recorded_geometry_is_stale(
     assert restored is None
     assert record.corrupted is True
     assert created == []
+
+
+@pytest.mark.asyncio
+async def test_restore_marks_run_corrupted_when_recorded_parameters_are_stale(
+    request, tmp_path, monkeypatch
+) -> None:
+    """A run whose recorded fused-parameter targets no longer resolve is corrupted.
+
+    Mirrors the module-geometry check: recreating the adapter would silently
+    train a different set of fused parameters (e.g. MoE routed experts,
+    issue #154) than the record and all past metadata say.
+    """
+    use_gpu = request.config.getoption("--gpu")
+    state = await _build_state(tmp_path, use_gpu)
+    session_id = _create_session(state)
+    training = await state.create_model(
+        session_id,
+        model_owner="tester",
+        base_model="Qwen/Qwen3-0.6B",
+        lora_config=types.LoraConfig(rank=4, train_unembed=False),
+        user_metadata=None,
+    )
+    record = state.training.training_runs[training.training_run_id]
+    backend = state.training.training_backends["Qwen/Qwen3-0.6B"]
+    await backend.remove_adapter(training.training_run_id)
+    # Simulate a record whose stored parameter targets the server no longer
+    # resolves for this model.
+    assert record.target_parameters == []
+    record.target_parameters = ["mlp.experts.gate_up_proj", "mlp.experts.down_proj"]
+
+    created: list[str] = []
+    original_create_adapter = backend.create_adapter
+
+    async def recording_create_adapter(lora_id, lora_config):
+        created.append(lora_id)
+        await original_create_adapter(lora_id, lora_config)
+
+    monkeypatch.setattr(backend, "create_adapter", recording_create_adapter)
+
+    restored = await state.training.restore_from_checkpoint(training.training_run_id)
+
+    assert restored is None
+    assert record.corrupted is True
+    assert created == []
+
+
+@pytest.mark.asyncio
+async def test_restore_with_checkpoint_rejects_stale_recorded_parameters(
+    request, tmp_path, monkeypatch
+) -> None:
+    """HF restore must validate current geometry before loading adapter_config.json."""
+
+    use_gpu = request.config.getoption("--gpu")
+    state = await _build_state(tmp_path, use_gpu)
+    session_id = _create_session(state)
+    training = await state.create_model(
+        session_id,
+        model_owner="tester",
+        base_model="Qwen/Qwen3-0.6B",
+        lora_config=types.LoraConfig(rank=4, train_unembed=False),
+        user_metadata=None,
+    )
+    await state.save_checkpoint(
+        training.training_run_id,
+        user_id="tester",
+        name="ckpt",
+        checkpoint_type="training",
+    )
+    record = state.training.training_runs[training.training_run_id]
+    backend = state.training.training_backends["Qwen/Qwen3-0.6B"]
+    await backend.remove_adapter(training.training_run_id)
+
+    original_effective_targets = state.training._effective_lora_targets
+
+    def effective_targets_with_routed_experts(base_model, lora_config):
+        targets = original_effective_targets(base_model, lora_config)
+        return LoraTargets(
+            modules=targets.modules,
+            parameters=["mlp.experts.gate_up_proj", "mlp.experts.down_proj"],
+        )
+
+    loaded: list[str] = []
+
+    async def recording_load_state(lora_id, checkpoint_record, optimizer):
+        loaded.append(lora_id)
+
+    monkeypatch.setattr(
+        state.training, "_effective_lora_targets", effective_targets_with_routed_experts
+    )
+    monkeypatch.setattr(backend, "load_state", recording_load_state)
+
+    restored = await state.training.restore_from_checkpoint(training.training_run_id)
+
+    assert restored is record.checkpoints["ckpt"]
+    assert record.corrupted is True
+    assert loaded == []
 
 
 @pytest.mark.asyncio

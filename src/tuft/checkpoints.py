@@ -49,6 +49,36 @@ def read_adapter_target_modules(adapter_path: Path) -> list[str] | None:
     return modules
 
 
+def read_adapter_target_parameters(adapter_path: Path) -> list[str] | None:
+    """Read the fused-parameter target list from a PEFT adapter configuration.
+
+    Returns ``[]`` when a readable configuration records no
+    ``target_parameters`` — adapters written before issue #154 trained none,
+    so an absent key means exactly that. Returns None when the configuration
+    is unreadable or the recorded value cannot be validated.
+    """
+
+    try:
+        adapter_config = json.loads(
+            (adapter_path / "adapter_config.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return None
+    if not isinstance(adapter_config, dict):
+        return None
+    raw_parameters = adapter_config.get("target_parameters")
+    if raw_parameters is None:
+        return []
+    if not isinstance(raw_parameters, list):
+        return None
+    if not all(isinstance(param, str) and param.strip() for param in raw_parameters):
+        return None
+    parameters = [param.strip() for param in raw_parameters]
+    if len(set(parameters)) != len(parameters):
+        return None
+    return parameters
+
+
 class CheckpointMetadata(BaseModel):
     """A representation of checkpoint metadata."""
 
@@ -73,6 +103,10 @@ class CheckpointMetadata(BaseModel):
     train_mlp: bool | None = None
     train_unembed: bool | None = None
     target_modules: list[str] | None = None
+    # Fused-parameter targets (peft target_parameters), e.g. MoE routed
+    # experts. None on checkpoints from before the field existed, which
+    # trained none.
+    target_parameters: list[str] | None = None
     public: bool = False
     future_id: int = 0
     seq_id: int | None = None
@@ -196,6 +230,33 @@ class CheckpointRecord(BaseModel):
                     return normalized
         return None
 
+    @property
+    def saved_target_parameters(self) -> list[str] | None:
+        """Effective fused-parameter targets recorded by this checkpoint.
+
+        Same precedence as ``saved_target_modules``. Returns ``[]`` when a
+        readable source omits the field, or when neither configuration nor
+        metadata exists: checkpoints from before issue #154 trained no
+        parameter targets, so missing means none. Returns None when a source
+        records malformed parameter geometry that cannot be validated.
+        """
+
+        parameters = read_adapter_target_parameters(self.adapter_path)
+        if parameters is not None:
+            return parameters
+        with contextlib.suppress(CheckpointMetadataReadException):
+            raw_parameters = self.metadata.target_parameters
+            if raw_parameters is None:
+                return []
+            if all(param.strip() for param in raw_parameters):
+                normalized = [param.strip() for param in raw_parameters]
+                if len(set(normalized)) == len(normalized):
+                    return normalized
+            return None
+        if (self.adapter_path / "adapter_config.json").exists():
+            return None
+        return []
+
     def validate_lora_alpha(self, expected_lora_alpha: int) -> None:
         """Reject loading this checkpoint into an adapter with a different alpha.
 
@@ -237,6 +298,7 @@ class CheckpointRecord(BaseModel):
             train_mlp=metadata.train_mlp,
             train_unembed=metadata.train_unembed,
             target_modules=metadata.target_modules,
+            target_parameters=metadata.target_parameters,
         )
 
     def save_metadata(
@@ -249,6 +311,7 @@ class CheckpointRecord(BaseModel):
         train_mlp: bool | None = None,
         train_unembed: bool | None = None,
         target_modules: list[str] | None = None,
+        target_parameters: list[str] | None = None,
     ) -> None:
         """Save the checkpoint metadata to disk."""
         # check the format of metadata
@@ -268,6 +331,7 @@ class CheckpointRecord(BaseModel):
                 train_mlp=train_mlp,
                 train_unembed=train_unembed,
                 target_modules=target_modules,
+                target_parameters=target_parameters,
                 public=self.public,
                 size_bytes=self.size_bytes,
                 future_id=self.future_id,

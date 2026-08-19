@@ -33,6 +33,11 @@ _ALIASED_PREFIX = "base_model.model.model.language_model.layers."
 # "qwen3-0.6b" is Qwen3-0.6B; neither may pick up Gated DeltaNet targets.
 _QWEN3_5_PATH_MARKER = re.compile(r"(?<![a-z0-9])qwen3[._][568](?![a-z0-9])")
 
+# MoE checkpoints carry an active-parameter component such as "A3B" in
+# "Qwen3.6-35B-A3B". Anchored the same way so a stray "a3b" inside a longer
+# token cannot flip a dense model to the MoE geometry.
+_QWEN_MOE_PATH_MARKER = re.compile(r"(?<![a-z0-9])a\d+b(?![a-z0-9])")
+
 
 def load_model_config_json(model_path: str | Path) -> dict | None:
     """Read the base model's ``config.json``; return None if missing/unreadable."""
@@ -60,6 +65,8 @@ def _series_from_path(path_lower: str) -> str | None:
 
 
 def _architecture_from_model_type(model_type: str) -> str | None:
+    if model_type.startswith("qwen3_5_moe"):
+        return "qwen3_5_moe"
     if model_type.startswith("qwen3_5"):
         return "qwen3_5"
     return None
@@ -67,6 +74,8 @@ def _architecture_from_model_type(model_type: str) -> str | None:
 
 def _architecture_from_path(path_lower: str) -> str | None:
     if _QWEN3_5_PATH_MARKER.search(path_lower):
+        if _QWEN_MOE_PATH_MARKER.search(path_lower):
+            return "qwen3_5_moe"
         return "qwen3_5"
     return None
 
@@ -84,8 +93,10 @@ def resolve_model_series_and_architecture(
     available, e.g. for configured Hugging Face IDs not yet downloaded.
 
     The series ('qwen'/'llama') selects the broad module map; the architecture
-    (currently only ``qwen3_5``; Qwen3.6 and Qwen3.8 use it too) selects
-    behavior a series cannot express, such as Gated DeltaNet projection names.
+    (``qwen3_5`` for the dense Qwen3.5-based models and ``qwen3_5_moe`` for
+    their MoE variants; Qwen3.6 and Qwen3.8 use them too) selects behavior a
+    series cannot express, such as Gated DeltaNet projection names or fused
+    routed-expert parameters.
     """
     config = load_model_config_json(model_path)
     if config is not None:

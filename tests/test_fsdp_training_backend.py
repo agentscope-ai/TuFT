@@ -285,6 +285,7 @@ async def test_qv_only_mode_creates_run_and_loads_existing_checkpoint(tmp_path):
         checkpoint.adapter_path,
         ["q_proj", "v_proj"],
         False,
+        [],
     )
 
 
@@ -321,7 +322,7 @@ async def test_explicit_geometry_rejects_resolvable_client_modifier_mismatch():
 
     with pytest.raises(
         InvalidRequestException,
-        match=r"target-module mismatch.*explicit fsdp_target_modules=",
+        match=r"target mismatch.*explicit FSDP geometry targets modules",
     ) as exc_info:
         await backend.create_adapter("legacy-run", types.LoraConfig(rank=8))
     assert exc_info.value.status_code == 400
@@ -347,7 +348,7 @@ async def test_create_adapter_rejects_incompatible_client_modifiers_before_init(
     backend = FSDPTrainingBackend(config)
     backend.async_init = MagicMock(side_effect=AssertionError("must validate before init"))
 
-    with pytest.raises(InvalidRequestException, match="target-module mismatch.*train_mlp=True"):
+    with pytest.raises(InvalidRequestException, match="target mismatch.*train_mlp=True"):
         await backend.create_adapter(
             "incompatible",
             types.LoraConfig(rank=8, train_attn=True, train_mlp=True, train_unembed=False),
@@ -469,6 +470,7 @@ async def test_load_state_validates_checkpoint_target_geometry(tmp_path):
         checkpoint.adapter_path,
         backend._slot_config.target_modules,
         False,
+        [],
     )
 
     regex_checkpoint = CheckpointRecord(
@@ -503,6 +505,7 @@ async def test_load_state_validates_checkpoint_target_geometry(tmp_path):
         checkpoint.adapter_path,
         backend._slot_config.target_modules,
         False,
+        [],
     )
 
 
