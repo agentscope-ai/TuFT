@@ -57,6 +57,11 @@ trains only the shared expert, and the routed experts stay frozen. vLLM
 applies LoRA to the same modules when serving, so trained and served modules
 match.
 
+This differs from Tinker's hosted service: Tinker documents `train_mlp` as
+covering MoE layers and trains a LoRA on each expert, so the same client code
+trains far more of the model there. Expect different training results on MoE
+models.
+
 ## Every target must match a real module
 
 TuFT requires every resolved target module name to match at least one real
