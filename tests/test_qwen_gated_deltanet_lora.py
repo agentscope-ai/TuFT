@@ -37,8 +37,8 @@ QWEN_TEXT_TARGETS = [
     *MODULE_MAP["qwen"]["mlp"],
 ]
 
-# The geometry this release's Gated DeltaNet widening (issue #149) replaced.
-QWEN_PRE_WIDENING_TARGETS = [
+# The Qwen3.5/3.8 target list from before issue #149 added linear_attn.*.
+QWEN_OLD_TEXT_TARGETS = [
     *MODULE_MAP["qwen"]["attn"],
     *MODULE_MAP["qwen"]["mlp"],
 ]
@@ -265,25 +265,23 @@ def test_resolve_target_modules_reads_config_json_once(monkeypatch, tmp_path):
     assert len(reads) == 1
 
 
-def test_gated_deltanet_mismatch_hint_only_fires_for_the_widening():
-    hint = gated_deltanet_mismatch_hint(QWEN_PRE_WIDENING_TARGETS, QWEN_TEXT_TARGETS)
+def test_gated_deltanet_hint_fires_only_when_linear_attn_modules_differ():
+    hint = gated_deltanet_mismatch_hint(QWEN_OLD_TEXT_TARGETS, QWEN_TEXT_TARGETS)
     assert hint is not None
     assert "Gated DeltaNet" in hint
     assert "#149" in hint
 
-    # Equal sets and mismatches the widening does not explain get no hint.
+    # Equal sets, and mismatches not caused by linear_attn.*, get no hint.
     assert gated_deltanet_mismatch_hint(QWEN_TEXT_TARGETS, QWEN_TEXT_TARGETS) is None
     assert (
-        gated_deltanet_mismatch_hint(
-            QWEN_PRE_WIDENING_TARGETS, [*QWEN_PRE_WIDENING_TARGETS, "lm_head"]
-        )
+        gated_deltanet_mismatch_hint(QWEN_OLD_TEXT_TARGETS, [*QWEN_OLD_TEXT_TARGETS, "lm_head"])
         is None
     )
     assert gated_deltanet_mismatch_hint(MODULE_MAP["qwen"]["attn"], QWEN_TEXT_TARGETS) is None
 
 
-def test_pre_widening_lora_state_fails_with_targeted_notice(tmp_path):
-    """Both backends' strict geometry checks explain the Gated DeltaNet break."""
+def test_old_lora_state_fails_with_a_clear_notice(tmp_path):
+    """Loading old LoRA state fails with an error that names the cause."""
 
     model_dir = tmp_path / "model"
     _write_qwen3_5_config(model_dir)
@@ -298,7 +296,7 @@ def test_pre_widening_lora_state_fails_with_targeted_notice(tmp_path):
         base_model="qwen",
         session_id="session",
         lora_rank=2,
-        target_modules=list(QWEN_PRE_WIDENING_TARGETS),
+        target_modules=list(QWEN_OLD_TEXT_TARGETS),
     )
 
     controller = object.__new__(TrainingController)
@@ -334,8 +332,8 @@ def test_pre_widening_lora_state_fails_with_targeted_notice(tmp_path):
         backend._validate_checkpoint_geometry(checkpoint)
 
 
-def test_stale_explicit_fsdp_geometry_fails_at_startup(tmp_path):
-    """A pre-widening fsdp_target_modules list fails boot, not the first request."""
+def test_outdated_fsdp_target_modules_fail_at_startup(tmp_path):
+    """An old fsdp_target_modules list stops the server at startup."""
 
     model_dir = tmp_path / "model"
     _write_qwen3_5_config(model_dir)
@@ -345,7 +343,7 @@ def test_stale_explicit_fsdp_geometry_fails_at_startup(tmp_path):
         max_model_len=1024,
         max_lora_rank=2,
         training_backend="fsdp",
-        fsdp_target_modules=list(QWEN_PRE_WIDENING_TARGETS),
+        fsdp_target_modules=list(QWEN_OLD_TEXT_TARGETS),
     )
     with pytest.raises(ValueError) as excinfo:
         FSDPTrainingBackend(stale)
@@ -353,7 +351,7 @@ def test_stale_explicit_fsdp_geometry_fails_at_startup(tmp_path):
     assert "cannot be requested by any client" in message
     assert "Gated DeltaNet" in message
 
-    # The widened geometry and unresolvable custom models still boot.
+    # The new list, and custom lists for unknown model families, still boot.
     FSDPTrainingBackend(stale.model_copy(update={"fsdp_target_modules": list(QWEN_TEXT_TARGETS)}))
     FSDPTrainingBackend(
         ModelConfig(
@@ -366,7 +364,7 @@ def test_stale_explicit_fsdp_geometry_fails_at_startup(tmp_path):
         )
     )
 
-    # A mismatch the widening does not explain fails without the notice.
+    # A mismatch not caused by linear_attn.* fails without the notice.
     with pytest.raises(ValueError) as excinfo:
         FSDPTrainingBackend(stale.model_copy(update={"fsdp_target_modules": ["q_proj"]}))
     assert "Gated DeltaNet" not in str(excinfo.value)

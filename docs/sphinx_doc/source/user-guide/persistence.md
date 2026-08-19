@@ -166,15 +166,18 @@ model. This dedicated opt-in intentionally overrides client modifiers and record
 Q/V as the run's effective geometry. Configuring `[q_proj, v_proj]` only through
 `fsdp_target_modules` is rejected so this override cannot happen accidentally.
 
-**Breaking change — Qwen3.5/3.8 Gated DeltaNet geometry.** Fixing issue #149
-widened the LoRA geometry resolved for Qwen3.5/3.8 with the `linear_attn.*`
-projections. Because geometry validation is strict set equality, LoRA state
-recorded before the widening no longer matches: checkpoints saved on an earlier
-release cannot be loaded, restored FSDP training runs are marked corrupted at
-startup, and an explicit `fsdp_target_modules` list carrying the old geometry
-now fails server startup with instructions to update it. These failures are
-deliberate and carry a targeted "Gated DeltaNet" explanation; start new
-training runs on this release to adopt the widened geometry.
+**Breaking change: Qwen3.5/3.8 LoRA target modules.** The fix for issue #149
+added the `linear_attn.*` modules to the LoRA target list for Qwen3.5/3.8.
+Checkpoints and training runs from before this change use the old, shorter
+list, and the two lists must match exactly. After upgrading:
+
+- Old Qwen3.5/3.8 checkpoints cannot be loaded.
+- Old FSDP training runs are marked corrupted when the server restarts.
+- A server config that sets `fsdp_target_modules` to the old list stops the
+  server at startup. The error says how to fix the config.
+
+Each error message names this change as the cause. To continue training,
+create a new training run.
 
 ---
 

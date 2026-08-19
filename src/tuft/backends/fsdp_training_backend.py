@@ -287,14 +287,14 @@ def _get_target_modules_from_config(config: ModelConfig) -> List[str]:
 
 
 def _validate_explicit_target_modules(config: ModelConfig) -> None:
-    """Fail startup when no client request could ever match the explicit geometry.
+    """Stop startup when no client request can match the configured module list.
 
-    Explicit ``fsdp_target_modules`` stays the escape hatch for model families
-    the resolver does not know (those skip this check), but for resolvable
-    models ``_validate_lora_config`` requires client modifier flags to resolve
-    to exactly the slot geometry. A stale explicit list — e.g. one predating
-    the Qwen3.5/3.8 Gated DeltaNet widening (issue #149) — would otherwise
-    boot a server that rejects every create_training_run at request time.
+    ``fsdp_target_modules`` is still the escape hatch for model families the
+    resolver does not know; those skip this check. For known families,
+    ``_validate_lora_config`` requires the client's module list to equal the
+    slot pool's list exactly. An outdated list — for example one from before
+    issue #149 added the Qwen3.5/3.8 ``linear_attn.*`` modules — would
+    otherwise boot a server that rejects every create_training_run.
     """
 
     if config.fsdp_qv_only:
@@ -318,11 +318,11 @@ def _validate_explicit_target_modules(config: ModelConfig) -> None:
     )
     achievable_summary = " or ".join(str(sorted(set(modules))) for modules in achievable)
     raise ValueError(
-        f"Explicit fsdp_target_modules={sorted(explicit_set)} for model "
+        f"fsdp_target_modules={sorted(explicit_set)} for model "
         f"'{config.model_name}' ({config.model_path}) cannot be requested by any client: "
-        f"LoRA modifier flags resolve to {achievable_summary}, so every "
-        "create_training_run would be rejected. Update fsdp_target_modules to one of "
-        "those sets (or remove it to use the resolved default) and restart the server."
+        f"client LoRA flags can only produce {achievable_summary}, so every "
+        "create_training_run would fail. Set fsdp_target_modules to one of those "
+        "lists, or remove it to use the default, then restart the server."
         + (f" {hint}" if hint else "")
     )
 
@@ -1002,8 +1002,8 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         # target modules.
         self._config_dict = _config_to_worker_dict(config)
         _, self._slot_config = _worker_dict_to_configs(self._config_dict)
-        # Fail at startup, not on the first create_training_run, when the
-        # explicit geometry can never match a client request.
+        # A fsdp_target_modules list no client can match should stop the
+        # server here, before any create_training_run arrives.
         _validate_explicit_target_modules(config)
         self.logger = logging.getLogger(f"{__name__}.FSDPTrainingBackend")
 

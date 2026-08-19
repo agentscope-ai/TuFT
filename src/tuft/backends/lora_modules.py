@@ -28,10 +28,10 @@ MODULE_MAP = {
 # important: it selects only the text DeltaNet projections and cannot match
 # similarly named modules in the multimodal vision encoder.
 #
-# Adding these modules widened the geometry resolved for Qwen3.5/3.8 (issue
-# #149). The strict set-equality validations downstream therefore reject LoRA
-# state recorded before the widening; ``gated_deltanet_mismatch_hint`` gives
-# those rejections a targeted explanation.
+# Adding these modules changed the resolved target list for Qwen3.5/3.8
+# (issue #149). Module lists must match exactly, so LoRA state saved before
+# the change is rejected; ``gated_deltanet_mismatch_hint`` explains why in
+# those errors.
 QWEN3_5_GATED_DELTANET_TARGET_MODULES = [
     "linear_attn.in_proj_qkv",
     "linear_attn.in_proj_z",
@@ -101,12 +101,11 @@ def get_target_modules(model_path: str, lora_config: LoraConfig) -> list[str]:
 
 
 def achievable_target_module_sets(model_path: str) -> list[list[str]] | None:
-    """Every distinct module list client modifier flags can resolve to.
+    """Every distinct module list client LoRA flags can produce.
 
-    Returns None when the model series is unknown, i.e. when an explicit
-    server geometry is the only way to run the model at all. Used to fail
-    fast at startup on configs whose explicit geometry no client request
-    could ever match.
+    Returns None when the model series is unknown — then an explicit server
+    list is the only way to run the model at all. Used at startup to reject
+    configs whose fsdp_target_modules no client request could ever match.
     """
 
     series, architecture = resolve_model_series_and_architecture(model_path)
@@ -131,21 +130,21 @@ def achievable_target_module_sets(model_path: str) -> list[list[str]] | None:
 def gated_deltanet_mismatch_hint(
     actual_modules: Iterable[str], expected_modules: Iterable[str]
 ) -> str | None:
-    """Explain module-set mismatches caused by the Gated DeltaNet widening.
+    """Explain module-list mismatches caused by the Qwen3.5/3.8 change.
 
-    Returns a notice when the two sets differ exactly by (a subset of) the
-    Qwen3.5/3.8 Gated DeltaNet projections — the signature of LoRA state or
-    server config recorded before issue #149 widened the resolved geometry —
-    and None for every other mismatch.
+    Returns a notice when the two sets differ only by (a subset of) the
+    Qwen3.5/3.8 Gated DeltaNet modules — the sign of LoRA state or server
+    config saved before issue #149 added those modules — and None for every
+    other mismatch.
     """
 
     difference = set(actual_modules) ^ set(expected_modules)
     if not difference or not difference <= set(QWEN3_5_GATED_DELTANET_TARGET_MODULES):
         return None
     return (
-        "The sets differ only by the Qwen3.5/3.8 Gated DeltaNet projections "
-        "(linear_attn.*): this TuFT release widened the LoRA geometry resolved for "
-        "Gated DeltaNet models (issue #149), and LoRA state recorded before the "
-        "widening is incompatible with geometry resolved after it. Start a new "
-        "training run on this release to adopt the widened geometry."
+        "The two module sets differ only by the linear_attn.* modules of "
+        "Qwen3.5/3.8's Gated DeltaNet layers. This TuFT release added those "
+        "modules to the LoRA target list (issue #149), so checkpoints and "
+        "training runs from before the change no longer match. Create a new "
+        "training run to continue."
     )

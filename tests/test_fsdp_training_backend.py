@@ -294,8 +294,8 @@ async def test_explicit_geometry_rejects_resolvable_client_modifier_mismatch():
     from tuft.backends.fsdp_training_backend import FSDPTrainingBackend
     from tuft.exceptions import InvalidRequestException
 
-    # An explicit list no client modifier combination can produce fails at
-    # construction time (server startup), not on the first create request.
+    # A list no client flags can produce fails when the backend is built
+    # (server startup), before any create request.
     with pytest.raises(ValueError, match="cannot be requested by any client"):
         FSDPTrainingBackend(
             ModelConfig(
@@ -307,8 +307,8 @@ async def test_explicit_geometry_rejects_resolvable_client_modifier_mismatch():
             )
         )
 
-    # An achievable explicit list still rejects mismatched client modifiers
-    # per request, quoting the configured geometry.
+    # A list clients can produce still rejects mismatched client flags per
+    # request, quoting the configured list.
     config = ModelConfig(
         model_name="legacy",
         model_path=Path("/tmp/qwen-model"),
