@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import warnings
 from pathlib import Path
@@ -620,5 +621,183 @@ def test_fsdp_multi_gpu_training_flow(fsdp_multi_gpu_server_endpoint: str) -> No
         ).result(timeout=120)
         assert sampler_response.path.startswith("tinker://")
         _log(f"[Multi-GPU] Sampler path: {sampler_response.path}")
+    finally:
+        service_client.holder.close()
+
+
+# -----------------------------------------------------------------------------
+# Client-defined losses (forward_backward_custom) on HF and FSDP
+# -----------------------------------------------------------------------------
+
+
+def _create_dpo_pair_data(tokenizer) -> list[types.Datum]:
+    """Preference pairs over PIG_LATIN_EXAMPLES: (chosen, rejected) per prompt.
+
+    Datum 2i is the chosen completion, datum 2i+1 rejects the same prompt with
+    the untranslated input. Weights mask the prompt so the callback can reduce
+    each row to a completion log-prob sum. Only ``target_tokens``/``weights``
+    are used -- the full key set forward_backward_custom accepts.
+    """
+    data: list[types.Datum] = []
+    for example in PIG_LATIN_EXAMPLES:
+        prompt = f"English: {example['input']}\nPig Latin:"
+        for completion_text in (f" {example['output']}\n", f" {example['input']}\n"):
+            prompt_tokens = tokenizer.encode(prompt, add_special_tokens=True)
+            completion_tokens = tokenizer.encode(completion_text, add_special_tokens=False)
+            tokens = prompt_tokens + completion_tokens
+            input_tokens = tokens[:-1]
+            target_tokens = tokens[1:]
+            weights = [0.0] * (len(prompt_tokens) - 1) + [1.0] * len(completion_tokens)
+            data.append(
+                types.Datum(
+                    model_input=types.ModelInput.from_ints(input_tokens),
+                    loss_fn_inputs={
+                        "target_tokens": types.TensorData(
+                            data=target_tokens, dtype="int64", shape=[len(target_tokens)]
+                        ),
+                        "weights": types.TensorData(
+                            data=weights, dtype="float32", shape=[len(weights)]
+                        ),
+                    },
+                )
+            )
+    return data
+
+
+def _run_custom_loss_smoke(service_client, tokenizer, base_model: str, label: str) -> None:
+    """SFT and composite-DPO callbacks through the SDK's forward_backward_custom.
+
+    Each phase asserts per-datum log-prob alignment inside the callback and
+    that its own loss decreases across optimizer steps.
+    """
+    import torch
+
+    # --- Phase 1: batch mean of per-example response-token mean NLL ---
+    sft_client = service_client.create_lora_training_client(base_model=base_model, rank=8)
+    sft_data = _create_training_data(tokenizer)
+
+    def sft_loss(loss_data, logprobs_list):
+        assert [tuple(lp.shape) for lp in logprobs_list] == [
+            (len(datum.model_input.to_ints()),) for datum in loss_data
+        ]
+        per_example_nlls = []
+        for datum, logprobs in zip(loss_data, logprobs_list, strict=True):
+            weights = datum.loss_fn_inputs["weights"].to_torch()
+            per_example_nlls.append(-(logprobs * weights).sum() / weights.sum())
+        loss = torch.stack(per_example_nlls).mean()
+        return loss, {"custom_sft_nll:mean": float(loss.item())}
+
+    sft_losses: list[float] = []
+    for step in range(1, 7):
+        result = sft_client.forward_backward_custom(sft_data, sft_loss).result(timeout=120)
+        sft_losses.append(result.metrics["custom_sft_nll:mean"])
+        sft_client.optim_step(types.AdamParams(learning_rate=1e-4)).result(timeout=120)
+        _log(f"[{label}] custom SFT step {step}: nll={sft_losses[-1]:.4f}")
+    assert all(math.isfinite(loss) for loss in sft_losses)
+    assert sft_losses[-1] < sft_losses[0], (
+        f"custom SFT loss did not decrease: {sft_losses[0]:.4f} -> {sft_losses[-1]:.4f}"
+    )
+
+    # --- Phase 2: DPO + chosen NLL + squared policy/reference log-ratio ---
+    dpo_client = service_client.create_lora_training_client(base_model=base_model, rank=8)
+    dpo_data = _create_dpo_pair_data(tokenizer)
+    reference_result = dpo_client.forward(dpo_data, "cross_entropy").result(timeout=120)
+    reference_logprobs = [
+        output["logprobs"].to_torch().float() for output in reference_result.loss_fn_outputs
+    ]
+    beta = 0.1
+    nll_coefficient = 0.1
+    logratio_mse_coefficient = 0.001
+
+    def dpo_loss(loss_data, logprobs_list):
+        assert [tuple(lp.shape) for lp in logprobs_list] == [
+            (len(datum.model_input.to_ints()),) for datum in loss_data
+        ]
+        policy_reference_sums = []
+        response_nlls = []
+        squared_logratios = []
+        for datum, logprobs, reference in zip(
+            loss_data, logprobs_list, reference_logprobs, strict=True
+        ):
+            weights = datum.loss_fn_inputs["weights"].to_torch()
+            logratio = logprobs - reference
+            policy_reference_sums.append((logratio * weights).sum())
+            response_nlls.append(-(logprobs * weights).sum() / weights.sum())
+            squared_logratios.append(logratio[weights.bool()].square().mean())
+
+        dpo_terms = []
+        for pair_start in range(0, len(policy_reference_sums), 2):
+            chosen = policy_reference_sums[pair_start]
+            rejected = policy_reference_sums[pair_start + 1]
+            dpo_terms.append(-torch.nn.functional.logsigmoid(beta * (chosen - rejected)))
+
+        dpo = torch.stack(dpo_terms).mean()
+        chosen_nll = torch.stack(response_nlls[::2]).mean()
+        logratio_mse = torch.stack(squared_logratios).mean()
+        loss = dpo + nll_coefficient * chosen_nll + logratio_mse_coefficient * logratio_mse
+        return loss, {
+            "custom_dpo:mean": float(dpo.item()),
+            "custom_chosen_nll:mean": float(chosen_nll.item()),
+            "custom_logratio_mse:mean": float(logratio_mse.item()),
+            "custom_composite:mean": float(loss.item()),
+        }
+
+    dpo_losses: list[float] = []
+    for step in range(1, 11):
+        result = dpo_client.forward_backward_custom(dpo_data, dpo_loss).result(timeout=120)
+        dpo_losses.append(result.metrics["custom_composite:mean"])
+        dpo_client.optim_step(types.AdamParams(learning_rate=1e-4)).result(timeout=120)
+        _log(
+            f"[{label}] custom DPO step {step}: composite={dpo_losses[-1]:.4f} "
+            f"dpo={result.metrics['custom_dpo:mean']:.4f}"
+        )
+    assert all(math.isfinite(loss) for loss in dpo_losses)
+    assert dpo_losses[-1] < dpo_losses[0], (
+        f"composite DPO loss did not decrease: {dpo_losses[0]:.4f} -> {dpo_losses[-1]:.4f}"
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.gpu
+def test_hf_forward_backward_custom_training(hf_server_endpoint: str) -> None:
+    """Client-defined SFT and DPO losses train against the HF backend."""
+    import torch
+
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is not available, skipping GPU integration test")
+
+    service_client = ServiceClient(
+        api_key="tml-test-key",  # pragma: allowlist secret
+        base_url=hf_server_endpoint,
+        timeout=120,
+    )
+    tokenizer = AutoTokenizer.from_pretrained(os.environ["TUFT_TEST_MODEL"])
+    try:
+        capabilities = service_client.get_server_capabilities()
+        base_model = capabilities.supported_models[0].model_name or "Qwen/Qwen3-0.6B"
+        _run_custom_loss_smoke(service_client, tokenizer, base_model, label="HF")
+    finally:
+        service_client.holder.close()
+
+
+@pytest.mark.integration
+@pytest.mark.gpu
+def test_fsdp_forward_backward_custom_training(fsdp_multi_gpu_server_endpoint: str) -> None:
+    """Client-defined SFT and DPO losses train across two FSDP ranks."""
+    import torch
+
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is not available, skipping GPU integration test")
+
+    service_client = ServiceClient(
+        api_key="tml-test-key",  # pragma: allowlist secret
+        base_url=fsdp_multi_gpu_server_endpoint,
+        timeout=120,
+    )
+    tokenizer = AutoTokenizer.from_pretrained(os.environ["TUFT_TEST_MODEL"])
+    try:
+        capabilities = service_client.get_server_capabilities()
+        base_model = capabilities.supported_models[0].model_name or "Qwen/Qwen3-0.6B"
+        _run_custom_loss_smoke(service_client, tokenizer, base_model, label="FSDP")
     finally:
         service_client.holder.close()
