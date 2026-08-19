@@ -193,15 +193,19 @@ geometry from the default, so changing it also requires a new training run
 <section id="moe-models">
 <h2>MoE models<a class="headerlink" href="#moe-models" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#moe-models'">¶</a></h2>
 <p>On the MoE variant (model type <code class="docutils literal notranslate"><span class="pre">qwen3_5_moe</span></code>, e.g. Qwen3.6-35B-A3B), the same
-target list applies, but the routed experts are fused parameters without
-per-expert <code class="docutils literal notranslate"><span class="pre">gate_proj</span></code>/<code class="docutils literal notranslate"><span class="pre">up_proj</span></code>/<code class="docutils literal notranslate"><span class="pre">down_proj</span></code> modules. <code class="docutils literal notranslate"><span class="pre">train_mlp</span></code> therefore
-trains only the shared expert, and the routed experts stay frozen. vLLM
-applies LoRA to the same modules when serving, so trained and served modules
-match.</p>
-<p>This differs from Tinker’s hosted service: Tinker documents <code class="docutils literal notranslate"><span class="pre">train_mlp</span></code> as
-covering MoE layers and trains a LoRA on each expert, so the same client code
-trains far more of the model there. Expect different training results on MoE
-models.</p>
+module list applies and covers the shared expert. The routed experts are
+fused 3D parameters without per-expert <code class="docutils literal notranslate"><span class="pre">gate_proj</span></code>/<code class="docutils literal notranslate"><span class="pre">up_proj</span></code>/<code class="docutils literal notranslate"><span class="pre">down_proj</span></code>
+modules, so <code class="docutils literal notranslate"><span class="pre">train_mlp</span></code> additionally targets <code class="docutils literal notranslate"><span class="pre">mlp.experts.gate_up_proj</span></code> and
+<code class="docutils literal notranslate"><span class="pre">mlp.experts.down_proj</span></code> through peft <code class="docutils literal notranslate"><span class="pre">target_parameters</span></code>. This matches
+Tinker’s documented behavior of <code class="docutils literal notranslate"><span class="pre">train_mlp</span></code> covering MoE layers: attention,
+the Gated DeltaNet projections, the shared expert, and every routed expert
+all train. vLLM parses the peft-format expert adapter keys when serving, so
+trained and served targets match.</p>
+<p>The module list and the parameter list together define a checkpoint’s
+geometry; both are recorded in the training run, checkpoint metadata, and
+the peft <code class="docutils literal notranslate"><span class="pre">adapter_config.json</span></code>, and both must match exactly to load a
+checkpoint. On FSDP, <code class="docutils literal notranslate"><span class="pre">fsdp_target_parameters</span></code> explicitly overrides the
+parameter side the way <code class="docutils literal notranslate"><span class="pre">fsdp_target_modules</span></code> overrides the module side.</p>
 </section>
 <section id="every-target-must-match-a-real-module">
 <h2>Every target must match a real module<a class="headerlink" href="#every-target-must-match-a-real-module" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#every-target-must-match-a-real-module'">¶</a></h2>

@@ -51,16 +51,20 @@ geometry from the default, so changing it also requires a new training run
 ## MoE models
 
 On the MoE variant (model type `qwen3_5_moe`, e.g. Qwen3.6-35B-A3B), the same
-target list applies, but the routed experts are fused parameters without
-per-expert `gate_proj`/`up_proj`/`down_proj` modules. `train_mlp` therefore
-trains only the shared expert, and the routed experts stay frozen. vLLM
-applies LoRA to the same modules when serving, so trained and served modules
-match.
+module list applies and covers the shared expert. The routed experts are
+fused 3D parameters without per-expert `gate_proj`/`up_proj`/`down_proj`
+modules, so `train_mlp` additionally targets `mlp.experts.gate_up_proj` and
+`mlp.experts.down_proj` through peft `target_parameters`. This matches
+Tinker's documented behavior of `train_mlp` covering MoE layers: attention,
+the Gated DeltaNet projections, the shared expert, and every routed expert
+all train. vLLM parses the peft-format expert adapter keys when serving, so
+trained and served targets match.
 
-This differs from Tinker's hosted service: Tinker documents `train_mlp` as
-covering MoE layers and trains a LoRA on each expert, so the same client code
-trains far more of the model there. Expect different training results on MoE
-models.
+The module list and the parameter list together define a checkpoint's
+geometry; both are recorded in the training run, checkpoint metadata, and
+the peft `adapter_config.json`, and both must match exactly to load a
+checkpoint. On FSDP, `fsdp_target_parameters` explicitly overrides the
+parameter side the way `fsdp_target_modules` overrides the module side.
 
 ## Every target must match a real module
 

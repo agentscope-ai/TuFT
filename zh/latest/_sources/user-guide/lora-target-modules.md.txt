@@ -43,14 +43,18 @@ Hugging Face 模型 ID）时，由模型名决定。
 
 ## MoE 模型
 
-对于 MoE 变体（模型类型 `qwen3_5_moe`，如 Qwen3.6-35B-A3B），目标模块列表相同，
-但路由专家是融合参数，没有独立的 `gate_proj`/`up_proj`/`down_proj` 模块。因此
-`train_mlp` 只会训练共享专家，路由专家保持冻结。vLLM 推理时对相同的模块应用
-LoRA，训练和推理涉及的模块一致。
+对于 MoE 变体（模型类型 `qwen3_5_moe`，如 Qwen3.6-35B-A3B），目标模块列表相同
+并覆盖共享专家。路由专家是融合的 3D 参数，没有独立的
+`gate_proj`/`up_proj`/`down_proj` 模块，因此 `train_mlp` 会额外通过 peft
+`target_parameters` 定位 `mlp.experts.gate_up_proj` 和
+`mlp.experts.down_proj`。这与 Tinker 文档中 `train_mlp` 覆盖 MoE 层的行为一致：
+注意力、Gated DeltaNet 投影、共享专家和所有路由专家都会训练。vLLM 推理时会解析
+peft 格式的专家适配器键，训练和推理涉及的目标一致。
 
-这一点与 Tinker 官方服务不同：Tinker 的文档说明 `train_mlp` 覆盖 MoE 层，并为
-每个专家训练一个 LoRA，因此同样的客户端代码在 Tinker 上训练的参数要多得多。
-在 MoE 模型上，两者的训练结果会有差异。
+模块列表和参数列表共同定义检查点的结构；两者都会记录在训练运行、检查点元数据
+和 peft `adapter_config.json` 中，加载检查点时两者都必须完全一致。在 FSDP 上，
+`fsdp_target_parameters` 可以显式覆盖参数侧，与 `fsdp_target_modules` 覆盖模块
+侧的方式相同。
 
 ## 每个目标都必须匹配真实模块
 
