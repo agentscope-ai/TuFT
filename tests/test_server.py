@@ -109,6 +109,11 @@ def test_training_and_sampling_round_trip(server_endpoint: str) -> None:
             },
         )
 
+        forward_result = training_client.forward([datum], "cross_entropy").result(
+            timeout=CPU_TEST_TIMEOUT
+        )
+        assert forward_result.loss_fn_outputs
+
         fwdbwd_result = training_client.forward_backward([datum], "cross_entropy").result(
             timeout=CPU_TEST_TIMEOUT
         )

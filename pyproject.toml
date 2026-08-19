@@ -1,6 +1,6 @@
 [project]
 name = "tuft"
-version = "0.1.11"
+version = "0.2.0"
 description = "A multi-tenant fine-tuning platform for LLMs with Tinker-compatible API"
 authors = [
     { name = "TuFT Developers", email = "tuft@list.alibaba-inc.com" }
@@ -14,10 +14,12 @@ dependencies = [
     "fastapi>=0.133.0,<0.137.0",
     "httpx>=0.28.1",
     "numpy>=2.0.0",
-    # tinker >=0.25.0 dropped the _pydantic_types request mirrors; the
-    # remaining dataclass request types cannot be used as FastAPI body models
-    # (pydantic cannot build schemas for them), so cap below 0.25.
-    "tinker>=0.18.2,<0.25",
+    # Pinned to 0.25.x at both ends. TuFT speaks 0.25's protocol directly:
+    # /forward_backward is protobuf-only and decodes into 0.25 dataclass types.
+    # Older SDKs are not just untested, they break -- forward_only and
+    # prompt_cache_hit_tokens, which this server reads and writes, only exist
+    # from 0.23.
+    "tinker>=0.25,<0.26",
     "protobuf>=4.21.0",
     "typer>=0.20.1",
     "uvicorn[standard]>=0.38.0",
