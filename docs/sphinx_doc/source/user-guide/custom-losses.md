@@ -2,9 +2,9 @@
 
 This guide documents **client-defined training objectives** on TuFT via the Tinker SDK's
 `forward_backward_custom` — for example a composite objective that mixes **DPO** with a weighted
-**NLL** anchor. The workflow is **officially supported on both training backends** (`hf` and
-`fsdp`) with an **unmodified TuFT server**: your loss stays a plain PyTorch function in *your*
-process, and the server only ever executes its built-in, allowlisted loss functions.
+**NLL** anchor. Custom losses are supported on both training backends (`hf` and `fsdp`). Your loss
+stays a plain PyTorch function in *your* process, and the server only ever executes its built-in,
+allowlisted loss functions.
 
 ```python
 def my_loss(data: list[types.Datum], logprobs_list: list[torch.Tensor]):
