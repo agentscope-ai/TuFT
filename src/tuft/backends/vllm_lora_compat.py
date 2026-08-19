@@ -63,6 +63,30 @@ def resolve_model_series(model_path: str | Path) -> str | None:
     return None
 
 
+def resolve_model_architecture(model_path: str | Path) -> str | None:
+    """Resolve architecture-specific behavior that a broad model series cannot express.
+
+    Qwen3.5 and Qwen3.8 use the same Transformers architecture (``qwen3_5``),
+    including Gated DeltaNet blocks whose projection names differ from standard
+    attention. Prefer ``model_type`` for local checkpoints, and retain a narrow
+    model-ID fallback for configured Hugging Face IDs whose config has not been
+    downloaded locally yet. As with :func:`resolve_model_series`, an existing
+    config is authoritative.
+    """
+
+    config = load_model_config_json(model_path)
+    if config is not None:
+        model_type = str(config.get("model_type", "")).lower()
+        if model_type.startswith("qwen3_5"):
+            return "qwen3_5"
+        return None
+
+    path_lower = str(model_path).lower()
+    if any(marker in path_lower for marker in ("qwen3.5", "qwen3_5", "qwen3.8", "qwen3_8")):
+        return "qwen3_5"
+    return None
+
+
 def vllm_nests_language_model(model_path: str | Path) -> bool:
     """True when the vLLM implementation nests the text backbone under ``language_model``.
 
