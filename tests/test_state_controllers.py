@@ -629,6 +629,91 @@ async def test_load_checkpoint_into_new_run_uses_destination_sequence_and_adapte
 
 
 @pytest.mark.asyncio
+async def test_load_checkpoint_seeds_destination_checkpoint_for_recovery(
+    request, tmp_path
+) -> None:
+    """Issue #140: a run seeded from another run's checkpoint must own a checkpoint.
+
+    Before the fix, load_checkpoint only loaded the weights into memory and
+    registered nothing on the destination run. On restart, recovery rebuilt each run
+    from its own latest checkpoint, found none for a seeded run, recreated a
+    freshly-initialized adapter (losing the loaded weights) and failed every future
+    with "No checkpoint found". After the fix, the destination run owns a
+    materialized checkpoint and restore_from_checkpoint resumes from it.
+    """
+    use_gpu = request.config.getoption("--gpu")
+    state = await _build_state(tmp_path, use_gpu)
+    session_id = _create_session(state)
+    source = await state.create_model(
+        session_id,
+        model_owner="tester",
+        base_model="Qwen/Qwen3-0.6B",
+        lora_config=types.LoraConfig(rank=4),
+        user_metadata=None,
+    )
+    datum = types.Datum(
+        model_input=types.ModelInput.from_ints([3, 4, 5, 6]),
+        loss_fn_inputs={
+            "target_tokens": types.TensorData(data=[7, 8, 9, 10], dtype="int64", shape=[4]),
+            "weights": types.TensorData(data=[1.0, 1.0, 1.0, 1.0], dtype="float32", shape=[4]),
+        },
+    )
+    await state.run_forward(
+        source.training_run_id,
+        user_id="tester",
+        data=[datum],
+        loss_fn="cross_entropy",
+        loss_fn_config=None,
+        seq_id=1,
+        backward=True,
+    )
+    await state.run_optim_step(
+        source.training_run_id,
+        user_id="tester",
+        params=types.AdamParams(),
+        seq_id=2,
+    )
+    source_ckpt = await state.save_checkpoint(
+        source.training_run_id,
+        user_id="tester",
+        name="seed-source",
+        checkpoint_type="training",
+        seq_id=3,
+    )
+
+    # Seed a brand-new run from the source checkpoint.
+    destination = await state.create_model(
+        session_id,
+        model_owner="tester",
+        base_model="Qwen/Qwen3-0.6B",
+        lora_config=types.LoraConfig(rank=4),
+        user_metadata=None,
+    )
+    destination_record = state.get_training_run_record(destination.training_run_id, "tester")
+    assert destination_record.checkpoints == {}
+
+    await state.load_checkpoint(
+        destination.training_run_id,
+        path=source_ckpt.tinker_checkpoint.tinker_path,
+        user_id="tester",
+        optimizer=True,
+        seq_id=1,
+    )
+
+    # The destination run now owns a checkpoint of its own (the fix).
+    assert len(destination_record.checkpoints) == 1
+    seeded = state.training.get_latest_checkpoint(destination.training_run_id)
+    assert seeded is not None
+    assert seeded.training_run_id == destination.training_run_id
+    assert seeded.checkpoint_type == "training"
+
+    # Recovery restores the seeded checkpoint instead of recreating a fresh adapter.
+    restored = await state.training.restore_from_checkpoint(destination.training_run_id)
+    assert restored is not None
+    assert restored.checkpoint_id == seeded.checkpoint_id
+
+
+@pytest.mark.asyncio
 async def test_load_checkpoint_rejects_different_lora_rank(request, tmp_path) -> None:
     use_gpu = request.config.getoption("--gpu")
     state = await _build_state(tmp_path, use_gpu)
