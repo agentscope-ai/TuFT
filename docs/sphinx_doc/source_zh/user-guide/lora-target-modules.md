@@ -61,7 +61,8 @@ HF 后端在创建适配器时检查；FSDP 后端在 worker 启动时检查槽�
 
 ## Qwen 模型上的 train_unembed
 
-出于同样的原因，在 Qwen 系列模型上设置 `train_unembed=True` 会被拒绝：TuFT
-没有可训练的 Qwen unembed 模块，而 Tinker 官方服务在这些模型上会调整
-`embed_tokens`，静默接受该标志会掩盖真实的行为差异。SDK 默认该标志为 true，
-因此训练 Qwen 模型时请显式传入 `train_unembed=False`。
+TuFT 目前会接受 Qwen 系列模型上的 `train_unembed=True`，但不会添加
+embedding 或 unembedding 目标模块。与 Tinker 官方服务保持一致的
+`embed_tokens` 训练和服务支持跟踪于
+[issue #153](https://github.com/agentscope-ai/TuFT/issues/153)，并且依赖于包含 Qwen3.5
+embedding 模块支持的 vLLM 正式发布版。

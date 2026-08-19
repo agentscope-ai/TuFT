@@ -748,33 +748,29 @@ async def test_load_checkpoint_rejects_different_lora_target_modules(request, tm
 
 
 @pytest.mark.asyncio
-async def test_create_model_rejects_train_unembed_on_qwen(request, tmp_path) -> None:
-    """Qwen has no unembed modules to train, so the flag fails instead of no-oping.
-
-    Tinker's hosted service adapts embed_tokens on Qwen3.5-based models, so a
-    silently accepted flag would train different weights than the same client
-    code trains on Tinker. The SDK default is train_unembed=True, so a bare
-    default LoraConfig is rejected too; the error says what to change.
-    """
+async def test_create_model_accepts_train_unembed_on_qwen(request, tmp_path) -> None:
+    """The SDK default remains accepted while Qwen unembed support is pending."""
     use_gpu = request.config.getoption("--gpu")
     state = await _build_state(tmp_path, use_gpu, cpu_model_path="/path/to/qwen-test-model")
     session_id = _create_session(state)
-    with pytest.raises(InvalidRequestException, match="train_unembed"):
-        await state.create_model(
-            session_id,
-            model_owner="tester",
-            base_model="Qwen/Qwen3-0.6B",
-            lora_config=types.LoraConfig(rank=4, train_unembed=True),
-            user_metadata=None,
-        )
-    with pytest.raises(InvalidRequestException, match="train_unembed=False to create"):
-        await state.create_model(
-            session_id,
-            model_owner="tester",
-            base_model="Qwen/Qwen3-0.6B",
-            lora_config=types.LoraConfig(rank=4),
-            user_metadata=None,
-        )
+    training = await state.create_model(
+        session_id,
+        model_owner="tester",
+        base_model="Qwen/Qwen3-0.6B",
+        lora_config=types.LoraConfig(rank=4),
+        user_metadata=None,
+    )
+
+    assert training.train_unembed is True
+    assert training.target_modules == [
+        "q_proj",
+        "k_proj",
+        "v_proj",
+        "o_proj",
+        "gate_proj",
+        "up_proj",
+        "down_proj",
+    ]
 
 
 @pytest.mark.asyncio

@@ -73,8 +73,8 @@ intended modules.
 
 ## train_unembed on Qwen models
 
-For the same reason, `train_unembed=True` is rejected on Qwen-family models:
-TuFT has no Qwen unembed modules to train, while Tinker's hosted service
-adapts `embed_tokens` there, so silently accepting the flag would hide a real
-behavior difference. The SDK defaults the flag to true, so pass
-`train_unembed=False` explicitly when training Qwen models.
+TuFT currently accepts `train_unembed=True` on Qwen-family models but does
+not add an embedding or unembedding target. Support for training and serving
+`embed_tokens`, matching Tinker's hosted behavior, is tracked in
+[issue #153](https://github.com/agentscope-ai/TuFT/issues/153) and depends on
+a released vLLM version containing its Qwen3.5 embedding-module support.
