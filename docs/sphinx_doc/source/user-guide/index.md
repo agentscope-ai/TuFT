@@ -29,6 +29,14 @@ Reinforcement learning with GRPO-style training on verifiable tasks.
 Distill a teacher into a student on the student's own samples, via per-token reverse-KL.
 :::
 
+:::{grid-item-card} Custom Losses
+:link: custom-losses
+:link-type: doc
+:shadow: none
+
+Client-defined objectives (e.g. composite DPO + NLL) via `forward_backward_custom`, on HF and FSDP.
+:::
+
 :::{grid-item-card} Persistence
 :link: persistence
 :link-type: doc
@@ -61,6 +69,7 @@ Dashboard for monitoring training runs, checkpoints, and sampling playground.
 chat-sft
 countdown-rl
 on-policy-distillation
+custom-losses
 persistence
 telemetry
 console
