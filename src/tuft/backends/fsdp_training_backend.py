@@ -353,18 +353,16 @@ def _validate_explicit_target_modules(config: ModelConfig) -> None:
         for targets in achievable
     ):
         return
-    hint = next(
-        (
-            notice
-            for targets in achievable
-            if (
-                notice := gated_deltanet_mismatch_hint(modules, targets.modules)
-                or routed_expert_mismatch_hint(parameters, targets.parameters)
-            )
-            is not None
-        ),
-        None,
-    )
+    hint = None
+    for targets in achievable:
+        target_module_set = set(targets.modules)
+        target_parameter_set = set(targets.parameters)
+        if parameter_set == target_parameter_set:
+            hint = gated_deltanet_mismatch_hint(modules, targets.modules)
+        elif module_set == target_module_set:
+            hint = routed_expert_mismatch_hint(parameters, targets.parameters)
+        if hint is not None:
+            break
     achievable_summary = " or ".join(
         f"modules {sorted(set(targets.modules))} with parameters {sorted(set(targets.parameters))}"
         for targets in achievable
@@ -1310,6 +1308,11 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                 f"{sorted(slot_modules)}." + (f" {hint}" if hint else "")
             )
         checkpoint_parameters = checkpoint_record.saved_target_parameters
+        if checkpoint_parameters is None:
+            raise InvalidRequestException(
+                f"Cannot load FSDP checkpoint {checkpoint_record.checkpoint_id}: neither "
+                "adapter_config.json nor metadata provides a valid target_parameters list."
+            )
         slot_parameters = self._slot_config.target_parameters
         if set(checkpoint_parameters) != set(slot_parameters):
             hint = routed_expert_mismatch_hint(checkpoint_parameters, slot_parameters)

@@ -320,6 +320,28 @@ def test_fsdp_explicit_geometry_without_experts_fails_at_startup(tmp_path):
     assert "#154" in message
 
 
+def test_fsdp_unrelated_explicit_geometry_does_not_claim_only_experts_differ(tmp_path):
+    """The #154 migration hint requires the module side to match exactly."""
+
+    model_dir = tmp_path / "model"
+    _write_qwen3_5_moe_config(model_dir)
+    config = ModelConfig(
+        model_name="moe",
+        model_path=model_dir,
+        max_model_len=1024,
+        max_lora_rank=2,
+        training_backend="fsdp",
+        fsdp_train_unembed=False,
+        fsdp_target_modules=["q_proj"],
+        fsdp_target_parameters=[],
+    )
+    with pytest.raises(ValueError) as excinfo:
+        FSDPTrainingBackend(config)
+    message = str(excinfo.value)
+    assert "cannot be requested by any client" in message
+    assert "#154" not in message
+
+
 @pytest.mark.asyncio
 async def test_fsdp_validate_lora_config_compares_expert_parameters(tmp_path):
     model_dir = tmp_path / "model"
@@ -368,6 +390,21 @@ def test_fsdp_checkpoint_geometry_rejects_pre_154_moe_checkpoints(tmp_path):
         path=tmp_path / "old-checkpoint",
     )
     checkpoint.adapter_path.mkdir(parents=True)
+
+    # Malformed recorded geometry is not equivalent to a legacy checkpoint
+    # that explicitly trained no parameter targets.
+    (checkpoint.adapter_path / "adapter_config.json").write_text(
+        json.dumps(
+            {
+                "target_modules": MOE_TEXT_TARGETS,
+                "target_parameters": "mlp.experts.gate_up_proj",
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(InvalidRequestException, match="valid target_parameters"):
+        backend._validate_checkpoint_geometry(checkpoint)
+
     # A pre-#154 adapter records the module list but no target_parameters.
     (checkpoint.adapter_path / "adapter_config.json").write_text(
         json.dumps({"target_modules": MOE_TEXT_TARGETS}),
@@ -611,6 +648,18 @@ def test_saved_target_parameters_prefers_adapter_config(tmp_path):
         encoding="utf-8",
     )
     assert checkpoint.saved_target_parameters == QWEN3_5_MOE_EXPERT_TARGET_PARAMETERS
+
+    (checkpoint.adapter_path / "adapter_config.json").write_text(
+        json.dumps(
+            {
+                "target_modules": ["q_proj"],
+                "target_parameters": "mlp.experts.gate_up_proj",
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert read_adapter_target_parameters(checkpoint.adapter_path) is None
+    assert checkpoint.saved_target_parameters is None
 
 
 def test_dense_qwen35_geometry_is_unchanged(tmp_path):

@@ -830,7 +830,13 @@ class TrainingController:
             )
         # Runs and checkpoints from before issue #154 record no fused-parameter
         # targets and trained none, so absence compares as the empty set.
-        source_parameters = set(checkpoint.saved_target_parameters)
+        saved_parameters = checkpoint.saved_target_parameters
+        if saved_parameters is None:
+            raise InvalidRequestException(
+                f"Cannot load checkpoint {checkpoint_id}: neither metadata nor "
+                "adapter_config.json provides a valid target_parameters list."
+            )
+        source_parameters = set(saved_parameters)
         destination_parameters = set(destination.target_parameters or [])
         if source_parameters != destination_parameters:
             from .backends.lora_modules import routed_expert_mismatch_hint
@@ -980,6 +986,45 @@ class TrainingController:
             return None
         return max(all_checkpoints, key=lambda c: c.created_at)
 
+    def _restored_run_geometry_mismatch(self, record: TrainingRunRecord) -> str | None:
+        """Explain why a persisted run no longer matches current target resolution."""
+
+        try:
+            expected_targets = self._effective_lora_targets(
+                record.base_model, record.lora_config()
+            )
+        except InvalidRequestException as exc:
+            return exc.detail
+
+        if set(expected_targets.modules) != set(record.target_modules or []):
+            from .backends.lora_modules import gated_deltanet_mismatch_hint
+
+            hint = gated_deltanet_mismatch_hint(
+                record.target_modules or [], expected_targets.modules
+            )
+            return (
+                f"the run records target modules {sorted(record.target_modules or [])} "
+                f"but the server now resolves {sorted(expected_targets.modules)}."
+                + (f" {hint}" if hint else "")
+            )
+
+        # Runs from before issue #154 record no parameter targets and trained
+        # none, so absence compares as the empty set.
+        if set(expected_targets.parameters) != set(record.target_parameters or []):
+            from .backends.lora_modules import routed_expert_mismatch_hint
+
+            hint = routed_expert_mismatch_hint(
+                record.target_parameters or [], expected_targets.parameters
+            )
+            return (
+                "the run records target parameters "
+                f"{sorted(record.target_parameters or [])} but the server now "
+                f"resolves {sorted(expected_targets.parameters)}."
+                + (f" {hint}" if hint else "")
+            )
+
+        return None
+
     async def restore_from_checkpoint(self, model_id: str) -> CheckpointRecord | None:
         record = self.training_runs.get(model_id)
         if record is None or record.backend is None:
@@ -988,60 +1033,27 @@ class TrainingController:
             record.corrupted = True
             return None
         latest_ckpt = self.get_latest_checkpoint(model_id)
+
+        # Resolve the run's flags under the current rules before either
+        # recreating an adapter or loading a checkpoint. The HF load path
+        # creates its adapter directly from adapter_config.json, so relying on
+        # the backend alone would let a pre-#154 MoE run resume with the old
+        # shared-expert-only geometry while the server now advertises routed
+        # experts for the same train_mlp flags.
+        mismatch = self._restored_run_geometry_mismatch(record)
+        if mismatch is not None:
+            record.corrupted = True
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, self._save_training_run, model_id)
+            logger.error("Cannot restore %s, marking the run corrupted: %s", model_id, mismatch)
+            return latest_ckpt
+
         if latest_ckpt is None:
             # The run owns no checkpoint to restore from - it has not saved one
             # yet, or it was seeded by load_weights from another run's
             # checkpoint. Recreate the adapter so the run stays usable: without
             # it the backend has no adapter under this id and every later
             # request fails with "Adapter not found" for good.
-            #
-            # Recreation resolves geometry from the run's flags under the
-            # CURRENT rules. If that no longer matches what the run recorded
-            # (e.g. after the Qwen3.5 target-list change), mark the run
-            # corrupted instead of silently training different modules.
-            mismatch: str | None = None
-            try:
-                expected_targets = self._effective_lora_targets(
-                    record.base_model, record.lora_config()
-                )
-            except InvalidRequestException as exc:
-                expected_targets = None
-                mismatch = exc.detail
-            if expected_targets is not None and set(expected_targets.modules) != set(
-                record.target_modules or []
-            ):
-                from .backends.lora_modules import gated_deltanet_mismatch_hint
-
-                hint = gated_deltanet_mismatch_hint(
-                    record.target_modules or [], expected_targets.modules
-                )
-                mismatch = (
-                    f"the run records target modules {sorted(record.target_modules or [])} "
-                    f"but the server now resolves {sorted(expected_targets.modules)}."
-                    + (f" {hint}" if hint else "")
-                )
-            elif expected_targets is not None and set(expected_targets.parameters) != set(
-                # Runs from before issue #154 record no parameter targets and
-                # trained none, so absence compares as the empty set.
-                record.target_parameters or []
-            ):
-                from .backends.lora_modules import routed_expert_mismatch_hint
-
-                hint = routed_expert_mismatch_hint(
-                    record.target_parameters or [], expected_targets.parameters
-                )
-                mismatch = (
-                    "the run records target parameters "
-                    f"{sorted(record.target_parameters or [])} but the server now "
-                    f"resolves {sorted(expected_targets.parameters)}."
-                    + (f" {hint}" if hint else "")
-                )
-            if mismatch is not None:
-                record.corrupted = True
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, self._save_training_run, model_id)
-                logger.error("Cannot restore %s, marking the run corrupted: %s", model_id, mismatch)
-                return None
             try:
                 await record.backend.create_adapter(model_id, record.lora_config())
             except Exception:  # pylint: disable=broad-except

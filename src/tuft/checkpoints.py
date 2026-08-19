@@ -231,12 +231,14 @@ class CheckpointRecord(BaseModel):
         return None
 
     @property
-    def saved_target_parameters(self) -> list[str]:
+    def saved_target_parameters(self) -> list[str] | None:
         """Effective fused-parameter targets recorded by this checkpoint.
 
-        Same precedence as ``saved_target_modules``. Returns ``[]`` when
-        neither source records any: checkpoints from before issue #154
-        trained no parameter targets, so nothing recorded means none.
+        Same precedence as ``saved_target_modules``. Returns ``[]`` when a
+        readable source omits the field, or when neither configuration nor
+        metadata exists: checkpoints from before issue #154 trained no
+        parameter targets, so missing means none. Returns None when a source
+        records malformed parameter geometry that cannot be validated.
         """
 
         parameters = read_adapter_target_parameters(self.adapter_path)
@@ -244,10 +246,15 @@ class CheckpointRecord(BaseModel):
             return parameters
         with contextlib.suppress(CheckpointMetadataReadException):
             raw_parameters = self.metadata.target_parameters
-            if raw_parameters and all(param.strip() for param in raw_parameters):
+            if raw_parameters is None:
+                return []
+            if all(param.strip() for param in raw_parameters):
                 normalized = [param.strip() for param in raw_parameters]
                 if len(set(normalized)) == len(normalized):
                     return normalized
+            return None
+        if (self.adapter_path / "adapter_config.json").exists():
+            return None
         return []
 
     def validate_lora_alpha(self, expected_lora_alpha: int) -> None:
