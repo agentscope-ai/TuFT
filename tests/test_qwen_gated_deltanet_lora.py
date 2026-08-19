@@ -16,22 +16,30 @@ from transformers.models.qwen3_5.configuration_qwen3_5 import (
 )
 from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5ForConditionalGeneration
 
-from tuft.backends.fsdp_training_backend import _config_to_worker_dict
+from tuft.backends.fsdp_training_backend import FSDPTrainingBackend, _config_to_worker_dict
 from tuft.backends.hf_training_model import build_peft_lora_config
 from tuft.backends.lora_modules import (
     MODULE_MAP,
     QWEN3_5_GATED_DELTANET_TARGET_MODULES,
+    gated_deltanet_mismatch_hint,
     get_target_modules,
 )
 from tuft.backends.vllm_lora_compat import resolve_model_architecture
 from tuft.checkpoints import CheckpointRecord, read_adapter_target_modules
 from tuft.config import AppConfig, ModelConfig
-from tuft.training_controller import TrainingController
+from tuft.exceptions import InvalidRequestException
+from tuft.training_controller import TrainingController, TrainingRunRecord
 
 
 QWEN_TEXT_TARGETS = [
     *MODULE_MAP["qwen"]["attn"],
     *QWEN3_5_GATED_DELTANET_TARGET_MODULES,
+    *MODULE_MAP["qwen"]["mlp"],
+]
+
+# The geometry this release's Gated DeltaNet widening (issue #149) replaced.
+QWEN_PRE_WIDENING_TARGETS = [
+    *MODULE_MAP["qwen"]["attn"],
     *MODULE_MAP["qwen"]["mlp"],
 ]
 
@@ -143,6 +151,7 @@ def test_qwen_gated_deltanet_targets_cover_text_and_exclude_vision(
     fsdp_targets = _config_to_worker_dict(fsdp_config)["slot_config"]["target_modules"]
 
     assert resolved_targets == QWEN_TEXT_TARGETS
+    assert hf_config.target_modules is not None
     assert set(hf_config.target_modules) == set(fsdp_targets) == set(resolved_targets)
 
     peft_model = get_peft_model(_tiny_qwen3_5(num_hidden_layers), hf_config)
@@ -205,7 +214,7 @@ def test_qwen_gated_deltanet_adapter_metadata_and_weights_round_trip(tmp_path):
         if name.endswith("layers.0.linear_attn.in_proj_qkv")
     )
     with torch.no_grad():
-        source_module.lora_B["default"].weight.fill_(0.25)
+        source_module.lora_B["default"].weight.fill_(0.25)  # type: ignore[index]
 
     adapter_dir = tmp_path / "adapter"
     peft_model.save_pretrained(adapter_dir)
@@ -218,4 +227,146 @@ def test_qwen_gated_deltanet_adapter_metadata_and_weights_round_trip(tmp_path):
         for name, module in reloaded.named_modules()
         if name.endswith("layers.0.linear_attn.in_proj_qkv")
     )
-    assert torch.all(reloaded_module.lora_B["default"].weight == 0.25)
+    assert torch.all(reloaded_module.lora_B["default"].weight == 0.25)  # type: ignore[index]
+
+
+def test_path_fallback_markers_are_anchored(tmp_path):
+    """The hub-ID fallback must not misread names that merely contain a marker."""
+
+    # Official-style IDs resolve, with or without a size suffix.
+    assert resolve_model_architecture("Qwen/Qwen3.5") == "qwen3_5"
+    assert resolve_model_architecture("org/qwen3_5_sft-final") == "qwen3_5"
+    # A 'qwen3_8b' checkpoint is Qwen3-8B, not Qwen3.8.
+    assert resolve_model_architecture("someorg/qwen3_8b-sft") is None
+    assert resolve_model_architecture(tmp_path / "Qwen3_8B") is None
+    assert resolve_model_architecture("org/qwen3.55-exp") is None
+
+
+def test_resolve_target_modules_reads_config_json_once(monkeypatch, tmp_path):
+    """Series and architecture resolution share a single config.json read."""
+
+    from tuft.backends import vllm_lora_compat
+
+    model_dir = tmp_path / "model"
+    _write_qwen3_5_config(model_dir)
+    reads: list[object] = []
+    original = vllm_lora_compat.load_model_config_json
+
+    def counting_load(path):
+        reads.append(path)
+        return original(path)
+
+    monkeypatch.setattr(vllm_lora_compat, "load_model_config_json", counting_load)
+    modules = get_target_modules(
+        str(model_dir),
+        types.LoraConfig(rank=2, train_attn=True, train_mlp=True, train_unembed=False),
+    )
+    assert modules == QWEN_TEXT_TARGETS
+    assert len(reads) == 1
+
+
+def test_gated_deltanet_mismatch_hint_only_fires_for_the_widening():
+    hint = gated_deltanet_mismatch_hint(QWEN_PRE_WIDENING_TARGETS, QWEN_TEXT_TARGETS)
+    assert hint is not None
+    assert "Gated DeltaNet" in hint
+    assert "#149" in hint
+
+    # Equal sets and mismatches the widening does not explain get no hint.
+    assert gated_deltanet_mismatch_hint(QWEN_TEXT_TARGETS, QWEN_TEXT_TARGETS) is None
+    assert (
+        gated_deltanet_mismatch_hint(
+            QWEN_PRE_WIDENING_TARGETS, [*QWEN_PRE_WIDENING_TARGETS, "lm_head"]
+        )
+        is None
+    )
+    assert gated_deltanet_mismatch_hint(MODULE_MAP["qwen"]["attn"], QWEN_TEXT_TARGETS) is None
+
+
+def test_pre_widening_lora_state_fails_with_targeted_notice(tmp_path):
+    """Both backends' strict geometry checks explain the Gated DeltaNet break."""
+
+    model_dir = tmp_path / "model"
+    _write_qwen3_5_config(model_dir)
+    checkpoint = CheckpointRecord.from_training_run(
+        training_run_id="run",
+        checkpoint_name="checkpoint-0001",
+        owner_name="tester",
+        checkpoint_type="training",
+        checkpoint_root_dir=tmp_path,
+    )
+    checkpoint.save_metadata(
+        base_model="qwen",
+        session_id="session",
+        lora_rank=2,
+        target_modules=list(QWEN_PRE_WIDENING_TARGETS),
+    )
+
+    controller = object.__new__(TrainingController)
+    controller.config = AppConfig(
+        supported_models=[ModelConfig(model_name="qwen", model_path=model_dir, max_model_len=1024)]
+    )
+    destination = TrainingRunRecord(
+        training_run_id="destination",
+        base_model="qwen",
+        lora_rank=2,
+        train_attn=True,
+        train_mlp=True,
+        train_unembed=False,
+        target_modules=list(QWEN_TEXT_TARGETS),
+        session_id="session",
+        model_owner="tester",
+    )
+    with pytest.raises(InvalidRequestException, match="Gated DeltaNet"):
+        controller._check_adapter_compatible(
+            "checkpoint-0001", checkpoint, checkpoint.metadata, destination
+        )
+
+    backend = FSDPTrainingBackend(
+        ModelConfig(
+            model_name="qwen",
+            model_path=model_dir,
+            max_model_len=1024,
+            max_lora_rank=2,
+            training_backend="fsdp",
+        )
+    )
+    with pytest.raises(InvalidRequestException, match="Gated DeltaNet"):
+        backend._validate_checkpoint_geometry(checkpoint)
+
+
+def test_stale_explicit_fsdp_geometry_fails_at_startup(tmp_path):
+    """A pre-widening fsdp_target_modules list fails boot, not the first request."""
+
+    model_dir = tmp_path / "model"
+    _write_qwen3_5_config(model_dir)
+    stale = ModelConfig(
+        model_name="qwen",
+        model_path=model_dir,
+        max_model_len=1024,
+        max_lora_rank=2,
+        training_backend="fsdp",
+        fsdp_target_modules=list(QWEN_PRE_WIDENING_TARGETS),
+    )
+    with pytest.raises(ValueError) as excinfo:
+        FSDPTrainingBackend(stale)
+    message = str(excinfo.value)
+    assert "cannot be requested by any client" in message
+    assert "Gated DeltaNet" in message
+
+    # The widened geometry and unresolvable custom models still boot.
+    FSDPTrainingBackend(stale.model_copy(update={"fsdp_target_modules": list(QWEN_TEXT_TARGETS)}))
+    FSDPTrainingBackend(
+        ModelConfig(
+            model_name="custom",
+            model_path=Path("/tmp/custom-model"),
+            max_model_len=1024,
+            max_lora_rank=2,
+            training_backend="fsdp",
+            fsdp_target_modules=["proj_in", "proj_out"],
+        )
+    )
+
+    # A mismatch the widening does not explain fails without the notice.
+    with pytest.raises(ValueError) as excinfo:
+        FSDPTrainingBackend(stale.model_copy(update={"fsdp_target_modules": ["q_proj"]}))
+    assert "Gated DeltaNet" not in str(excinfo.value)

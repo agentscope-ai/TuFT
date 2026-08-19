@@ -813,10 +813,13 @@ class TrainingController:
         source_modules = set(saved_modules)
         destination_modules = set(destination.target_modules)
         if source_modules != destination_modules:
+            from .backends.lora_modules import gated_deltanet_mismatch_hint
+
+            hint = gated_deltanet_mismatch_hint(source_modules, destination_modules)
             raise InvalidRequestException(
                 f"Cannot load checkpoint {checkpoint_id} targeting LoRA modules "
                 f"{sorted(source_modules)} into a training run targeting "
-                f"{sorted(destination_modules)}."
+                f"{sorted(destination_modules)}." + (f" {hint}" if hint else "")
             )
 
     def _model_config_for(self, base_model: str) -> ModelConfig | None:
@@ -978,9 +981,11 @@ class TrainingController:
                 checkpoint_record=latest_ckpt,
                 optimizer=(latest_ckpt.checkpoint_type == "training"),
             )
-        except Exception:  # pylint: disable=broad-except
+        except Exception as exc:  # pylint: disable=broad-except
             # load_state failed – try create_adapter + load_state as fallback
-            logger.warning("load_state failed for %s, trying create_adapter fallback", model_id)
+            logger.warning(
+                "load_state failed for %s (%s), trying create_adapter fallback", model_id, exc
+            )
             try:
                 await record.backend.create_adapter(model_id, record.lora_config())
             except Exception:
@@ -991,7 +996,7 @@ class TrainingController:
                     checkpoint_record=latest_ckpt,
                     optimizer=(latest_ckpt.checkpoint_type == "training"),
                 )
-            except Exception:
+            except Exception as exc:
                 # If loading still fails, mark as corrupted but still return
                 # the checkpoint so that futures AFTER the checkpoint are
                 # marked as failed (not ALL futures).
@@ -999,9 +1004,10 @@ class TrainingController:
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, self._save_training_run, model_id)
                 logger.warning(
-                    "Checkpoint load failed for %s; returning checkpoint "
-                    "with future_id=%d for future cleanup",
+                    "Checkpoint load failed for %s, marking the run corrupted: %s; "
+                    "returning checkpoint with future_id=%d for future cleanup",
                     model_id,
+                    exc,
                     latest_ckpt.future_id,
                 )
                 return latest_ckpt

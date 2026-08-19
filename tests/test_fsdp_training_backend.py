@@ -294,19 +294,34 @@ async def test_explicit_geometry_rejects_resolvable_client_modifier_mismatch():
     from tuft.backends.fsdp_training_backend import FSDPTrainingBackend
     from tuft.exceptions import InvalidRequestException
 
+    # An explicit list no client modifier combination can produce fails at
+    # construction time (server startup), not on the first create request.
+    with pytest.raises(ValueError, match="cannot be requested by any client"):
+        FSDPTrainingBackend(
+            ModelConfig(
+                model_name="legacy",
+                model_path=Path("/tmp/qwen-model"),
+                max_model_len=1024,
+                training_backend="fsdp",
+                fsdp_target_modules=["q_proj"],
+            )
+        )
+
+    # An achievable explicit list still rejects mismatched client modifiers
+    # per request, quoting the configured geometry.
     config = ModelConfig(
         model_name="legacy",
         model_path=Path("/tmp/qwen-model"),
         max_model_len=1024,
         training_backend="fsdp",
-        fsdp_target_modules=["q_proj"],
+        fsdp_target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
     )
     backend = FSDPTrainingBackend(config)
     backend.async_init = MagicMock(side_effect=AssertionError("must reject before init"))
 
     with pytest.raises(
         InvalidRequestException,
-        match=r"target-module mismatch.*explicit fsdp_target_modules=\['q_proj'\]",
+        match=r"target-module mismatch.*explicit fsdp_target_modules=",
     ) as exc_info:
         await backend.create_adapter("legacy-run", types.LoraConfig(rank=8))
     assert exc_info.value.status_code == 400

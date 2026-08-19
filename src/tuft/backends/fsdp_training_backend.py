@@ -40,7 +40,12 @@ from tuft.backends.fsdp_engine import (
     build_base_model,
     forward_backward as fsdp_forward_backward,
 )
-from tuft.backends.lora_modules import get_target_modules, resolve_target_modules
+from tuft.backends.lora_modules import (
+    achievable_target_module_sets,
+    gated_deltanet_mismatch_hint,
+    get_target_modules,
+    resolve_target_modules,
+)
 from tuft.backends.loss_inputs import (
     FSDP_BACKEND_OWNED_LOSS_INPUTS,
     validate_client_loss_fn_inputs,
@@ -279,6 +284,47 @@ def _get_target_modules_from_config(config: ModelConfig) -> List[str]:
             "fsdp_target_modules explicitly."
         )
     return modules
+
+
+def _validate_explicit_target_modules(config: ModelConfig) -> None:
+    """Fail startup when no client request could ever match the explicit geometry.
+
+    Explicit ``fsdp_target_modules`` stays the escape hatch for model families
+    the resolver does not know (those skip this check), but for resolvable
+    models ``_validate_lora_config`` requires client modifier flags to resolve
+    to exactly the slot geometry. A stale explicit list — e.g. one predating
+    the Qwen3.5/3.8 Gated DeltaNet widening (issue #149) — would otherwise
+    boot a server that rejects every create_training_run at request time.
+    """
+
+    if config.fsdp_qv_only:
+        return
+    explicit = getattr(config, "fsdp_target_modules", None)
+    if explicit is None:
+        return
+    achievable = achievable_target_module_sets(str(config.model_path))
+    if achievable is None:
+        return
+    explicit_set = set(explicit)
+    if any(explicit_set == set(modules) for modules in achievable):
+        return
+    hint = next(
+        (
+            notice
+            for modules in achievable
+            if (notice := gated_deltanet_mismatch_hint(explicit, modules)) is not None
+        ),
+        None,
+    )
+    achievable_summary = " or ".join(str(sorted(set(modules))) for modules in achievable)
+    raise ValueError(
+        f"Explicit fsdp_target_modules={sorted(explicit_set)} for model "
+        f"'{config.model_name}' ({config.model_path}) cannot be requested by any client: "
+        f"LoRA modifier flags resolve to {achievable_summary}, so every "
+        "create_training_run would be rejected. Update fsdp_target_modules to one of "
+        "those sets (or remove it to use the resolved default) and restart the server."
+        + (f" {hint}" if hint else "")
+    )
 
 
 def _config_to_worker_dict(config: ModelConfig) -> dict:
@@ -956,6 +1002,9 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         # target modules.
         self._config_dict = _config_to_worker_dict(config)
         _, self._slot_config = _worker_dict_to_configs(self._config_dict)
+        # Fail at startup, not on the first create_training_run, when the
+        # explicit geometry can never match a client request.
+        _validate_explicit_target_modules(config)
         self.logger = logging.getLogger(f"{__name__}.FSDPTrainingBackend")
 
     async def shutdown(self) -> None:
@@ -1134,10 +1183,11 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             )
         slot_modules = self._slot_config.target_modules
         if set(checkpoint_modules) != set(slot_modules):
+            hint = gated_deltanet_mismatch_hint(checkpoint_modules, slot_modules)
             raise InvalidRequestException(
                 f"Cannot load FSDP checkpoint {checkpoint_record.checkpoint_id} targeting "
                 f"modules {sorted(checkpoint_modules)} into a slot targeting "
-                f"{sorted(slot_modules)}."
+                f"{sorted(slot_modules)}." + (f" {hint}" if hint else "")
             )
         return checkpoint_modules
 
