@@ -89,13 +89,40 @@ The client computes the custom loss between two server passes.
 3. The client sends those values back as token weights. The server scores the same data again and
    runs backpropagation, which accumulates the custom loss's model gradient.
 
-The last step works because the server computes
-`helper_loss = -(logprobs * weights).sum()`. The client sets `weights` to the negative derivative
-of your loss with respect to each log-probability. The helper loss therefore produces the same
-model gradient as differentiating your custom loss directly through the model.
+Here is why the last step is equivalent to training on your loss. Let $\theta$ represent all model
+parameters, and let $\ell_i(\theta)$ be the log-probability for target token $i$. Your callback
+combines all of those values into a custom loss $C$. On the client, PyTorch computes one derivative
+per token:
 
-Both server passes must use the same model state. Normal sequential use does this: wait for
-`forward_backward_custom` to finish, and only then call `optim_step`.
+```{math}
+g_i = \frac{\partial C}{\partial \ell_i}.
+```
+
+$g_i$ says how a small change in token $i$'s log-probability would change the custom loss. The
+client sends $w_i = -g_i$ to the server. The server treats each weight as a fixed number and
+computes the helper loss:
+
+```{math}
+H(\theta) = -\sum_i w_i\,\ell_i(\theta).
+```
+
+When the server differentiates $H$ with respect to the model parameters, the two minus signs
+cancel:
+
+```{math}
+\nabla_\theta H
+= -\sum_i w_i\,\nabla_\theta \ell_i
+= \sum_i g_i\,\nabla_\theta \ell_i
+= \nabla_\theta C.
+```
+
+The final equality is the chain rule: each token affects the custom loss by $g_i$, and each model
+parameter affects that token by $\nabla_\theta \ell_i$. Adding those paths gives the custom loss's
+parameter gradient. The numeric values of $H$ and $C$ do not need to match; the optimizer uses their
+parameter gradients, which do match.
+
+This equality requires both server passes to use the same model parameters. Normal sequential use
+does this: wait for `forward_backward_custom` to finish, and only then call `optim_step`.
 
 ---
 
