@@ -203,6 +203,12 @@ model whose `config.json` does not match its real architecture is rejected
 with the unmatched names, instead of silently training only part of the
 intended modules.
 
+For the same reason, `train_unembed=True` is rejected on Qwen-family models:
+TuFT has no Qwen unembed modules to train, while Tinker's hosted service
+adapts `embed_tokens` there, so silently accepting the flag would hide a real
+behavior difference. The SDK defaults the flag to true, so pass
+`train_unembed=False` explicitly when training Qwen models.
+
 ---
 
 ## Troubleshooting

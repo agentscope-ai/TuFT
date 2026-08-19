@@ -142,7 +142,7 @@ def train_lora(service_client, tokenizer, train_dataset, test_examples):
         rank=LORA_RANK,
         train_mlp=True,
         train_attn=True,
-        train_unembed=True,
+        train_unembed=False,
     )
     print(f"  rank={LORA_RANK}, steps={NUM_STEPS}, batch={BATCH_SIZE}, lr={LEARNING_RATE}")
 

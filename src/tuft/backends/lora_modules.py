@@ -18,7 +18,9 @@ MODULE_MAP = {
     "qwen": {
         "attn": ["q_proj", "k_proj", "v_proj", "o_proj"],
         "mlp": ["gate_proj", "up_proj", "down_proj"],
-        "unembed": [],  # Qwen's unembed group is intentionally unsupported.
+        # Intentionally empty: TuFT does not support LoRA on Qwen embedding or
+        # unembedding weights, and the controller rejects train_unembed=True.
+        "unembed": [],
     },
 }
 
@@ -167,6 +169,20 @@ def achievable_target_module_sets(
                 if modules and modules not in achievable:
                     achievable.append(modules)
     return achievable
+
+
+def unembed_target_modules(model_path: str) -> list[str] | None:
+    """The unembed module group for the model's series, or None when unknown.
+
+    An empty list means the series is known and has no unembed modules to
+    train. The controller rejects train_unembed=True for those models instead
+    of accepting a request that changes nothing.
+    """
+
+    series, _ = resolve_model_series_and_architecture(model_path)
+    if series is None:
+        return None
+    return list(MODULE_MAP[series]["unembed"])
 
 
 def find_unmatched_target_modules(

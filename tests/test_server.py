@@ -100,7 +100,9 @@ def test_training_and_sampling_round_trip(server_endpoint: str) -> None:
         assert capabilities.supported_models, "server did not report supported models"
         base_model = capabilities.supported_models[0].model_name or "Qwen/Qwen3-0.6B"
 
-        training_client = service_client.create_lora_training_client(base_model=base_model, rank=8)
+        training_client = service_client.create_lora_training_client(
+            base_model=base_model, rank=8, train_unembed=False
+        )
         datum = types.Datum(
             model_input=types.ModelInput.from_ints([11, 12, 13, 14]),
             loss_fn_inputs={
@@ -218,7 +220,9 @@ def test_forward_backward_custom_round_trip(server_endpoint: str) -> None:
     try:
         capabilities = service_client.get_server_capabilities()
         base_model = capabilities.supported_models[0].model_name or "Qwen/Qwen3-0.6B"
-        training_client = service_client.create_lora_training_client(base_model=base_model, rank=8)
+        training_client = service_client.create_lora_training_client(
+            base_model=base_model, rank=8, train_unembed=False
+        )
 
         # One datum without weights (the SDK zero-fills them for the forward
         # pass) and one with explicit weights (forwarded as-is); distinct

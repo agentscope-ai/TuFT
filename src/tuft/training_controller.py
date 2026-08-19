@@ -837,7 +837,19 @@ class TrainingController:
         if model_config is None:
             raise UnknownModelException(model_name=base_model)
         if model_config.training_backend == "fsdp" and model_config.fsdp_qv_only:
+            # fsdp_qv_only is a documented override of all client modifiers.
             return list(FSDP_QV_TARGET_MODULES)
+        if lora_config.train_unembed:
+            from .backends.lora_modules import unembed_target_modules
+
+            if unembed_target_modules(str(model_config.model_path)) == []:
+                raise InvalidRequestException(
+                    f"train_unembed=True has no effect on base model {base_model}: TuFT "
+                    "does not support LoRA on the Qwen embedding or unembedding weights, "
+                    "and vLLM could not serve such an adapter. Tinker's hosted service "
+                    "adapts embed_tokens here, so results would differ from Tinker. Set "
+                    "train_unembed=False to create the run without it."
+                )
         if model_config.training_backend == "fsdp" and model_config.fsdp_target_modules is not None:
             # Persist the explicit slot geometry. FSDPTrainingBackend separately
             # rejects resolvable client modifiers that request a different set.

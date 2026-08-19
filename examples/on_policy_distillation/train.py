@@ -220,7 +220,7 @@ def main() -> None:
         rank=args.lora_rank,
         train_mlp=True,
         train_attn=True,
-        train_unembed=True,
+        train_unembed=False,
     )
     train_sp = types.SamplingParams(max_tokens=args.max_new_tokens, temperature=args.temperature)
     print(

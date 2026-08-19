@@ -205,7 +205,7 @@ def test_training():
         rank=8,
         train_mlp=True,
         train_attn=True,
-        train_unembed=True,
+        train_unembed=False,
     )
     print("  Created LoRA training client (rank=8)")
 
@@ -282,7 +282,7 @@ def test_inference_after_training():
         rank=8,
         train_mlp=True,
         train_attn=True,
-        train_unembed=True,
+        train_unembed=False,
     )
 
     # Save weights for sampler
@@ -337,7 +337,7 @@ def test_oai_lora_dp_routing():
         rank=8,
         train_mlp=True,
         train_attn=True,
-        train_unembed=True,
+        train_unembed=False,
     )
     save_result = training_client.save_weights_for_sampler(name="dp-oai-lora-test").result()
     tinker_path = save_result.path

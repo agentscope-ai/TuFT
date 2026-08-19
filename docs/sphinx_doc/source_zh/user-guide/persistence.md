@@ -191,6 +191,11 @@ HF 后端在创建适配器时检查；FSDP 后端在 worker 启动时检查槽�
 `config.json` 与真实架构不符，请求会被拒绝并列出未匹配的模块名，而不是只训练
 其中存在的部分模块。
 
+出于同样的原因，在 Qwen 系列模型上设置 `train_unembed=True` 会被拒绝：TuFT
+没有可训练的 Qwen unembed 模块，而 Tinker 官方服务在这些模型上会调整
+`embed_tokens`，静默接受该标志会掩盖真实的行为差异。SDK 默认该标志为 true，
+因此训练 Qwen 模型时请显式传入 `train_unembed=False`。
+
 ---
 
 ## 故障排除
