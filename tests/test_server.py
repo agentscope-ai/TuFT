@@ -192,3 +192,110 @@ def test_training_and_sampling_round_trip(server_endpoint: str) -> None:
         assert any(ckpt.public for ckpt in all_checkpoints.checkpoints)
     finally:
         service_client.holder.close()
+
+
+@pytest.mark.integration
+def test_forward_backward_custom_round_trip(server_endpoint: str) -> None:
+    """Client-defined losses via the pinned SDK against an unmodified server.
+
+    ``forward_backward_custom`` lowers onto two allowlisted ``cross_entropy``
+    requests (a log-prob forward, then a backward whose weights carry the
+    client-side gradients), so the server needs no custom-loss enum for it.
+    This drives the real SDK entry point end to end over the protobuf wire
+    protocol and checks the parts the client's autograd relies on: per-datum
+    log-prob alignment, custom metrics surfacing on the combined future, and a
+    normal optim_step afterwards.
+    """
+    import math
+
+    import torch
+
+    service_client = ServiceClient(
+        api_key="tml-test-key-2",  # pragma: allowlist secret
+        base_url=server_endpoint,
+        timeout=CPU_TEST_TIMEOUT,
+    )
+    try:
+        capabilities = service_client.get_server_capabilities()
+        base_model = capabilities.supported_models[0].model_name or "Qwen/Qwen3-0.6B"
+        training_client = service_client.create_lora_training_client(base_model=base_model, rank=8)
+
+        # One datum without weights (the SDK zero-fills them for the forward
+        # pass) and one with explicit weights (forwarded as-is); distinct
+        # lengths make any row misalignment visible.
+        data = [
+            types.Datum(
+                model_input=types.ModelInput.from_ints([11, 12, 13, 14]),
+                loss_fn_inputs={
+                    "target_tokens": types.TensorData(
+                        data=[21, 22, 23, 24], dtype="int64", shape=[4]
+                    ),
+                },
+            ),
+            types.Datum(
+                model_input=types.ModelInput.from_ints([15, 16, 17]),
+                loss_fn_inputs={
+                    "target_tokens": types.TensorData(data=[25, 26, 27], dtype="int64", shape=[3]),
+                    "weights": types.TensorData(data=[1.0, 1.0, 0.0], dtype="float32", shape=[3]),
+                },
+            ),
+        ]
+
+        seen_shapes: list[tuple[int, ...]] = []
+
+        def dpo_style_loss(loss_data, logprobs_list):
+            seen_shapes.extend(tuple(lp.shape) for lp in logprobs_list)
+            assert len(loss_data) == len(logprobs_list)
+            chosen, rejected = logprobs_list[0].sum(), logprobs_list[1].sum()
+            loss = -torch.nn.functional.logsigmoid(0.5 * (chosen - rejected))
+            return loss, {"custom_dpo:sum": float(loss.item())}
+
+        result = training_client.forward_backward_custom(data, dpo_style_loss).result(
+            timeout=CPU_TEST_TIMEOUT
+        )
+
+        # The callback saw one log-prob row per datum, in order and trimmed to
+        # each datum's own length.
+        assert seen_shapes == [(4,), (3,)]
+        # Client-side metrics are merged into the backward pass's result, next
+        # to the server's own metrics for the surrogate loss.
+        assert math.isfinite(result.metrics["custom_dpo:sum"])
+        assert "loss:sum" in result.metrics
+        assert len(result.loss_fn_outputs) == len(data)
+
+        optim_result = training_client.optim_step(types.AdamParams(learning_rate=1e-3)).result(
+            timeout=CPU_TEST_TIMEOUT
+        )
+        assert optim_result is not None
+
+        # The SDK validates inputs before anything reaches the server: custom
+        # losses accept only target_tokens and weights per datum.
+        bad_datum = types.Datum(
+            model_input=types.ModelInput.from_ints([11, 12]),
+            loss_fn_inputs={
+                "target_tokens": types.TensorData(data=[21, 22], dtype="int64", shape=[2]),
+                "advantages": types.TensorData(data=[1.0, 1.0], dtype="float32", shape=[2]),
+            },
+        )
+        with pytest.raises(ValueError, match="advantages"):
+            training_client.forward_backward_custom([bad_datum], dpo_style_loss)
+
+        # A callback failure surfaces client-side as well.
+        def broken_loss(loss_data, logprobs_list):
+            raise RuntimeError("client callback exploded")
+
+        with pytest.raises(RuntimeError, match="client callback exploded"):
+            training_client.forward_backward_custom(data, broken_loss)
+
+        # The failed callback happened after pass 1 consumed a sequence ID. A
+        # subsequent valid request must still run, proving that the abandoned
+        # custom step did not strand the server-side sequence executor.
+        recovered = training_client.forward_backward_custom(data, dpo_style_loss).result(
+            timeout=CPU_TEST_TIMEOUT
+        )
+        assert math.isfinite(recovered.metrics["custom_dpo:sum"])
+        training_client.optim_step(types.AdamParams(learning_rate=1e-3)).result(
+            timeout=CPU_TEST_TIMEOUT
+        )
+    finally:
+        service_client.holder.close()

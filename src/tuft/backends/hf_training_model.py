@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import shutil
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Callable, Dict
 
@@ -438,36 +439,40 @@ class HFTrainingModel:
         attention_mask = attention_mask.to(device)
         position_ids = position_ids.to(device)
 
-        # Forward pass
-        outputs = self.model(
-            input_ids=input_ids_padded,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            return_dict=True,
-        )
+        # Forward-only requests (Tinker `forward`, including the first pass of the
+        # SDK's forward_backward_custom) never call backward, so skip building the
+        # autograd graph. Matches the FSDP engine's forward_only path.
+        grad_context = nullcontext() if backward else torch.no_grad()
+        with grad_context:
+            outputs = self.model(
+                input_ids=input_ids_padded,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                return_dict=True,
+            )
 
-        if loss_fn_config is None:
-            loss_fn_config = {}
+            if loss_fn_config is None:
+                loss_fn_config = {}
 
-        logits = outputs.logits
-        del outputs
+            logits = outputs.logits
+            del outputs
 
-        if "temperature" in loss_fn_config:
-            temperature = loss_fn_config["temperature"]
-            logits = logits / temperature
+            if "temperature" in loss_fn_config:
+                temperature = loss_fn_config["temperature"]
+                logits = logits / temperature
 
-        loss_fn_inputs = self._prepare_loss_fn_inputs(data, client_keys=client_keys)
-        target_tokens = loss_fn_inputs["target_tokens"]
+            loss_fn_inputs = self._prepare_loss_fn_inputs(data, client_keys=client_keys)
+            target_tokens = loss_fn_inputs["target_tokens"]
 
-        target_logprobs = self._compute_logprobs_from_target_tokens(logits, target_tokens)
-        del logits
+            target_logprobs = self._compute_logprobs_from_target_tokens(logits, target_tokens)
+            del logits
 
-        loss_fn_inputs["target_logprobs"] = target_logprobs
-        loss, metric = loss_fn_callable(loss_fn_inputs, loss_fn_config)
+            loss_fn_inputs["target_logprobs"] = target_logprobs
+            loss, metric = loss_fn_callable(loss_fn_inputs, loss_fn_config)
 
-        # Backward with gradient accumulation
-        if backward:
-            loss.backward(retain_graph=False)
+            # Backward with gradient accumulation
+            if backward:
+                loss.backward(retain_graph=False)
 
         unpaded_logprobs = self._unpad_tensor(
             target_logprobs.detach(),
