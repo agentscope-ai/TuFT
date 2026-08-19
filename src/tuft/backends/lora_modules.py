@@ -29,7 +29,13 @@ MODULE_MAP = {
 # text DeltaNet projections and cannot match similarly named modules in the
 # multimodal vision encoder.
 #
-# Adding these modules changed the resolved target list for Qwen3.5-based
+# Tinker's public ``train_attn`` geometry covers the Q/K/V, Z, and output
+# projections. Its Qwen3.5 backend represents Q/K/V separately, while HF
+# exposes one fused ``in_proj_qkv`` module. The recurrent A/B gate projections
+# are supported as an operator opt-in but are intentionally not part of the
+# default, so TuFT's public defaults match Tinker's API.
+#
+# Adding the default modules changed the resolved target list for Qwen3.5-based
 # models (issue #149). Module lists must match exactly, so LoRA state saved
 # before the change is rejected; ``gated_deltanet_mismatch_hint`` explains
 # why in those errors.
@@ -48,9 +54,21 @@ QWEN3_5_GATED_DELTANET_TARGET_MODULES = [
     "linear_attn.out_proj",
 ]
 
+QWEN3_5_DEFAULT_GATED_DELTANET_TARGET_MODULES = [
+    "linear_attn.in_proj_qkv",
+    "linear_attn.in_proj_z",
+    "linear_attn.out_proj",
+]
+
+QWEN3_5_OPTIONAL_GATE_TARGET_MODULES = [
+    "linear_attn.in_proj_b",
+    "linear_attn.in_proj_a",
+]
+
 ARCHITECTURE_MODULE_MAP = {
     "qwen3_5": {
-        "attn": QWEN3_5_GATED_DELTANET_TARGET_MODULES,
+        "attn": QWEN3_5_DEFAULT_GATED_DELTANET_TARGET_MODULES,
+        "attn_full": QWEN3_5_GATED_DELTANET_TARGET_MODULES,
     },
 }
 
@@ -62,12 +80,15 @@ def _assemble_target_modules(
     train_attn: bool,
     train_mlp: bool,
     train_unembed: bool,
+    qwen_gated_deltanet_full_lora: bool = False,
 ) -> list[str]:
     target_modules: list[str] = []
     if train_attn:
         target_modules.extend(MODULE_MAP[series]["attn"])
         if architecture in ARCHITECTURE_MODULE_MAP:
-            target_modules.extend(ARCHITECTURE_MODULE_MAP[architecture]["attn"])
+            architecture_modules = ARCHITECTURE_MODULE_MAP[architecture]
+            key = "attn_full" if qwen_gated_deltanet_full_lora else "attn"
+            target_modules.extend(architecture_modules[key])
     if train_mlp:
         target_modules.extend(MODULE_MAP[series]["mlp"])
     if train_unembed:
@@ -81,6 +102,7 @@ def resolve_target_modules(
     train_attn: bool,
     train_mlp: bool,
     train_unembed: bool,
+    qwen_gated_deltanet_full_lora: bool = False,
 ) -> list[str]:
     """Resolve public LoRA modifier flags into concrete module names."""
 
@@ -94,10 +116,16 @@ def resolve_target_modules(
         train_attn=train_attn,
         train_mlp=train_mlp,
         train_unembed=train_unembed,
+        qwen_gated_deltanet_full_lora=qwen_gated_deltanet_full_lora,
     )
 
 
-def get_target_modules(model_path: str, lora_config: LoraConfig) -> list[str]:
+def get_target_modules(
+    model_path: str,
+    lora_config: LoraConfig,
+    *,
+    qwen_gated_deltanet_full_lora: bool = False,
+) -> list[str]:
     """Resolve a Tinker ``LoraConfig`` using the shared model-series map."""
 
     return resolve_target_modules(
@@ -105,10 +133,15 @@ def get_target_modules(model_path: str, lora_config: LoraConfig) -> list[str]:
         train_attn=lora_config.train_attn,
         train_mlp=lora_config.train_mlp,
         train_unembed=lora_config.train_unembed,
+        qwen_gated_deltanet_full_lora=qwen_gated_deltanet_full_lora,
     )
 
 
-def achievable_target_module_sets(model_path: str) -> list[list[str]] | None:
+def achievable_target_module_sets(
+    model_path: str,
+    *,
+    qwen_gated_deltanet_full_lora: bool = False,
+) -> list[list[str]] | None:
     """Every distinct module list client LoRA flags can produce.
 
     Returns None when the model series is unknown — then an explicit server
@@ -129,6 +162,7 @@ def achievable_target_module_sets(model_path: str) -> list[list[str]] | None:
                     train_attn=train_attn,
                     train_mlp=train_mlp,
                     train_unembed=train_unembed,
+                    qwen_gated_deltanet_full_lora=qwen_gated_deltanet_full_lora,
                 )
                 if modules and modules not in achievable:
                     achievable.append(modules)
@@ -140,19 +174,27 @@ def gated_deltanet_mismatch_hint(
 ) -> str | None:
     """Explain module-list mismatches caused by the Qwen3.5 change.
 
-    Returns a notice when the two sets differ only by (a subset of) the
-    Qwen3.5 Gated DeltaNet modules — the sign of LoRA state or server
-    config saved before issue #149 added those modules — and None for every
+    Returns a notice when the two sets differ only by Qwen3.5 Gated DeltaNet
+    modules, either because one side predates issue #149 or because the two
+    sides disagree on the optional A/B gate coverage. Returns None for every
     other mismatch.
     """
 
     difference = set(actual_modules) ^ set(expected_modules)
     if not difference or not difference <= set(QWEN3_5_GATED_DELTANET_TARGET_MODULES):
         return None
+    if difference <= set(QWEN3_5_OPTIONAL_GATE_TARGET_MODULES):
+        return (
+            "The two module sets differ only by the optional linear_attn.in_proj_a/b "
+            "Gated DeltaNet gate modules. Configure qwen_gated_deltanet_full_lora "
+            "consistently on the source and destination; changing it requires a new "
+            "training run."
+        )
     return (
         "The two module sets differ only by the linear_attn.* modules of the "
-        "Qwen3.5 Gated DeltaNet layers. This TuFT release added those modules "
-        "to the LoRA target list for Qwen3.5-based models (issue #149), so "
+        "Qwen3.5 Gated DeltaNet layers. This TuFT release added the default "
+        "Q/K/V, Z, and output modules to the LoRA target list for Qwen3.5-based "
+        "models (issue #149), so "
         "checkpoints and training runs from before the change no longer match. "
         "Create a new training run to continue."
     )

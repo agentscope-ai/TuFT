@@ -29,6 +29,7 @@ supported_models:
     # sampling_max_model_len: 4096   # cap vLLM context to save KV-cache memory
     # training_backend: fsdp         # multi-GPU training (also set launch.py --gpu H100:N)
     # lora_alpha_ratio: 2            # lora_alpha = rank * ratio; set 1 for the old "hf" scaling
+    # qwen_gated_deltanet_full_lora: false # add Qwen3.5 A/B gate LoRA beyond Tinker defaults
     # fsdp_qv_only: false             # true intentionally uses only q_proj and v_proj
     # fsdp_target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
     # fsdp_rank_slots: {8: 8, 16: 2} # fewer concurrent runs, less preallocated memory

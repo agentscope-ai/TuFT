@@ -97,6 +97,8 @@ def build_peft_lora_config(
     model_path: str,
     lora_config: TinkerLoraConfig,
     lora_alpha_ratio: int = DEFAULT_LORA_ALPHA_RATIO,
+    *,
+    qwen_gated_deltanet_full_lora: bool = False,
 ) -> LoraConfig:
     """Translate a Tinker ``LoraConfig`` into the peft config for one adapter.
 
@@ -107,7 +109,11 @@ def build_peft_lora_config(
     """
     return LoraConfig(
         r=lora_config.rank,
-        target_modules=get_target_modules(model_path, lora_config),
+        target_modules=get_target_modules(
+            model_path,
+            lora_config,
+            qwen_gated_deltanet_full_lora=qwen_gated_deltanet_full_lora,
+        ),
         lora_alpha=compute_lora_alpha(lora_config.rank, lora_alpha_ratio),
     )
 
@@ -159,6 +165,7 @@ class HFTrainingModel:
                     str(self.config.model_path),
                     lora_config,
                     self.config.lora_alpha_ratio,
+                    qwen_gated_deltanet_full_lora=self.config.qwen_gated_deltanet_full_lora,
                 )
                 span.set_attribute("tuft.lora_alpha", peft_config.lora_alpha)
 

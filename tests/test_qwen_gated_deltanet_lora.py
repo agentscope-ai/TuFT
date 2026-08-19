@@ -28,6 +28,7 @@ from tuft.backends.fsdp_training_backend import FSDPTrainingBackend, _config_to_
 from tuft.backends.hf_training_model import build_peft_lora_config
 from tuft.backends.lora_modules import (
     MODULE_MAP,
+    QWEN3_5_DEFAULT_GATED_DELTANET_TARGET_MODULES,
     QWEN3_5_GATED_DELTANET_TARGET_MODULES,
     gated_deltanet_mismatch_hint,
     get_target_modules,
@@ -40,6 +41,12 @@ from tuft.training_controller import TrainingController, TrainingRunRecord
 
 
 QWEN_TEXT_TARGETS = [
+    *MODULE_MAP["qwen"]["attn"],
+    *QWEN3_5_DEFAULT_GATED_DELTANET_TARGET_MODULES,
+    *MODULE_MAP["qwen"]["mlp"],
+]
+
+QWEN_FULL_TEXT_TARGETS = [
     *MODULE_MAP["qwen"]["attn"],
     *QWEN3_5_GATED_DELTANET_TARGET_MODULES,
     *MODULE_MAP["qwen"]["mlp"],
@@ -174,10 +181,55 @@ def test_qwen_gated_deltanet_targets_cover_text_and_exclude_vision(
     full_layers = num_hidden_layers // 4
     linear_layers = num_hidden_layers - full_layers
     assert len(full_attention) == full_layers * 4
-    assert len(linear_attention) == linear_layers * 5
+    assert len(linear_attention) == linear_layers * 3
     assert len(mlp) == num_hidden_layers * 3
     assert vision == []
     assert len(wrapped) == len(full_attention) + len(linear_attention) + len(mlp)
+    assert not any(name.endswith((".in_proj_a", ".in_proj_b")) for name in wrapped)
+
+
+def test_qwen_full_gated_deltanet_lora_is_an_hf_fsdp_aligned_opt_in(tmp_path):
+    """Operators can retain A/B gate adapters without changing public defaults."""
+
+    model_dir = tmp_path / "model"
+    _write_qwen3_5_config(model_dir)
+    public_config = types.LoraConfig(
+        rank=2,
+        train_attn=True,
+        train_mlp=True,
+        train_unembed=False,
+    )
+
+    hf_config = build_peft_lora_config(
+        str(model_dir),
+        public_config,
+        qwen_gated_deltanet_full_lora=True,
+    )
+    fsdp_config = ModelConfig(
+        model_name="qwen",
+        model_path=model_dir,
+        max_model_len=1024,
+        max_lora_rank=2,
+        training_backend="fsdp",
+        fsdp_train_attn=True,
+        fsdp_train_mlp=True,
+        fsdp_train_unembed=False,
+        qwen_gated_deltanet_full_lora=True,
+    )
+    fsdp_targets = _config_to_worker_dict(fsdp_config)["slot_config"]["target_modules"]
+
+    assert hf_config.target_modules is not None
+    assert set(hf_config.target_modules) == set(fsdp_targets) == set(QWEN_FULL_TEXT_TARGETS)
+
+    peft_model = get_peft_model(_tiny_qwen3_5(4), hf_config)
+    wrapped = _wrapped_lora_modules(peft_model)
+    linear_attention = [name for name in wrapped if ".linear_attn." in name]
+    vision = [name for name in wrapped if ".visual." in name]
+
+    assert len(linear_attention) == 3 * 5
+    assert any(name.endswith(".in_proj_a") for name in linear_attention)
+    assert any(name.endswith(".in_proj_b") for name in linear_attention)
+    assert vision == []
 
 
 def test_qwen_gated_deltanet_adapter_metadata_and_weights_round_trip(tmp_path):
@@ -319,7 +371,7 @@ def test_qwen35_moe_lora_trains_shared_expert_and_skips_routed_experts(tmp_path)
     shared_expert = [name for name in wrapped if ".shared_expert." in name]
 
     assert len(full_attention) == 1 * 4
-    assert len(linear_attention) == 3 * 5
+    assert len(linear_attention) == 3 * 3
     assert len(shared_expert) == 4 * 3
     assert len(wrapped) == len(full_attention) + len(linear_attention) + len(shared_expert)
     assert not any(name.endswith(".mlp.gate") for name in wrapped)
@@ -370,6 +422,10 @@ def test_gated_deltanet_hint_fires_only_when_linear_attn_modules_differ():
     assert hint is not None
     assert "Gated DeltaNet" in hint
     assert "#149" in hint
+
+    full_hint = gated_deltanet_mismatch_hint(QWEN_TEXT_TARGETS, QWEN_FULL_TEXT_TARGETS)
+    assert full_hint is not None
+    assert "qwen_gated_deltanet_full_lora" in full_hint
 
     # Equal sets, and mismatches not caused by linear_attn.*, get no hint.
     assert gated_deltanet_mismatch_hint(QWEN_TEXT_TARGETS, QWEN_TEXT_TARGETS) is None
@@ -451,8 +507,23 @@ def test_outdated_fsdp_target_modules_fail_at_startup(tmp_path):
     assert "cannot be requested by any client" in message
     assert "Gated DeltaNet" in message
 
-    # The new list, and custom lists for unknown model families, still boot.
+    # The Tinker-compatible default list, the full-coverage opt-in, and custom
+    # lists for unknown model families still boot.
     FSDPTrainingBackend(stale.model_copy(update={"fsdp_target_modules": list(QWEN_TEXT_TARGETS)}))
+    full_without_opt_in = stale.model_copy(
+        update={"fsdp_target_modules": list(QWEN_FULL_TEXT_TARGETS)}
+    )
+    with pytest.raises(ValueError, match="qwen_gated_deltanet_full_lora"):
+        FSDPTrainingBackend(full_without_opt_in)
+
+    FSDPTrainingBackend(
+        stale.model_copy(
+            update={
+                "fsdp_target_modules": list(QWEN_FULL_TEXT_TARGETS),
+                "qwen_gated_deltanet_full_lora": True,
+            }
+        )
+    )
     FSDPTrainingBackend(
         ModelConfig(
             model_name="custom",

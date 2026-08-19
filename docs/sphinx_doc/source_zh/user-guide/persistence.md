@@ -165,7 +165,8 @@ FSDP 检查点只能加载到有效目标模块与检查点及服务器预分配
 
 **破坏性变更：Qwen3.5 系列模型的 LoRA 目标模块。** 修复 issue #149 时，
 Qwen3.5 系列模型（即模型类型为 `qwen3_5` 的模型，Qwen3.6 和 Qwen3.8 也使用该类型）的
-LoRA 目标模块列表新增了 `linear_attn.*` 模块。在此之前保存的检查点和训练运行
+LoRA 目标模块列表新增了与 Tinker 兼容的 `linear_attn.in_proj_qkv`、
+`linear_attn.in_proj_z` 和 `linear_attn.out_proj` 模块。在此之前保存的检查点和训练运行
 使用旧的、更短的列表，而两份列表必须完全一致。升级后：
 
 - 这些模型的旧检查点无法加载。
@@ -174,6 +175,11 @@ LoRA 目标模块列表新增了 `linear_attn.*` 模块。在此之前保存的�
   退出，错误信息会说明如何修改配置。
 
 每条错误信息都会指出原因是这项变更。要继续训练，请创建新的训练运行。
+
+在模型配置中设置 `qwen_gated_deltanet_full_lora: true`，可以额外为
+`linear_attn.in_proj_a` 和 `linear_attn.in_proj_b` 添加 LoRA。此运维侧选项同时应用于
+HF 和 FSDP，并会产生不同于默认值的检查点模块结构；更改该选项同样需要新建训练运行
+（FSDP 还需要重启）。默认值保持与 Tinker 公共 `train_attn` 行为一致。
 
 对于 MoE 变体（模型类型 `qwen3_5_moe`，如 Qwen3.6-35B-A3B），目标模块列表相同，
 但路由专家是融合参数，没有独立的 `gate_proj`/`up_proj`/`down_proj` 模块。因此

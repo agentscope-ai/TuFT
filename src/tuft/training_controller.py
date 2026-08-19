@@ -845,7 +845,11 @@ class TrainingController:
         from .backends.lora_modules import get_target_modules
 
         try:
-            return get_target_modules(str(model_config.model_path), lora_config)
+            return get_target_modules(
+                str(model_config.model_path),
+                lora_config,
+                qwen_gated_deltanet_full_lora=model_config.qwen_gated_deltanet_full_lora,
+            )
         except ValueError as exc:
             raise InvalidRequestException(
                 f"Cannot resolve effective LoRA target modules for base model {base_model}: "

@@ -270,6 +270,7 @@ def _get_target_modules_from_config(config: ModelConfig) -> List[str]:
             train_attn=getattr(config, "fsdp_train_attn", True),
             train_mlp=getattr(config, "fsdp_train_mlp", True),
             train_unembed=getattr(config, "fsdp_train_unembed", True),
+            qwen_gated_deltanet_full_lora=getattr(config, "qwen_gated_deltanet_full_lora", False),
         )
     except ValueError as exc:
         raise ValueError(
@@ -302,7 +303,10 @@ def _validate_explicit_target_modules(config: ModelConfig) -> None:
     explicit = getattr(config, "fsdp_target_modules", None)
     if explicit is None:
         return
-    achievable = achievable_target_module_sets(str(config.model_path))
+    achievable = achievable_target_module_sets(
+        str(config.model_path),
+        qwen_gated_deltanet_full_lora=config.qwen_gated_deltanet_full_lora,
+    )
     if achievable is None:
         return
     explicit_set = set(explicit)
@@ -1142,7 +1146,11 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             return
         explicit_modules = self.config.fsdp_target_modules
         try:
-            requested_modules = get_target_modules(str(self.config.model_path), lora_config)
+            requested_modules = get_target_modules(
+                str(self.config.model_path),
+                lora_config,
+                qwen_gated_deltanet_full_lora=self.config.qwen_gated_deltanet_full_lora,
+            )
         except ValueError as exc:
             # An explicit operator-provided geometry is the escape hatch for
             # unsupported model families, where client modifiers cannot be
