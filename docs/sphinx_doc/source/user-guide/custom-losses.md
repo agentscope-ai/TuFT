@@ -1,14 +1,15 @@
-# Custom Losses (Client-Side)
+# Custom Losses
 
-This guide documents **client-defined training objectives** on TuFT via the Tinker SDK's
-`forward_backward_custom` — for example a composite objective that mixes **DPO** with a weighted
-**NLL** anchor. Custom losses are supported on both training backends (`hf` and `fsdp`). Your loss
-stays a plain PyTorch function in *your* process, and the server only ever executes its built-in,
-allowlisted loss functions.
+Use the Tinker SDK's `forward_backward_custom` method to write a TuFT training loss as an ordinary
+PyTorch function. For example, you can combine Direct Preference Optimization (DPO) with negative
+log-likelihood (NLL). Custom losses work with both training backends (`hf` and `fsdp`). Your
+function runs in the client process; the server runs only its built-in losses.
 
 ```python
 def my_loss(data: list[types.Datum], logprobs_list: list[torch.Tensor]):
-    loss = ...  # any differentiable torch scalar over logprobs_list
+    # Combine the per-token log-probabilities into one differentiable scalar.
+    loss = ...
+    # Metrics must be plain floats; they are returned with the training result.
     return loss, {"my_metric:sum": loss.item()}
 
 
@@ -20,23 +21,23 @@ training_client.forward_backward_custom(data, my_loss, loss_type_input="logprobs
 ## What You'll Learn
 
 1. When to reach for `forward_backward_custom` instead of a built-in `loss_fn`
-2. The **two-pass mechanism** the SDK lowers it onto, and why the gradients are exact
-3. The **supported inputs** and the datum-level alignment contract
-4. Two minimal runnable callbacks: **weighted-NLL SFT** and a **composite DPO** objective
-5. The **performance cost**, **error behavior**, and **model-state invariants** to rely on
+2. What the client and server do during a custom-loss call
+3. Which inputs are supported and how returned scores line up with each datum
+4. Two runnable examples: supervised fine-tuning and DPO + NLL
+5. The runtime cost, common errors, and what changes during a custom step
 
 ---
 
 ## Table of Contents
 
 1. [When to Use a Custom Loss](#when-to-use-a-custom-loss)
-2. [How It Works: Two-Pass Semantics](#how-it-works-two-pass-semantics)
-3. [Minimal Example: SFT as a Custom Loss](#minimal-example-sft-as-a-custom-loss)
-4. [Composite Example: DPO + NLL](#composite-example-dpo--nll)
+2. [How Custom Losses Work](#how-custom-losses-work)
+3. [Supervised Fine-Tuning Example](#supervised-fine-tuning-example)
+4. [DPO + NLL Example](#dpo--nll-example)
 5. [Supported Inputs](#supported-inputs)
-6. [Performance Costs](#performance-costs)
+6. [Runtime Cost](#runtime-cost)
 7. [Error Handling](#error-handling)
-8. [Model-State Invariants](#model-state-invariants)
+8. [What Changes During a Custom Step](#what-changes-during-a-custom-step)
 9. [Q&A](#qa)
 
 ---
@@ -44,20 +45,18 @@ training_client.forward_backward_custom(data, my_loss, loss_type_input="logprobs
 ## When to Use a Custom Loss
 
 TuFT ships five server-side loss functions — `cross_entropy`, `importance_sampling`, `ppo`,
-`cispo`, and `dro` — selected by name in `forward_backward(data, loss_fn=...)`. The server
-**allowlists these names at the wire protocol** and rejects anything else, so tenants can never
-run arbitrary code on shared infrastructure.
+`cispo`, and `dro` — selected by name in `forward_backward(data, loss_fn=...)`. The server accepts
+only these names, so a client cannot run arbitrary Python on shared infrastructure.
 
 Reach for `forward_backward_custom` when your objective is a differentiable function of the
 **per-token target log-probabilities** but is not one of those five. Typical cases:
 
-- **Preference objectives** (DPO and variants) that couple *pairs* of datums through one scalar.
-- **Composite objectives**, e.g. DPO plus a weighted NLL anchor, or policy/reference
-  log-ratio regularizers.
-- Quick research iterations on bespoke losses without touching (or forking) the server.
+- **Preference losses** such as DPO that compare chosen and rejected responses.
+- **Combined losses**, such as DPO plus weighted NLL or a policy/reference stability term.
+- Quick research iterations on new losses without changing the server.
 
 If your objective *is* one of the built-ins, prefer `forward_backward`: it costs one fewer
-forward pass per step ([details below](#performance-costs)).
+forward pass per step ([details below](#runtime-cost)).
 
 ```{admonition} Requires
 :class: note
@@ -69,41 +68,38 @@ and no new server-side loss names are introduced.
 
 ---
 
-## How It Works: Two-Pass Semantics
+## How Custom Losses Work
 
-`forward_backward_custom(data, loss_fn, loss_type_input="logprobs")` is client-side sugar. The
-SDK lowers it onto **two logical passes** that any TuFT server already serves (each pass may be
-split into multiple requests when the SDK chunks a large batch):
+A **log-probability** is the model's score for a target token, expressed on a logarithmic scale.
+A **gradient** says how the loss changes when a model value changes. TuFT uses these two pieces to
+train with your loss without sending your Python function to the server.
 
-```text
- client                                             TuFT server
- ──────                                             ───────────
- 1. forward(data, loss_fn="cross_entropy")   ──►    forward pass only (no_grad)
-    ◄──  loss_fn_outputs[i]["logprobs"]             per-datum target log-probs
+```{figure} ../../_static/images/custom-loss-two-pass.svg
+:alt: A custom-loss call first reads token log-probabilities from the server, computes the loss and its derivatives on the client, then sends token weights back for a second server pass that accumulates the model gradient.
+:width: 820px
+:align: center
 
- 2. loss, metrics = loss_fn(data, logprobs)         (your PyTorch code, local autograd)
-    grads[i] = ∂loss/∂logprobs[i]
-
- 3. forward_backward(data', "cross_entropy") ──►    forward + backward, accumulates grads
-       with weights[i] = -grads[i]
-    ◄──  ForwardBackwardOutput (+ your metrics merged in by the SDK)
+The client computes the custom loss between two server passes.
 ```
 
-The trick in step 3: the server's cross-entropy is the **linear** form
-`L = -(target_logprobs * weights).sum()`, so `∂L/∂logprobs = -weights = ∂loss/∂logprobs`. By
-the chain rule the backward pass accumulates **exactly** `∂loss/∂θ` — the same gradients you
-would get differentiating your composite loss straight through the model. TuFT's test suite
-pins this equivalence on both backends (`tests/test_custom_loss.py`), including that a custom
-weighted-NLL callback reproduces the built-in `cross_entropy` gradients to numerical precision.
+1. The server scores every target token and returns those log-probabilities. It does not update the
+   model or save gradients in this pass.
+2. Your PyTorch callback combines the scores into one loss. PyTorch calculates how much the loss
+   changes with each returned score.
+3. The client sends those values back as token weights. The server scores the same data again and
+   runs backpropagation, which accumulates the custom loss's model gradient.
 
-Because both passes evaluate the *current* weights, the log-probs your callback sees are exact,
-not stale as long as the model state does not change between them. The SDK awaits the forward
-result before submitting the backward pass, and TuFT executes each training run's requests in
-sequence-ID order.
+The last step works because the server computes
+`helper_loss = -(logprobs * weights).sum()`. The client sets `weights` to the negative derivative
+of your loss with respect to each log-probability. The helper loss therefore produces the same
+model gradient as differentiating your custom loss directly through the model.
+
+Both server passes must use the same model state. Normal sequential use does this: wait for
+`forward_backward_custom` to finish, and only then call `optim_step`.
 
 ---
 
-## Minimal Example: SFT as a Custom Loss
+## Supervised Fine-Tuning Example
 
 Runs against any TuFT server (HF or FSDP backend) — start one as in the
 [Quickstart](../getting-started/quickstart.md), then:
@@ -120,11 +116,12 @@ tokenizer = training_client.get_tokenizer()
 
 
 def make_datum(prompt: str, completion: str) -> types.Datum:
+    # Include special tokens only once, at the start of the full sequence.
     prompt_tokens = tokenizer.encode(prompt, add_special_tokens=True)
     completion_tokens = tokenizer.encode(completion, add_special_tokens=False)
     tokens = prompt_tokens + completion_tokens
-    # Standard next-token setup: model_input = tokens[:-1], target_tokens = tokens[1:],
-    # and weights masking the prompt so only completion tokens are supervised.
+    # Shift by one token: each input position predicts the following target token.
+    # A zero weight ignores prompt tokens; a one trains on completion tokens.
     weights = [0.0] * (len(prompt_tokens) - 1) + [1.0] * len(completion_tokens)
     return types.Datum(
         model_input=types.ModelInput.from_ints(tokens[:-1]),
@@ -145,14 +142,18 @@ def sft_loss(data: list[types.Datum], logprobs_list: list[torch.Tensor]):
     """Batch mean of each example's response-token mean NLL."""
     per_example_nlls = []
     for datum, logprobs in zip(data, logprobs_list, strict=True):
+        # Reuse the datum weights as a binary response-token mask.
         weights = datum.loss_fn_inputs["weights"].to_torch()
+        # Normalize each response separately so long responses do not dominate the batch.
         response_token_count = weights.sum().clamp_min(1)
         per_example_nlls.append(-(logprobs * weights).sum() / response_token_count)
+    # Give every example equal weight, regardless of response length.
     loss = torch.stack(per_example_nlls).mean()
     return loss, {"sft_nll:mean": loss.item()}
 
 
 for _ in range(10):
+    # Accumulate gradients for this batch, then update the LoRA parameters once.
     result = training_client.forward_backward_custom(data, sft_loss).result()
     training_client.optim_step(types.AdamParams(learning_rate=1e-4)).result()
     print(result.metrics["sft_nll:mean"])
@@ -161,59 +162,97 @@ for _ in range(10):
 The callback receives one `logprobs_list[i]` per `data[i]`, **in order**, each a 1-D float32
 tensor of length `len(data[i].model_input)` — `logprobs_list[i][t]` is the log-probability the
 current model assigns to `target_tokens[t]` at position `t`. Your metrics dictionary is merged
-into the returned `result.metrics` alongside the server's metrics for the surrogate loss.
+into the returned `result.metrics` alongside the server's helper-loss metrics.
 
-## Composite Example: DPO + NLL
+---
 
-A cross-example objective no per-datum server loss could express: datums arrive as
-(chosen, rejected) pairs sharing a prompt, and the loss couples each pair through one sigmoid,
-then adds a chosen-response NLL anchor and a squared policy/reference log-ratio regularizer.
-Capture the reference log-probs once before updating the training client; they remain constants
-inside the callback.
+## DPO + NLL Example
+
+Direct Preference Optimization (DPO) trains the model to score a chosen response above a rejected
+response. The original [DPO paper](https://arxiv.org/abs/2305.18290) defines the preference term.
+[Open Character Training](https://arxiv.org/abs/2511.01689) combines it with mean negative
+log-likelihood (NLL) on chosen responses and a small per-token stability penalty. Adding chosen
+NLL to DPO has also been studied as
+[Regularized Preference Optimization](https://arxiv.org/abs/2405.16436).
+
+For each response, the example first sums the difference between the policy and reference
+log-probabilities over response tokens. DPO compares those sums within each chosen/rejected pair.
+The full batch loss is:
+
+```{math}
+L = L_{\mathrm{DPO}} + \lambda_{\mathrm{NLL}} L_{\mathrm{NLL}}
+    + \lambda_{\mathrm{proxy}} L_{\mathrm{proxy}}.
+```
+
+`L_proxy` is the mean squared policy/reference log-ratio on the sampled response tokens. The Open
+Character Training code uses this as a lightweight KL-divergence proxy. It is not the exact KL
+over the full vocabulary, which cannot be computed from target-token log-probabilities alone.
+
+Place datums in `(chosen, rejected)` order and capture the reference log-probabilities once before
+the first optimizer update:
 
 ```python
 import torch.nn.functional as F
 
-# data = [chosen_0, rejected_0, chosen_1, rejected_1, ...], built with make_datum,
-# where weights mask the shared prompt (0.0) and cover the completion (1.0).
+# Each adjacent pair shares a prompt. The chosen response must come first.
+# make_datum gives prompt tokens weight 0.0 and response tokens weight 1.0.
+# data = [chosen_0, rejected_0, chosen_1, rejected_1, ...]
+
+# Snapshot the initial policy. These tensors stay fixed while the policy trains.
 reference_result = training_client.forward(data, "cross_entropy").result()
 reference_logprobs = [
     output["logprobs"].to_torch().float()
     for output in reference_result.loss_fn_outputs
 ]
 
-BETA = 0.1
-NLL_COEF = 0.1
-LOGRATIO_MSE_COEF = 0.001
+# These values reproduce the Open Character Training recipe; tune them for your data.
+BETA = 0.1  # Scales how strongly DPO separates chosen and rejected responses.
+NLL_COEF = 0.1  # Keeps the chosen response likely under the policy.
+KL_PROXY_COEF = 0.001  # Limits drift from the reference on sampled tokens.
 
 
 def dpo_composite_loss(data: list[types.Datum], logprobs_list: list[torch.Tensor]):
-    policy_reference_sums = []
+    if not data or len(data) % 2 != 0:
+        raise ValueError("DPO data must contain one or more complete chosen/rejected pairs")
+
+    sequence_logratios = []
     response_nlls = []
-    squared_logratios = []
+    kl_proxy_terms = []
     for datum, logprobs, reference in zip(
         data, logprobs_list, reference_logprobs, strict=True
     ):
-        weights = datum.loss_fn_inputs["weights"].to_torch()
+        # Select response tokens only; prompt tokens must not affect the loss.
+        response_mask = datum.loss_fn_inputs["weights"].to_torch().bool()
+        if not response_mask.any().item():
+            raise ValueError("each DPO response must contain at least one token")
+
+        # DPO uses the sequence log-ratio: log π_policy(response) - log π_ref(response).
         logratio = logprobs - reference
-        policy_reference_sums.append((logratio * weights).sum())
-        response_nlls.append(-(logprobs * weights).sum() / weights.sum())
-        squared_logratios.append(logratio[weights.bool()].square().mean())
+        sequence_logratios.append(logratio[response_mask].sum())
+
+        # Mean response NLL gives short and long responses equal weight in the batch.
+        response_nlls.append(-logprobs[response_mask].mean())
+
+        # This sampled-token squared log-ratio is the recipe's lightweight KL proxy.
+        kl_proxy_terms.append(logratio[response_mask].square().mean())
 
     dpo_terms = []
-    for i in range(0, len(policy_reference_sums), 2):
-        chosen = policy_reference_sums[i]
-        rejected = policy_reference_sums[i + 1]
-        dpo_terms.append(-F.logsigmoid(BETA * (chosen - rejected)))
+    for pair_start in range(0, len(sequence_logratios), 2):
+        # Even rows are chosen; the following odd rows are rejected.
+        chosen_logratio = sequence_logratios[pair_start]
+        rejected_logratio = sequence_logratios[pair_start + 1]
+        preference_margin = chosen_logratio - rejected_logratio
+        dpo_terms.append(-F.logsigmoid(BETA * preference_margin))
 
+    # Average pair losses, then add NLL on chosen rows only (0, 2, 4, ...).
     dpo = torch.stack(dpo_terms).mean()
     chosen_nll = torch.stack(response_nlls[::2]).mean()
-    logratio_mse = torch.stack(squared_logratios).mean()
-    loss = dpo + NLL_COEF * chosen_nll + LOGRATIO_MSE_COEF * logratio_mse
+    kl_proxy = torch.stack(kl_proxy_terms).mean()
+    loss = dpo + NLL_COEF * chosen_nll + KL_PROXY_COEF * kl_proxy
     return loss, {
         "dpo:mean": dpo.item(),
         "chosen_nll:mean": chosen_nll.item(),
-        "logratio_mse:mean": logratio_mse.item(),
+        "kl_proxy:mean": kl_proxy.item(),
         "composite:mean": loss.item(),
     }
 
@@ -222,15 +261,15 @@ result = training_client.forward_backward_custom(data, dpo_composite_loss).resul
 training_client.optim_step(types.AdamParams(learning_rate=1e-4)).result()
 ```
 
-Here the training client's initial state is the frozen reference. You can instead obtain the
-reference log-probs from a separate model, as long as every reference row stays aligned with
-the corresponding datum and target-token position.
+Here the training client's initial state is the reference. You can instead score the data with a
+separate reference model. In either case, keep every reference row aligned with the same datum and
+target-token position.
 
 ---
 
 ## Supported Inputs
 
-`loss_type_input="logprobs"` is the only supported input space (and the default). Per datum,
+`loss_type_input="logprobs"` is the only supported input type (and the default). Per datum,
 `loss_fn_inputs` may contain **exactly**:
 
 | Key | Required | Dtype | Constraint |
@@ -238,35 +277,35 @@ the corresponding datum and target-token position.
 | `target_tokens` | yes | `int64` | same length as `model_input` |
 | `weights` | no | `float32` | same length as `target_tokens` |
 
-The SDK **rejects any other key client-side** (e.g. `advantages`) before a request is sent.
-`weights` serve two roles: your callback can read them back (e.g. as a prompt mask, as above),
-and the server uses them for the pass-1 surrogate loss metric. When omitted, the SDK sends
-zeros for pass 1; pass 2 always overwrites them with the gradient-derived values.
+The SDK rejects any other key on the client (for example, `advantages`) before sending a request.
+`weights` serve two roles: your callback can read them back (for example, as a prompt mask), and
+the server uses them for the first pass's helper-loss metric. When omitted, the SDK sends zeros
+for the first pass; the second pass replaces them with the gradient-derived values.
 
-Your callback must return a tuple of a **scalar torch tensor** (differentiable w.r.t. the
+Your callback must return a **scalar torch tensor** (differentiable with respect to the
 log-prob tensors) and a **`dict[str, float]`** of metrics. Use names such as `"name:sum"` or
 `"name:mean"` to follow the Tinker metric convention. Custom metrics are computed once over
-the whole logical batch and merged client-side; TuFT does not reduce them across micro-batches.
+the full input batch and merged on the client. TuFT does not combine them again when it splits
+the request into smaller server-side batches.
 
-## Performance Costs
+## Runtime Cost
 
 - **One extra forward pass.** Each `forward_backward_custom` costs *two* forward passes plus
   one backward (versus one forward + one backward for a built-in loss), and one extra
-  round-trip shipping log-probs to the client and weights back. The wall-clock multiplier
-  depends on the model, hardware, batch size, and network latency.
-- **No hidden activation memory.** Pass 1 runs under `torch.no_grad()` on both backends, so it
-  allocates no autograd graph; peak memory is set by the backward pass, same as built-in
-  losses.
-- **Payload size.** Weights are dense float32 per token; for very large batches the SDK
-  automatically chunks requests, and TuFT preserves datum order within and across chunks.
+  round trip to send log-probabilities to the client and weights back. The actual time depends
+  on the model, hardware, batch size, and network latency.
+- **Memory.** The first pass runs under `torch.no_grad()` on both backends, so PyTorch does not
+  save a gradient graph. Peak memory is set by the backward pass, as it is for built-in losses.
+- **Payload size.** The client sends one float32 weight per token. For a large batch, the SDK may
+  split the data into smaller requests while preserving datum order.
 - **FSDP multi-GPU.** Both passes shard the batch across ranks, so each of the two requests
   must satisfy `len(data) >= fsdp_num_gpus` — the same constraint as `forward_backward`.
 
 ## Error Handling
 
-- **Unknown loss names never reach a model.** `/forward_backward` validates `loss_fn` against
-  the built-in allowlist at protobuf decode time and answers **422**; `forward_backward_custom`
-  needs no new names, so unmodified servers accept it.
+- **Unknown loss names never reach a model.** `/forward_backward` accepts only the five built-in
+  names and returns **422** for anything else. `forward_backward_custom` uses an existing built-in
+  loss for its server work, so it needs no new server-side name.
 - **Malformed datum inputs** are rejected with a `loss_fn_inputs`-specific error. Unsupported
   keys are rejected by the SDK before pass 1; the server validates mismatched keys, shapes,
   and dtypes. `target_tokens` and `weights` must match the model-input length.
@@ -275,20 +314,18 @@ the whole logical batch and merged client-side; TuFT does not reduce them across
   the two passes, no harm is done server-side: pass 1 accumulated nothing, so the training
   run's gradient state is unchanged and you can simply retry.
 
-## Model-State Invariants
+## What Changes During a Custom Step
 
-- **Pass 1 is a pure read.** It changes no weights and accumulates no gradients (pinned by
-  tests on both backends). A crashed or abandoned custom step leaves the run exactly as it was.
+- **The first server pass only reads the model.** It changes no weights and accumulates no
+  gradients. If the callback fails, the training run is unchanged and you can retry.
 - **Pass 2 behaves like any `forward_backward`.** Gradients accumulate until the next
-  `optim_step`, so you can mix custom and built-in objectives in one accumulation window (e.g.
-  sum DPO and RL gradients before a single optimizer step).
-- **Don't slip an `optim_step` between the passes.** The SDK orders the forward before the
-  backward, and TuFT executes each run's requests in sequence-ID order — but another thread
-  can enqueue an `optim_step` while the client callback is running. That would make pass 2
-  apply gradients computed against pre-step log-probs. Sequential usage (await the returned
-  future, then call `optim_step`) is safe.
-- **Custom code never runs server-side.** Multi-tenant deployments keep their security
-  boundary: the server executes only its five built-in loss functions.
+  `optim_step`, so you can add custom and built-in gradients before one optimizer update.
+- **Do not update the model between the two passes.** Another thread must not call `optim_step`
+  while the client callback is running. Otherwise, the returned log-probabilities describe the
+  old model while the backward pass uses the new model. Sequential use is safe: wait for the
+  custom call, then update the optimizer.
+- **Custom code never runs server-side.** Shared servers still execute only the five built-in
+  loss functions.
 
 ---
 
@@ -297,7 +334,7 @@ the whole logical batch and merged client-side; TuFT does not reduce them across
 **Q: Which SDK versions work?**
 `forward_backward_custom` with `loss_type_input="logprobs"` is validated against the Tinker SDK
 release TuFT pins (0.25.x, see `pyproject.toml`). The mechanism relies only on the stable
-`forward` / `forward_backward` wire contract.
+`forward` and `forward_backward` requests.
 
 **Q: Can I use inputs other than log-probs (e.g. full logits)?**
 Not currently — `"logprobs"` is the only `loss_type_input` the SDK offers, and TuFT returns
@@ -306,11 +343,10 @@ to a teacher) can often be re-expressed against sampled targets; see the
 [On-Policy Distillation guide](on-policy-distillation.md) for that pattern.
 
 **Q: Do custom metrics aggregate across micro-batches?**
-Your callback sees the *whole* request at once (the server's micro-batching is invisible to
-it), computes metrics once, and the SDK merges them into the final result — no server-side
-reduction is applied to them.
+Your callback sees the full input batch at once, even if the server processes it in smaller
+batches. The callback computes metrics once, and the SDK merges them into the final result.
 
 **Q: How do I debug a suspicious gradient?**
 Compare against the direct computation: run your callback's math straight through a local copy
-of the model (or against `training_client.forward(...)` log-probs) and check the loss values
-match. `tests/test_custom_loss.py` shows the pattern used to validate TuFT itself.
+of the model and compare its parameter gradients with the custom call. For a quick value check,
+run the same math on log-probabilities returned by `training_client.forward(...)`.
