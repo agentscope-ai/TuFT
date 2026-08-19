@@ -66,25 +66,6 @@ the peft `adapter_config.json`, and both must match exactly to load a
 checkpoint. On FSDP, `fsdp_target_parameters` explicitly overrides the
 parameter side the way `fsdp_target_modules` overrides the module side.
 
-### Breaking change: MoE checkpoints from before this release
-
-Before this release (the fix for issue #154), `train_mlp` on these MoE
-models trained only the shared expert and recorded no parameter targets.
-Those checkpoints and training runs no longer match the new geometry:
-
-- Old MoE checkpoints trained with `train_mlp=True` cannot be loaded.
-- Old FSDP training runs on these models are marked corrupted when the
-  server restarts.
-- With persistence enabled, the new `fsdp_target_parameters` model field
-  changes the stored configuration signature, so startup fails with a
-  configuration-mismatch error until you switch to a new namespace or clear
-  the old one (see
-  [Changing config safely](persistence.md#changing-config-safely)).
-
-Each error message names this change as the cause. To continue training,
-create a new training run. Checkpoints trained with `train_mlp=False` are
-unaffected, as are all dense (non-MoE) models.
-
 ## Every target must match a real module
 
 TuFT requires every resolved target module name to match at least one real
