@@ -59,7 +59,7 @@ datum = types.Datum(
 
 ```python
 # 创建 LoRA 训练客户端
-training = client.create_lora_training_client(base_model=base_model, rank=8)
+training = client.create_lora_training_client(base_model=base_model, rank=8, train_unembed=False)
 
 # 运行前向/反向传播
 fwdbwd = training.forward_backward([datum], "cross_entropy").result(timeout=30)

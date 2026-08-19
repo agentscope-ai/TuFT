@@ -138,7 +138,9 @@ from tinker import types
 
 service_client = tinker.ServiceClient(base_url="http://localhost:10610", api_key="local-dev-key")
 base_model = service_client.get_server_capabilities().supported_models[0].model_name
-training_client = service_client.create_lora_training_client(base_model=base_model, rank=8)
+training_client = service_client.create_lora_training_client(
+    base_model=base_model, rank=8, train_unembed=False
+)
 tokenizer = training_client.get_tokenizer()
 
 

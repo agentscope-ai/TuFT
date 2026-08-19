@@ -21,9 +21,9 @@
 <meta content="#ffffff" media="(prefers-color-scheme: light)" name="theme-color"/>
 <meta content="#030711" media="(prefers-color-scheme: dark)" name="theme-color"/>
 <meta content="width=device-width, initial-scale=1" name="viewport"/>
-<title>开发指南 | TuFT</title>
-<meta content="开发指南 | TuFT" property="og:title"/>
-<meta content="开发指南 | TuFT" name="twitter:title"/>
+<title>LoRA 目标模块 | TuFT</title>
+<meta content="LoRA 目标模块 | TuFT" property="og:title"/>
+<meta content="LoRA 目标模块 | TuFT" name="twitter:title"/>
 <link href="../_static/pygments.css?v=03e43079" rel="stylesheet" type="text/css"/>
 <link href="../_static/theme.css?v=d6d7c91b" rel="stylesheet" type="text/css"/>
 <link href="../_static/sphinx-design.min.css?v=95c83b7e" rel="stylesheet" type="text/css"/>
@@ -32,8 +32,8 @@
 <link href="../_static/logo_wo_text.svg" rel="icon"/>
 <link href="../search.html" rel="search" title="搜索"/>
 <link href="../genindex.html" rel="index" title="索引"/>
-<link href="testing.html" rel="next" title="测试指南"/>
-<link href="../user-guide/console.html" rel="prev" title="控制台"/>
+<link href="persistence.html" rel="next" title="持久化"/>
+<link href="countdown-rl.html" rel="prev" title="Countdown 强化学习（RL）"/>
 </head>
 <body :class="{ 'overflow-hidden': showSidebar }" class="min-h-screen font-sans antialiased bg-background text-foreground" x-data="{ showSidebar: false, showScrollTop: false }">
 <div @click.self="showSidebar = false" class="fixed inset-0 z-50 overflow-hidden bg-background/80 backdrop-blur-sm md:hidden" x-cloak="" x-show="showSidebar"></div><div class="relative flex flex-col min-h-screen" id="page"><a class="absolute top-0 left-0 z-[100] block bg-background p-4 text-xl transition -translate-x-full opacity-0 focus:translate-x-0 focus:opacity-100" href="#content">
@@ -103,17 +103,17 @@
 <li class="toctree-l2"><a class="reference internal" href="../deployment/lambda.html">在 Lambda Cloud 上部署</a></li>
 </ul>
 </li>
-<li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="../user-guide/index.html">用户指南<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
-<li class="toctree-l2"><a class="reference internal" href="../user-guide/chat-sft.html">Chat 监督微调（SFT）</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../user-guide/countdown-rl.html">Countdown 强化学习（RL）</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../user-guide/lora-target-modules.html">LoRA 目标模块</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../user-guide/persistence.html">持久化</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../user-guide/telemetry.html">可观测性（OpenTelemetry）</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../user-guide/console.html">控制台</a></li>
+<li class="toctree-l1 current" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="index.html">用户指南<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul class="current" x-show="expanded">
+<li class="toctree-l2"><a class="reference internal" href="chat-sft.html">Chat 监督微调（SFT）</a></li>
+<li class="toctree-l2"><a class="reference internal" href="countdown-rl.html">Countdown 强化学习（RL）</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">LoRA 目标模块</a></li>
+<li class="toctree-l2"><a class="reference internal" href="persistence.html">持久化</a></li>
+<li class="toctree-l2"><a class="reference internal" href="telemetry.html">可观测性（OpenTelemetry）</a></li>
+<li class="toctree-l2"><a class="reference internal" href="console.html">控制台</a></li>
 </ul>
 </li>
-<li class="toctree-l1 current" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="current reference internal expandable" href="#">开发指南<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
-<li class="toctree-l2"><a class="reference internal" href="testing.html">测试指南</a></li>
+<li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="../development/index.html">开发指南<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
+<li class="toctree-l2"><a class="reference internal" href="../development/testing.html">测试指南</a></li>
 </ul>
 </li>
 <li class="toctree-l1"><a class="reference internal" href="../roadmap.html">发展路线图</a></li>
@@ -136,85 +136,86 @@
 <path d="M240 856h120V616h240v240h120V496L480 316 240 496v360Zm-80 80V456l320-240 320 240v480H520V696h-80v240H160Zm320-350Z"></path>
 </svg>
 </a>
-<div class="mr-1">/</div><span aria-current="page" class="font-medium text-foreground overflow-hidden text-ellipsis whitespace-nowrap">开发指南</span>
+<div class="mr-1">/</div><a class="hover:text-foreground overflow-hidden text-ellipsis whitespace-nowrap" href="index.html">用户指南</a>
+<div class="mr-1">/</div><span aria-current="page" class="font-medium text-foreground overflow-hidden text-ellipsis whitespace-nowrap">LoRA 目标模块</span>
 </nav>
 <div id="content" role="main">
+<section id="lora">
+<h1>LoRA 目标模块<a class="headerlink" href="#lora" title="Link to this heading">¶</a></h1>
+<p>本页说明 TuFT 如何把客户端 LoRA 标志（<code class="docutils literal notranslate"><span class="pre">train_attn</span></code>、<code class="docutils literal notranslate"><span class="pre">train_mlp</span></code>、
+<code class="docutils literal notranslate"><span class="pre">train_unembed</span></code>）解析为具体的模块名，以及围绕它们的规则。</p>
 <section id="id1">
-<h1>开发指南<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h1>
-<p>本节涵盖开发环境搭建、测试以及参与 TuFT 贡献。</p>
-<div class="sd-container-fluid sd-sphinx-override sd-mb-4 docutils">
-<div class="sd-row sd-row-cols-1 sd-row-cols-xs-1 sd-row-cols-sm-2 sd-row-cols-md-2 sd-row-cols-lg-2 sd-g-3 sd-g-xs-3 sd-g-sm-3 sd-g-md-3 sd-g-lg-3 docutils">
-<div class="sd-col sd-d-flex-row docutils">
-<div class="sd-card sd-sphinx-override sd-w-100 sd-shadow-none sd-card-hover docutils">
-<div class="sd-card-body docutils">
-<div class="sd-card-title sd-font-weight-bold docutils">
-测试指南</div>
-<p class="sd-card-text">如何在 CPU 和 GPU 上运行测试，包括持久化测试。</p>
-</div>
-<a class="sd-stretched-link sd-hide-link-text reference internal" href="testing.html"><span class="doc">测试指南</span></a></div>
-</div>
-</div>
-</div>
-<section id="id2">
-<h2>设置开发环境<a class="headerlink" href="#id2" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id2'">¶</a></h2>
-<ol class="arabic">
-<li><p>如果尚未安装 <a class="reference external" href="https://github.com/astral-sh/uv">uv</a>，请先安装：</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">curl<span class="w"> </span>-LsSf<span class="w"> </span>https://astral.sh/uv/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>sh
-</span></code></pre></div>
-</div>
-</li>
-<li><p>安装开发依赖：</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">uv<span class="w"> </span>sync<span class="w"> </span>--extra<span class="w"> </span>dev
-</span></code></pre></div>
-</div>
-</li>
-<li><p>设置 pre-commit hooks：</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">uv<span class="w"> </span>run<span class="w"> </span>pre-commit<span class="w"> </span>install
-</span></code></pre></div>
-</div>
-</li>
-</ol>
+<h2>解析方式<a class="headerlink" href="#id1" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id1'">¶</a></h2>
+<p>TuFT 读取模型的 <code class="docutils literal notranslate"><span class="pre">config.json</span></code> 获取模型类型，并把每个标志映射为模块名。对于
+Qwen 和 Llama 模型，<code class="docutils literal notranslate"><span class="pre">train_attn</span></code> 覆盖 <code class="docutils literal notranslate"><span class="pre">q_proj</span></code>/<code class="docutils literal notranslate"><span class="pre">k_proj</span></code>/<code class="docutils literal notranslate"><span class="pre">v_proj</span></code>/<code class="docutils literal notranslate"><span class="pre">o_proj</span></code>，
+<code class="docutils literal notranslate"><span class="pre">train_mlp</span></code> 覆盖 <code class="docutils literal notranslate"><span class="pre">gate_proj</span></code>/<code class="docutils literal notranslate"><span class="pre">up_proj</span></code>/<code class="docutils literal notranslate"><span class="pre">down_proj</span></code>；在 Llama 上，
+<code class="docutils literal notranslate"><span class="pre">train_unembed</span></code> 覆盖 <code class="docutils literal notranslate"><span class="pre">lm_head</span></code>。当本地还没有 <code class="docutils literal notranslate"><span class="pre">config.json</span></code>（例如尚未下载的
+Hugging Face 模型 ID）时，由模型名决定。</p>
+<p>对于 Qwen3.5 系列模型（模型类型 <code class="docutils literal notranslate"><span class="pre">qwen3_5</span></code>，Qwen3.6 和 Qwen3.8 也使用该类型），
+每四个文本层中有三个使用 Gated DeltaNet 而不是完整注意力，因此 <code class="docutils literal notranslate"><span class="pre">train_attn</span></code>
+额外覆盖 <code class="docutils literal notranslate"><span class="pre">linear_attn.in_proj_qkv</span></code>、<code class="docutils literal notranslate"><span class="pre">linear_attn.in_proj_z</span></code> 和
+<code class="docutils literal notranslate"><span class="pre">linear_attn.out_proj</span></code>。</p>
 </section>
-<section id="id3">
-<h2>代码检查和类型检查<a class="headerlink" href="#id3" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id3'">¶</a></h2>
-<p>运行代码检查器：</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">uv<span class="w"> </span>run<span class="w"> </span>ruff<span class="w"> </span>check<span class="w"> </span>.
-</span><span id="line-2">uv<span class="w"> </span>run<span class="w"> </span>ruff<span class="w"> </span>format<span class="w"> </span>.
-</span></code></pre></div>
-</div>
-<p>运行类型检查器：</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">uv<span class="w"> </span>run<span class="w"> </span>pyright
-</span></code></pre></div>
-</div>
-</section>
-<section id="id4">
-<h2>代码风格<a class="headerlink" href="#id4" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id4'">¶</a></h2>
+<section id="qwen3-5">
+<h2>0.2.0 中的破坏性变更：Qwen3.5 系列模型<a class="headerlink" href="#qwen3-5" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#qwen3-5'">¶</a></h2>
+<p>0.2.0 版本（issue #149 的修复）为 Qwen3.5 系列模型的 LoRA 目标模块列表新增了
+与 Tinker 兼容的 <code class="docutils literal notranslate"><span class="pre">linear_attn.in_proj_qkv</span></code>、<code class="docutils literal notranslate"><span class="pre">linear_attn.in_proj_z</span></code> 和
+<code class="docutils literal notranslate"><span class="pre">linear_attn.out_proj</span></code> 模块。0.2.0 之前保存的检查点和训练运行使用旧的、更短的
+列表，而两份列表必须完全一致。升级到 0.2.0 后：</p>
 <ul class="simple">
-<li><p>遵循 PEP 8 指南</p></li>
-<li><p>为所有函数签名使用类型提示</p></li>
-<li><p>为公共 API 编写文档字符串</p></li>
-<li><p>保持行长度在 100 个字符以内</p></li>
+<li><p>这些模型的旧检查点无法加载。</p></li>
+<li><p>服务器重启时，旧的 FSDP 训练运行会被标记为损坏（corrupted）。</p></li>
+<li><p>如果服务器配置中的 <code class="docutils literal notranslate"><span class="pre">fsdp_target_modules</span></code> 仍是旧列表，服务器会在启动时报错
+退出，错误信息会说明如何修改配置。</p></li>
+<li><p>启用持久化时，新增的 <code class="docutils literal notranslate"><span class="pre">qwen_gated_deltanet_full_lora</span></code> 模型字段会改变已存储的
+配置签名，启动会因“配置不匹配”而失败；请切换到新命名空间或清除旧命名空间
+（参见<a class="reference internal" href="persistence.html#id15"><span class="std std-ref">安全更改配置</span></a>）。</p></li>
 </ul>
+<p>每条错误信息都会指出原因是这项变更。要继续训练，请创建新的训练运行。</p>
 </section>
-<section id="pull-request">
-<h2>Pull Request 流程<a class="headerlink" href="#pull-request" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#pull-request'">¶</a></h2>
-<ol class="arabic simple">
-<li><p>Fork 仓库</p></li>
-<li><p>创建功能分支</p></li>
-<li><p>进行更改</p></li>
-<li><p>运行测试和代码检查</p></li>
-<li><p>提交带有清晰描述的 pull request</p></li>
-</ol>
-
+<section id="gated-deltanet">
+<h2>完整 Gated DeltaNet 覆盖（可选项）<a class="headerlink" href="#gated-deltanet" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#gated-deltanet'">¶</a></h2>
+<p>在模型配置中设置 <code class="docutils literal notranslate"><span class="pre">qwen_gated_deltanet_full_lora:</span> <span class="pre">true</span></code>，可以额外为
+<code class="docutils literal notranslate"><span class="pre">linear_attn.in_proj_a</span></code> 和 <code class="docutils literal notranslate"><span class="pre">linear_attn.in_proj_b</span></code> 添加 LoRA。此运维侧选项
+同时应用于 HF 和 FSDP，并会产生不同于默认值的检查点模块结构；更改该选项同样
+需要新建训练运行（FSDP 还需要重启）。默认值保持与 Tinker 公共 <code class="docutils literal notranslate"><span class="pre">train_attn</span></code>
+行为一致。</p>
+</section>
+<section id="moe">
+<h2>MoE 模型<a class="headerlink" href="#moe" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#moe'">¶</a></h2>
+<p>对于 MoE 变体（模型类型 <code class="docutils literal notranslate"><span class="pre">qwen3_5_moe</span></code>，如 Qwen3.6-35B-A3B），目标模块列表相同，
+但路由专家是融合参数，没有独立的 <code class="docutils literal notranslate"><span class="pre">gate_proj</span></code>/<code class="docutils literal notranslate"><span class="pre">up_proj</span></code>/<code class="docutils literal notranslate"><span class="pre">down_proj</span></code> 模块。因此
+<code class="docutils literal notranslate"><span class="pre">train_mlp</span></code> 只会训练共享专家，路由专家保持冻结。vLLM 推理时对相同的模块应用
+LoRA，训练和推理涉及的模块一致。</p>
+<p>这一点与 Tinker 官方服务不同：Tinker 的文档说明 <code class="docutils literal notranslate"><span class="pre">train_mlp</span></code> 覆盖 MoE 层，并为
+每个专家训练一个 LoRA，因此同样的客户端代码在 Tinker 上训练的参数要多得多。
+在 MoE 模型上，两者的训练结果会有差异。</p>
+</section>
+<section id="id2">
+<h2>每个目标都必须匹配真实模块<a class="headerlink" href="#id2" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id2'">¶</a></h2>
+<p>TuFT 要求解析出的每个目标模块名都必须在加载的模型中匹配到至少一个真实模块。
+HF 后端在创建适配器时检查；FSDP 后端在 worker 启动时检查槽位列表。如果模型的
+<code class="docutils literal notranslate"><span class="pre">config.json</span></code> 与真实架构不符，请求会被拒绝并列出未匹配的模块名，而不是只训练
+其中存在的部分模块。</p>
+</section>
+<section id="qwen-train-unembed">
+<h2>Qwen 模型上的 train_unembed<a class="headerlink" href="#qwen-train-unembed" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#qwen-train-unembed'">¶</a></h2>
+<p>TuFT 目前会接受 Qwen 系列模型上的 <code class="docutils literal notranslate"><span class="pre">train_unembed=True</span></code>，但不会添加
+embedding 或 unembedding 目标模块。与 Tinker 官方服务保持一致的
+<code class="docutils literal notranslate"><span class="pre">embed_tokens</span></code> 训练和服务支持跟踪于
+<a class="reference external" href="https://github.com/agentscope-ai/TuFT/issues/153">issue #153</a>，并且依赖于包含 Qwen3.5
+embedding 模块支持的 vLLM 正式发布版。</p>
 </section>
 </section>
 </div></div><aside class="hidden text-sm xl:block" id="right-sidebar">
 <div class="sticky top-16 -mt-10 max-h-[calc(100vh-5rem)] h-full overflow-y-auto pt-6 space-y-2"><p class="font-medium">On this page</p>
 <ul>
-<li><a :data-current="activeSection === '#id2'" class="reference internal" href="#id2">设置开发环境</a></li>
-<li><a :data-current="activeSection === '#id3'" class="reference internal" href="#id3">代码检查和类型检查</a></li>
-<li><a :data-current="activeSection === '#id4'" class="reference internal" href="#id4">代码风格</a></li>
-<li><a :data-current="activeSection === '#pull-request'" class="reference internal" href="#pull-request">Pull Request 流程</a></li>
+<li><a :data-current="activeSection === '#id1'" class="reference internal" href="#id1">解析方式</a></li>
+<li><a :data-current="activeSection === '#qwen3-5'" class="reference internal" href="#qwen3-5">0.2.0 中的破坏性变更：Qwen3.5 系列模型</a></li>
+<li><a :data-current="activeSection === '#gated-deltanet'" class="reference internal" href="#gated-deltanet">完整 Gated DeltaNet 覆盖（可选项）</a></li>
+<li><a :data-current="activeSection === '#moe'" class="reference internal" href="#moe">MoE 模型</a></li>
+<li><a :data-current="activeSection === '#id2'" class="reference internal" href="#id2">每个目标都必须匹配真实模块</a></li>
+<li><a :data-current="activeSection === '#qwen-train-unembed'" class="reference internal" href="#qwen-train-unembed">Qwen 模型上的 train_unembed</a></li>
 </ul>
 </div>
 </aside>

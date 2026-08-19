@@ -86,7 +86,7 @@ training_client = service_client.create_lora_training_client(
     rank=LORA_RANK,
     train_mlp=True,
     train_attn=True,
-    train_unembed=True,
+    train_unembed=False,
 )
 
 fwdbwd = training_client.forward_backward(datums, loss_fn="cross_entropy").result()

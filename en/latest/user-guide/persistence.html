@@ -33,7 +33,7 @@
 <link href="../search.html" rel="search" title="Search"/>
 <link href="../genindex.html" rel="index" title="Index"/>
 <link href="telemetry.html" rel="next" title="Observability (OpenTelemetry)"/>
-<link href="custom-losses.html" rel="prev" title="Custom Losses"/>
+<link href="lora-target-modules.html" rel="prev" title="LoRA Target Modules"/>
 </head>
 <body :class="{ 'overflow-hidden': showSidebar }" class="min-h-screen font-sans antialiased bg-background text-foreground" x-data="{ showSidebar: false, showScrollTop: false }">
 <div @click.self="showSidebar = false" class="fixed inset-0 z-50 overflow-hidden bg-background/80 backdrop-blur-sm md:hidden" x-cloak="" x-show="showSidebar"></div><div class="relative flex flex-col min-h-screen" id="page"><a class="absolute top-0 left-0 z-[100] block bg-background p-4 text-xl transition -translate-x-full opacity-0 focus:translate-x-0 focus:opacity-100" href="#content">
@@ -108,6 +108,7 @@
 <li class="toctree-l2"><a class="reference internal" href="countdown-rl.html">Countdown Reinforcement Learning (RL)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="on-policy-distillation.html">On-Policy Distillation (OPD)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="custom-losses.html">Custom Losses</a></li>
+<li class="toctree-l2"><a class="reference internal" href="lora-target-modules.html">LoRA Target Modules</a></li>
 <li class="toctree-l2 current"><a class="current reference internal" href="#">Persistence</a></li>
 <li class="toctree-l2"><a class="reference internal" href="telemetry.html">Observability (OpenTelemetry)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="console.html">User console</a></li>
@@ -345,6 +346,10 @@ they differ. To load a checkpoint with Q/V-only
 model. This dedicated opt-in intentionally overrides client modifiers and records
 Q/V as the run’s effective geometry. Configuring <code class="docutils literal notranslate"><span class="pre">[q_proj,</span> <span class="pre">v_proj]</span></code> only through
 <code class="docutils literal notranslate"><span class="pre">fsdp_target_modules</span></code> is rejected so this override cannot happen accidentally.</p>
+<p>How client LoRA flags resolve to module names, the 0.2.0 breaking change to
+Qwen3.5 target modules (which makes pre-0.2.0 Qwen3.5 checkpoints unloadable
+and marks old FSDP runs corrupted on restart), and the other target-module
+rules are described in <a class="reference internal" href="lora-target-modules.html"><span class="std std-doc">LoRA Target Modules</span></a>.</p>
 </section>
 </section>
 <hr class="docutils"/>

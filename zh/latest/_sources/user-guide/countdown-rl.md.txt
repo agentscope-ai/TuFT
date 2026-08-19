@@ -58,7 +58,7 @@ training_client = service_client.create_lora_training_client(
     rank=LORA_RANK,
     train_mlp=True,
     train_attn=True,
-    train_unembed=True,
+    train_unembed=False,
 )
 
 # RL 更新使用重要性采样风格的目标：

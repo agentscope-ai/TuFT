@@ -108,6 +108,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../user-guide/countdown-rl.html">Countdown Reinforcement Learning (RL)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../user-guide/on-policy-distillation.html">On-Policy Distillation (OPD)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../user-guide/custom-losses.html">Custom Losses</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user-guide/lora-target-modules.html">LoRA Target Modules</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../user-guide/persistence.html">Persistence</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../user-guide/telemetry.html">Observability (OpenTelemetry)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../user-guide/console.html">User console</a></li>
@@ -196,7 +197,7 @@
 <h2>2. Training<a class="headerlink" href="#training" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#training'">¶</a></h2>
 <p>Create a LoRA training client and perform forward/backward passes with optimizer steps:</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="c1"># Create a LoRA training client</span>
-</span><span id="line-2"><span class="n">training</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">create_lora_training_client</span><span class="p">(</span><span class="n">base_model</span><span class="o">=</span><span class="n">base_model</span><span class="p">,</span> <span class="n">rank</span><span class="o">=</span><span class="mi">8</span><span class="p">)</span>
+</span><span id="line-2"><span class="n">training</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">create_lora_training_client</span><span class="p">(</span><span class="n">base_model</span><span class="o">=</span><span class="n">base_model</span><span class="p">,</span> <span class="n">rank</span><span class="o">=</span><span class="mi">8</span><span class="p">,</span> <span class="n">train_unembed</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
 </span><span id="line-3">
 </span><span id="line-4"><span class="c1"># Run forward/backward pass</span>
 </span><span id="line-5"><span class="n">fwdbwd</span> <span class="o">=</span> <span class="n">training</span><span class="o">.</span><span class="n">forward_backward</span><span class="p">([</span><span class="n">datum</span><span class="p">],</span> <span class="s2">"cross_entropy"</span><span class="p">)</span><span class="o">.</span><span class="n">result</span><span class="p">(</span><span class="n">timeout</span><span class="o">=</span><span class="mi">30</span><span class="p">)</span>

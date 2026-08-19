@@ -33,7 +33,7 @@
 <link href="../search.html" rel="search" title="搜索"/>
 <link href="../genindex.html" rel="index" title="索引"/>
 <link href="telemetry.html" rel="next" title="可观测性（OpenTelemetry）"/>
-<link href="countdown-rl.html" rel="prev" title="Countdown 强化学习（RL）"/>
+<link href="lora-target-modules.html" rel="prev" title="LoRA 目标模块"/>
 </head>
 <body :class="{ 'overflow-hidden': showSidebar }" class="min-h-screen font-sans antialiased bg-background text-foreground" x-data="{ showSidebar: false, showScrollTop: false }">
 <div @click.self="showSidebar = false" class="fixed inset-0 z-50 overflow-hidden bg-background/80 backdrop-blur-sm md:hidden" x-cloak="" x-show="showSidebar"></div><div class="relative flex flex-col min-h-screen" id="page"><a class="absolute top-0 left-0 z-[100] block bg-background p-4 text-xl transition -translate-x-full opacity-0 focus:translate-x-0 focus:opacity-100" href="#content">
@@ -106,6 +106,7 @@
 <li class="toctree-l1 current" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="index.html">用户指南<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul class="current" x-show="expanded">
 <li class="toctree-l2"><a class="reference internal" href="chat-sft.html">Chat 监督微调（SFT）</a></li>
 <li class="toctree-l2"><a class="reference internal" href="countdown-rl.html">Countdown 强化学习（RL）</a></li>
+<li class="toctree-l2"><a class="reference internal" href="lora-target-modules.html">LoRA 目标模块</a></li>
 <li class="toctree-l2 current"><a class="current reference internal" href="#">持久化</a></li>
 <li class="toctree-l2"><a class="reference internal" href="telemetry.html">可观测性（OpenTelemetry）</a></li>
 <li class="toctree-l2"><a class="reference internal" href="console.html">控制台</a></li>
@@ -340,6 +341,9 @@
 检查点，请在目标模型中设置 <code class="docutils literal notranslate"><span class="pre">fsdp_qv_only:</span> <span class="pre">true</span></code>。此专用选项会有意覆盖客户端修饰符，
 并将 Q/V 记录为训练运行的有效模块结构。仅通过 <code class="docutils literal notranslate"><span class="pre">fsdp_target_modules</span></code> 配置
 <code class="docutils literal notranslate"><span class="pre">[q_proj,</span> <span class="pre">v_proj]</span></code> 会被拒绝，以避免意外覆盖客户端请求。</p>
+<p>客户端 LoRA 标志如何解析为模块名、0.2.0 中 Qwen3.5 目标模块的破坏性变更
+（0.2.0 之前的 Qwen3.5 检查点无法加载，旧的 FSDP 训练运行在重启时被标记为
+损坏），以及其他目标模块规则，请参见 <a class="reference internal" href="lora-target-modules.html"><span class="std std-doc">LoRA 目标模块</span></a>。</p>
 </section>
 </section>
 <hr class="docutils"/>

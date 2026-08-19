@@ -108,6 +108,7 @@
 <li class="toctree-l2"><a class="reference internal" href="countdown-rl.html">Countdown Reinforcement Learning (RL)</a></li>
 <li class="toctree-l2 current"><a class="current reference internal" href="#">On-Policy Distillation (OPD)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="custom-losses.html">Custom Losses</a></li>
+<li class="toctree-l2"><a class="reference internal" href="lora-target-modules.html">LoRA Target Modules</a></li>
 <li class="toctree-l2"><a class="reference internal" href="persistence.html">Persistence</a></li>
 <li class="toctree-l2"><a class="reference internal" href="telemetry.html">Observability (OpenTelemetry)</a></li>
 <li class="toctree-l2"><a class="reference internal" href="console.html">User console</a></li>
@@ -291,7 +292,7 @@ and <code class="docutils literal notranslate"><span class="pre">forward_backwar
 </span><span id="line-9"><span class="c1"># Student = a LoRA we train.</span>
 </span><span id="line-10"><span class="n">training</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">create_lora_training_client</span><span class="p">(</span>
 </span><span id="line-11">    <span class="n">base_model</span><span class="o">=</span><span class="n">BASE_MODEL</span><span class="p">,</span> <span class="n">rank</span><span class="o">=</span><span class="n">LORA_RANK</span><span class="p">,</span>
-</span><span id="line-12">    <span class="n">train_mlp</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">train_attn</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">train_unembed</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+</span><span id="line-12">    <span class="n">train_mlp</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">train_attn</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">train_unembed</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
 </span><span id="line-13"><span class="p">)</span>
 </span></code></pre></div>
 </div>

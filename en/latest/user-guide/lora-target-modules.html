@@ -21,9 +21,9 @@
 <meta content="#ffffff" media="(prefers-color-scheme: light)" name="theme-color"/>
 <meta content="#030711" media="(prefers-color-scheme: dark)" name="theme-color"/>
 <meta content="width=device-width, initial-scale=1" name="viewport"/>
-<title>Installation | TuFT</title>
-<meta content="Installation | TuFT" property="og:title"/>
-<meta content="Installation | TuFT" name="twitter:title"/>
+<title>LoRA Target Modules | TuFT</title>
+<meta content="LoRA Target Modules | TuFT" property="og:title"/>
+<meta content="LoRA Target Modules | TuFT" name="twitter:title"/>
 <link href="../_static/pygments.css?v=03e43079" rel="stylesheet" type="text/css"/>
 <link href="../_static/theme.css?v=d6d7c91b" rel="stylesheet" type="text/css"/>
 <link href="../_static/sphinx-design.min.css?v=95c83b7e" rel="stylesheet" type="text/css"/>
@@ -32,8 +32,8 @@
 <link href="../_static/logo_wo_text.svg" rel="icon"/>
 <link href="../search.html" rel="search" title="Search"/>
 <link href="../genindex.html" rel="index" title="Index"/>
-<link href="quickstart.html" rel="next" title="Quickstart"/>
-<link href="index.html" rel="prev" title="Getting Started"/>
+<link href="persistence.html" rel="next" title="Persistence"/>
+<link href="custom-losses.html" rel="prev" title="Custom Losses"/>
 </head>
 <body :class="{ 'overflow-hidden': showSidebar }" class="min-h-screen font-sans antialiased bg-background text-foreground" x-data="{ showSidebar: false, showScrollTop: false }">
 <div @click.self="showSidebar = false" class="fixed inset-0 z-50 overflow-hidden bg-background/80 backdrop-blur-sm md:hidden" x-cloak="" x-show="showSidebar"></div><div class="relative flex flex-col min-h-screen" id="page"><a class="absolute top-0 left-0 z-[100] block bg-background p-4 text-xl transition -translate-x-full opacity-0 focus:translate-x-0 focus:opacity-100" href="#content">
@@ -92,10 +92,10 @@
 <div class="relative overflow-hidden md:overflow-auto my-4 md:my-0">
 <div class="overflow-y-auto h-full w-full relative pr-6"><nav class="table w-full min-w-full my-6 lg:my-8">
 <ul class="current">
-<li class="toctree-l1 current" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="index.html">Getting Started<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul class="current" x-show="expanded">
-<li class="toctree-l2 current"><a class="current reference internal" href="#">Installation</a></li>
-<li class="toctree-l2"><a class="reference internal" href="quickstart.html">Quickstart</a></li>
-<li class="toctree-l2"><a class="reference internal" href="embedded-mode.html">Embedded Mode</a></li>
+<li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="../getting-started/index.html">Getting Started<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
+<li class="toctree-l2"><a class="reference internal" href="../getting-started/installation.html">Installation</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../getting-started/quickstart.html">Quickstart</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../getting-started/embedded-mode.html">Embedded Mode</a></li>
 </ul>
 </li>
 <li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="../deployment/index.html">Deployment<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
@@ -103,15 +103,15 @@
 <li class="toctree-l2"><a class="reference internal" href="../deployment/lambda.html">Deploy on Lambda Cloud</a></li>
 </ul>
 </li>
-<li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="../user-guide/index.html">User Guide<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
-<li class="toctree-l2"><a class="reference internal" href="../user-guide/chat-sft.html">Chat Supervised Fine-Tuning (SFT)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../user-guide/countdown-rl.html">Countdown Reinforcement Learning (RL)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../user-guide/on-policy-distillation.html">On-Policy Distillation (OPD)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../user-guide/custom-losses.html">Custom Losses</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../user-guide/lora-target-modules.html">LoRA Target Modules</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../user-guide/persistence.html">Persistence</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../user-guide/telemetry.html">Observability (OpenTelemetry)</a></li>
-<li class="toctree-l2"><a class="reference internal" href="../user-guide/console.html">User console</a></li>
+<li class="toctree-l1 current" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="index.html">User Guide<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul class="current" x-show="expanded">
+<li class="toctree-l2"><a class="reference internal" href="chat-sft.html">Chat Supervised Fine-Tuning (SFT)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="countdown-rl.html">Countdown Reinforcement Learning (RL)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="on-policy-distillation.html">On-Policy Distillation (OPD)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="custom-losses.html">Custom Losses</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">LoRA Target Modules</a></li>
+<li class="toctree-l2"><a class="reference internal" href="persistence.html">Persistence</a></li>
+<li class="toctree-l2"><a class="reference internal" href="telemetry.html">Observability (OpenTelemetry)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="console.html">User console</a></li>
 </ul>
 </li>
 <li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="../development/index.html">Development<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
@@ -138,142 +138,98 @@
 <path d="M240 856h120V616h240v240h120V496L480 316 240 496v360Zm-80 80V456l320-240 320 240v480H520V696h-80v240H160Zm320-350Z"></path>
 </svg>
 </a>
-<div class="mr-1">/</div><a class="hover:text-foreground overflow-hidden text-ellipsis whitespace-nowrap" href="index.html">Getting Started</a>
-<div class="mr-1">/</div><span aria-current="page" class="font-medium text-foreground overflow-hidden text-ellipsis whitespace-nowrap">Installation</span>
+<div class="mr-1">/</div><a class="hover:text-foreground overflow-hidden text-ellipsis whitespace-nowrap" href="index.html">User Guide</a>
+<div class="mr-1">/</div><span aria-current="page" class="font-medium text-foreground overflow-hidden text-ellipsis whitespace-nowrap">LoRA Target Modules</span>
 </nav>
 <div id="content" role="main">
-<section class="tex2jax_ignore mathjax_ignore" id="installation">
-<h1>Installation<a class="headerlink" href="#installation" title="Link to this heading">¶</a></h1>
-<p>This guide covers different ways to install TuFT.</p>
-<div class="tip admonition">
-<p class="admonition-title">🚀 No GPU? No problem!</p>
-<p>The instructions below assume a machine with a GPU. <strong>No GPU?</strong> You can deploy TuFT to a
-pay-as-you-go cloud provider — <strong><a class="reference internal" href="../deployment/modal.html"><span class="std std-doc">Modal</span></a></strong> (serverless,
-scale-to-zero) or <strong><a class="reference internal" href="../deployment/lambda.html"><span class="std std-doc">Lambda Cloud</span></a></strong> — and fine-tune from your
-laptop. See the <strong><a class="reference internal" href="../deployment/index.html"><span class="std std-doc">Deployment guides</span></a></strong>.</p>
-</div>
-<section id="quick-install">
-<h2>Quick Install<a class="headerlink" href="#quick-install" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#quick-install'">¶</a></h2>
-<blockquote>
-<div><p><strong>Note</strong>: This script supports unix platforms. For other platforms, see the manual installation sections below.</p>
-</div></blockquote>
-<p>Install TuFT with a single command:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">/bin/bash<span class="w"> </span>-c<span class="w"> </span><span class="s2">"</span><span class="k">$(</span>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install.sh<span class="k">)</span><span class="s2">"</span>
-</span></code></pre></div>
-</div>
-<p>This installs TuFT with full backend support (GPU dependencies, persistence, flash-attn) and a bundled Python environment to <code class="docutils literal notranslate"><span class="pre">~/.tuft</span></code>. After installation, restart your terminal and run:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">tuft
-</span></code></pre></div>
-</div>
+<section class="tex2jax_ignore mathjax_ignore" id="lora-target-modules">
+<h1>LoRA Target Modules<a class="headerlink" href="#lora-target-modules" title="Link to this heading">¶</a></h1>
+<p>How TuFT turns the client LoRA flags (<code class="docutils literal notranslate"><span class="pre">train_attn</span></code>, <code class="docutils literal notranslate"><span class="pre">train_mlp</span></code>,
+<code class="docutils literal notranslate"><span class="pre">train_unembed</span></code>) into concrete module names, and the rules it enforces around
+them.</p>
+<section id="how-resolution-works">
+<h2>How resolution works<a class="headerlink" href="#how-resolution-works" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#how-resolution-works'">¶</a></h2>
+<p>TuFT reads the model’s <code class="docutils literal notranslate"><span class="pre">config.json</span></code> to find its model type and maps each flag
+to module names. For Qwen and Llama models, <code class="docutils literal notranslate"><span class="pre">train_attn</span></code> covers
+<code class="docutils literal notranslate"><span class="pre">q_proj</span></code>/<code class="docutils literal notranslate"><span class="pre">k_proj</span></code>/<code class="docutils literal notranslate"><span class="pre">v_proj</span></code>/<code class="docutils literal notranslate"><span class="pre">o_proj</span></code> and <code class="docutils literal notranslate"><span class="pre">train_mlp</span></code> covers
+<code class="docutils literal notranslate"><span class="pre">gate_proj</span></code>/<code class="docutils literal notranslate"><span class="pre">up_proj</span></code>/<code class="docutils literal notranslate"><span class="pre">down_proj</span></code>; on Llama, <code class="docutils literal notranslate"><span class="pre">train_unembed</span></code> covers <code class="docutils literal notranslate"><span class="pre">lm_head</span></code>.
+When no local <code class="docutils literal notranslate"><span class="pre">config.json</span></code> exists yet (a Hugging Face model ID that has not
+been downloaded), the model name decides.</p>
+<p>On Qwen3.5-based models (model type <code class="docutils literal notranslate"><span class="pre">qwen3_5</span></code>, which Qwen3.6 and Qwen3.8 also
+use), three of every four text layers use Gated DeltaNet instead of full
+attention, so <code class="docutils literal notranslate"><span class="pre">train_attn</span></code> additionally covers <code class="docutils literal notranslate"><span class="pre">linear_attn.in_proj_qkv</span></code>,
+<code class="docutils literal notranslate"><span class="pre">linear_attn.in_proj_z</span></code>, and <code class="docutils literal notranslate"><span class="pre">linear_attn.out_proj</span></code>.</p>
 </section>
-<section id="install-from-source-code">
-<h2>Install from Source Code<a class="headerlink" href="#install-from-source-code" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#install-from-source-code'">¶</a></h2>
-<p>We recommend using <a class="reference external" href="https://github.com/astral-sh/uv">uv</a> for dependency management.</p>
-<ol class="arabic">
-<li><p>Clone the repository:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">git<span class="w"> </span>clone<span class="w"> </span>https://github.com/agentscope-ai/TuFT
-</span></code></pre></div>
-</div>
-</li>
-<li><p>Create a virtual environment:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="nb">cd</span><span class="w"> </span>TuFT
-</span><span id="line-2">uv<span class="w"> </span>venv<span class="w"> </span>--python<span class="w"> </span><span class="m">3</span>.12
-</span></code></pre></div>
-</div>
-</li>
-<li><p>Activate environment:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="nb">source</span><span class="w"> </span>.venv/bin/activate
-</span></code></pre></div>
-</div>
-</li>
-<li><p>Install dependencies:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="c1"># Install minimal dependencies for non-development installs</span>
-</span><span id="line-2">uv<span class="w"> </span>sync
-</span><span id="line-3">
-</span><span id="line-4"><span class="c1"># If you need to develop or run tests, install dev dependencies</span>
-</span><span id="line-5">uv<span class="w"> </span>sync<span class="w"> </span>--extra<span class="w"> </span>dev
-</span><span id="line-6">
-</span><span id="line-7"><span class="c1"># If you want to run the full feature set (e.g., model serving, persistence),</span>
-</span><span id="line-8"><span class="c1"># please install all dependencies</span>
-</span><span id="line-9">uv<span class="w"> </span>sync<span class="w"> </span>--all-extras
-</span><span id="line-10">python<span class="w"> </span>scripts/install_flash_attn.py
-</span><span id="line-11"><span class="c1"># If you face issues with flash-attn installation, you can try installing it manually:</span>
-</span><span id="line-12"><span class="c1"># uv pip install flash-attn --no-build-isolation</span>
-</span></code></pre></div>
-</div>
-</li>
-</ol>
+<section id="breaking-change-in-0-2-0-qwen3-5-based-models">
+<h2>Breaking change in 0.2.0: Qwen3.5-based models<a class="headerlink" href="#breaking-change-in-0-2-0-qwen3-5-based-models" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#breaking-change-in-0-2-0-qwen3-5-based-models'">¶</a></h2>
+<p>Release 0.2.0 (the fix for issue #149) added the Tinker-compatible
+<code class="docutils literal notranslate"><span class="pre">linear_attn.in_proj_qkv</span></code>, <code class="docutils literal notranslate"><span class="pre">linear_attn.in_proj_z</span></code>, and <code class="docutils literal notranslate"><span class="pre">linear_attn.out_proj</span></code>
+modules to the LoRA target list for Qwen3.5-based models. Checkpoints and
+training runs from before 0.2.0 use the old, shorter list, and the two lists
+must match exactly. After upgrading to 0.2.0:</p>
+<ul class="simple">
+<li><p>Old checkpoints for these models cannot be loaded.</p></li>
+<li><p>Old FSDP training runs are marked corrupted when the server restarts.</p></li>
+<li><p>A server config that sets <code class="docutils literal notranslate"><span class="pre">fsdp_target_modules</span></code> to the old list stops the
+server at startup. The error says how to fix the config.</p></li>
+<li><p>With persistence enabled, the new <code class="docutils literal notranslate"><span class="pre">qwen_gated_deltanet_full_lora</span></code> model
+field changes the stored configuration signature, so startup fails with a
+configuration-mismatch error until you switch to a new namespace or clear
+the old one (see
+<a class="reference internal" href="persistence.html#changing-config-safely"><span class="std std-ref">Changing config safely</span></a>).</p></li>
+</ul>
+<p>Each error message names this change as the cause. To continue training,
+create a new training run.</p>
 </section>
-<section id="install-via-pypi">
-<h2>Install via PyPI<a class="headerlink" href="#install-via-pypi" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#install-via-pypi'">¶</a></h2>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"tuft&gt;=0.1.8"</span>
-</span><span id="line-2">
-</span><span id="line-3"><span class="c1"># Install optional dependencies as needed</span>
-</span><span id="line-4">uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"tuft[dev,backend,persistence]&gt;=0.1.8"</span>
-</span></code></pre></div>
-</div>
+<section id="full-gated-deltanet-coverage-opt-in">
+<h2>Full Gated DeltaNet coverage (opt-in)<a class="headerlink" href="#full-gated-deltanet-coverage-opt-in" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#full-gated-deltanet-coverage-opt-in'">¶</a></h2>
+<p>Set <code class="docutils literal notranslate"><span class="pre">qwen_gated_deltanet_full_lora:</span> <span class="pre">true</span></code> on a model to additionally target
+<code class="docutils literal notranslate"><span class="pre">linear_attn.in_proj_a</span></code> and <code class="docutils literal notranslate"><span class="pre">linear_attn.in_proj_b</span></code>. This operator opt-in
+applies to both HF and FSDP training and creates a different checkpoint
+geometry from the default, so changing it also requires a new training run
+(and an FSDP restart). The default remains compatible with Tinker’s public
+<code class="docutils literal notranslate"><span class="pre">train_attn</span></code> behavior.</p>
 </section>
-<section id="use-the-pre-built-docker-image">
-<h2>Use the Pre-built Docker Image<a class="headerlink" href="#use-the-pre-built-docker-image" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#use-the-pre-built-docker-image'">¶</a></h2>
-<p>If you face issues with local installation or want to get started quickly, you can use the pre-built Docker image.</p>
-<ol class="arabic">
-<li><p>Pull the latest image from GitHub Container Registry:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/agentscope-ai/tuft:latest
-</span></code></pre></div>
-</div>
-</li>
-<li><p>Run the Docker container and start the TuFT server on port 10610:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">docker<span class="w"> </span>run<span class="w"> </span>-it<span class="w"> </span><span class="se">\</span>
-</span><span id="line-2"><span class="w">    </span>--gpus<span class="w"> </span>all<span class="w"> </span><span class="se">\</span>
-</span><span id="line-3"><span class="w">    </span>--shm-size<span class="o">=</span><span class="s2">"128g"</span><span class="w"> </span><span class="se">\</span>
-</span><span id="line-4"><span class="w">    </span>--rm<span class="w"> </span><span class="se">\</span>
-</span><span id="line-5"><span class="w">    </span>-p<span class="w"> </span><span class="m">10610</span>:10610<span class="w"> </span><span class="se">\</span>
-</span><span id="line-6"><span class="w">    </span>-v<span class="w"> </span>&lt;host_dir&gt;:/data<span class="w"> </span><span class="se">\</span>
-</span><span id="line-7"><span class="w">    </span>ghcr.io/agentscope-ai/tuft:latest<span class="w"> </span><span class="se">\</span>
-</span><span id="line-8"><span class="w">    </span>tuft<span class="w"> </span>launch<span class="w"> </span>--port<span class="w"> </span><span class="m">10610</span><span class="w"> </span>--config<span class="w"> </span>/data/tuft_config.yaml
-</span></code></pre></div>
-</div>
-<p>Please replace <code class="docutils literal notranslate"><span class="pre">&lt;host_dir&gt;</span></code> with a directory on your host machine where you want to store model checkpoints and other data.</p>
-<p>Suppose you have the following structure on your host machine:</p>
-<div class="highlight-text notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">&lt;host_dir&gt;/
-</span><span id="line-2">    ├── checkpoints/
-</span><span id="line-3">    ├── Qwen3-4B/
-</span><span id="line-4">    ├── Qwen3-8B/
-</span><span id="line-5">    └── tuft_config.yaml
-</span></code></pre></div>
-</div>
-</li>
-</ol>
+<section id="moe-models">
+<h2>MoE models<a class="headerlink" href="#moe-models" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#moe-models'">¶</a></h2>
+<p>On the MoE variant (model type <code class="docutils literal notranslate"><span class="pre">qwen3_5_moe</span></code>, e.g. Qwen3.6-35B-A3B), the same
+target list applies, but the routed experts are fused parameters without
+per-expert <code class="docutils literal notranslate"><span class="pre">gate_proj</span></code>/<code class="docutils literal notranslate"><span class="pre">up_proj</span></code>/<code class="docutils literal notranslate"><span class="pre">down_proj</span></code> modules. <code class="docutils literal notranslate"><span class="pre">train_mlp</span></code> therefore
+trains only the shared expert, and the routed experts stay frozen. vLLM
+applies LoRA to the same modules when serving, so trained and served modules
+match.</p>
+<p>This differs from Tinker’s hosted service: Tinker documents <code class="docutils literal notranslate"><span class="pre">train_mlp</span></code> as
+covering MoE layers and trains a LoRA on each expert, so the same client code
+trains far more of the model there. Expect different training results on MoE
+models.</p>
 </section>
-<section id="run-the-server">
-<h2>Run the Server<a class="headerlink" href="#run-the-server" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#run-the-server'">¶</a></h2>
-<p>The CLI starts a FastAPI server:</p>
-<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">tuft<span class="w"> </span>launch<span class="w"> </span>--port<span class="w"> </span><span class="m">10610</span><span class="w"> </span>--config<span class="w"> </span>/path/to/tuft_config.yaml
-</span></code></pre></div>
-</div>
-<p>The config file <code class="docutils literal notranslate"><span class="pre">tuft_config.yaml</span></code> specifies server settings including available base models, authentication, persistence, and telemetry. Below is a minimal example:</p>
-<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="nt">supported_models</span><span class="p">:</span>
-</span><span id="line-2"><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">model_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Qwen/Qwen3-4B</span>
-</span><span id="line-3"><span class="w">    </span><span class="nt">model_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Qwen/Qwen3-4B</span>
-</span><span id="line-4"><span class="w">    </span><span class="nt">max_model_len</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">32768</span>
-</span><span id="line-5"><span class="w">    </span><span class="nt">tensor_parallel_size</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
-</span><span id="line-6"><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">model_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Qwen/Qwen3-8B</span>
-</span><span id="line-7"><span class="w">    </span><span class="nt">model_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Qwen/Qwen3-8B</span>
-</span><span id="line-8"><span class="w">    </span><span class="nt">max_model_len</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">32768</span>
-</span><span id="line-9"><span class="w">    </span><span class="nt">tensor_parallel_size</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
-</span></code></pre></div>
-</div>
-<p>See <code class="docutils literal notranslate"><span class="pre">config/tuft_config.example.yaml</span></code> in the repository for a complete example configuration with all available options.</p>
+<section id="every-target-must-match-a-real-module">
+<h2>Every target must match a real module<a class="headerlink" href="#every-target-must-match-a-real-module" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#every-target-must-match-a-real-module'">¶</a></h2>
+<p>TuFT requires every resolved target module name to match at least one real
+module in the loaded model. The HF backend checks this when an adapter is
+created; the FSDP backend checks its slot list when the worker starts. A
+model whose <code class="docutils literal notranslate"><span class="pre">config.json</span></code> does not match its real architecture is rejected
+with the unmatched names, instead of silently training only part of the
+intended modules.</p>
+</section>
+<section id="train-unembed-on-qwen-models">
+<h2>train_unembed on Qwen models<a class="headerlink" href="#train-unembed-on-qwen-models" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#train-unembed-on-qwen-models'">¶</a></h2>
+<p>TuFT currently accepts <code class="docutils literal notranslate"><span class="pre">train_unembed=True</span></code> on Qwen-family models but does
+not add an embedding or unembedding target. Support for training and serving
+<code class="docutils literal notranslate"><span class="pre">embed_tokens</span></code>, matching Tinker’s hosted behavior, is tracked in
+<a class="reference external" href="https://github.com/agentscope-ai/TuFT/issues/153">issue #153</a> and depends on
+a released vLLM version containing its Qwen3.5 embedding-module support.</p>
 </section>
 </section>
 </div></div><aside class="hidden text-sm xl:block" id="right-sidebar">
 <div class="sticky top-16 -mt-10 max-h-[calc(100vh-5rem)] h-full overflow-y-auto pt-6 space-y-2"><p class="font-medium">On this page</p>
 <ul>
-<li><a :data-current="activeSection === '#quick-install'" class="reference internal" href="#quick-install">Quick Install</a></li>
-<li><a :data-current="activeSection === '#install-from-source-code'" class="reference internal" href="#install-from-source-code">Install from Source Code</a></li>
-<li><a :data-current="activeSection === '#install-via-pypi'" class="reference internal" href="#install-via-pypi">Install via PyPI</a></li>
-<li><a :data-current="activeSection === '#use-the-pre-built-docker-image'" class="reference internal" href="#use-the-pre-built-docker-image">Use the Pre-built Docker Image</a></li>
-<li><a :data-current="activeSection === '#run-the-server'" class="reference internal" href="#run-the-server">Run the Server</a></li>
+<li><a :data-current="activeSection === '#how-resolution-works'" class="reference internal" href="#how-resolution-works">How resolution works</a></li>
+<li><a :data-current="activeSection === '#breaking-change-in-0-2-0-qwen3-5-based-models'" class="reference internal" href="#breaking-change-in-0-2-0-qwen3-5-based-models">Breaking change in 0.2.0: Qwen3.5-based models</a></li>
+<li><a :data-current="activeSection === '#full-gated-deltanet-coverage-opt-in'" class="reference internal" href="#full-gated-deltanet-coverage-opt-in">Full Gated DeltaNet coverage (opt-in)</a></li>
+<li><a :data-current="activeSection === '#moe-models'" class="reference internal" href="#moe-models">MoE models</a></li>
+<li><a :data-current="activeSection === '#every-target-must-match-a-real-module'" class="reference internal" href="#every-target-must-match-a-real-module">Every target must match a real module</a></li>
+<li><a :data-current="activeSection === '#train-unembed-on-qwen-models'" class="reference internal" href="#train-unembed-on-qwen-models">train_unembed on Qwen models</a></li>
 </ul>
 </div>
 </aside>
