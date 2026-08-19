@@ -22,14 +22,15 @@ MODULE_MAP = {
     },
 }
 
-# Qwen3.5 and Qwen3.8 share Transformers' ``qwen3_5`` architecture. Three out
-# of every four text layers use Gated DeltaNet rather than full attention, and
+# Qwen3.5-based models share Transformers' ``qwen3_5`` architecture (Qwen3.8
+# uses it too). Three out of every four text layers use Gated DeltaNet rather
+# than full attention, and
 # PEFT suffix-matches target names. Keeping the ``linear_attn.`` qualifier is
 # important: it selects only the text DeltaNet projections and cannot match
 # similarly named modules in the multimodal vision encoder.
 #
-# Adding these modules changed the resolved target list for Qwen3.5/3.8
-# (issue #149). Module lists must match exactly, so LoRA state saved before
+# Adding these modules changed the resolved target list for Qwen3.5-based
+# models (issue #149). Module lists must match exactly, so LoRA state saved before
 # the change is rejected; ``gated_deltanet_mismatch_hint`` explains why in
 # those errors.
 QWEN3_5_GATED_DELTANET_TARGET_MODULES = [
@@ -130,10 +131,10 @@ def achievable_target_module_sets(model_path: str) -> list[list[str]] | None:
 def gated_deltanet_mismatch_hint(
     actual_modules: Iterable[str], expected_modules: Iterable[str]
 ) -> str | None:
-    """Explain module-list mismatches caused by the Qwen3.5/3.8 change.
+    """Explain module-list mismatches caused by the Qwen3.5 change.
 
     Returns a notice when the two sets differ only by (a subset of) the
-    Qwen3.5/3.8 Gated DeltaNet modules — the sign of LoRA state or server
+    Qwen3.5 Gated DeltaNet modules — the sign of LoRA state or server
     config saved before issue #149 added those modules — and None for every
     other mismatch.
     """
@@ -142,9 +143,9 @@ def gated_deltanet_mismatch_hint(
     if not difference or not difference <= set(QWEN3_5_GATED_DELTANET_TARGET_MODULES):
         return None
     return (
-        "The two module sets differ only by the linear_attn.* modules of "
-        "Qwen3.5/3.8's Gated DeltaNet layers. This TuFT release added those "
-        "modules to the LoRA target list (issue #149), so checkpoints and "
-        "training runs from before the change no longer match. Create a new "
-        "training run to continue."
+        "The two module sets differ only by the linear_attn.* modules of the "
+        "Qwen3.5 Gated DeltaNet layers. This TuFT release added those modules "
+        "to the LoRA target list for Qwen3.5-based models (issue #149), so "
+        "checkpoints and training runs from before the change no longer match. "
+        "Create a new training run to continue."
     )

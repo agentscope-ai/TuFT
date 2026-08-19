@@ -1,4 +1,4 @@
-"""Architecture coverage for Qwen3.5/3.8 Gated DeltaNet LoRA targets."""
+"""Architecture coverage for Qwen3.5-based Gated DeltaNet LoRA targets."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ QWEN_TEXT_TARGETS = [
     *MODULE_MAP["qwen"]["mlp"],
 ]
 
-# The Qwen3.5/3.8 target list from before issue #149 added linear_attn.*.
+# The Qwen3.5 target list from before issue #149 added linear_attn.*.
 QWEN_OLD_TEXT_TARGETS = [
     *MODULE_MAP["qwen"]["attn"],
     *MODULE_MAP["qwen"]["mlp"],

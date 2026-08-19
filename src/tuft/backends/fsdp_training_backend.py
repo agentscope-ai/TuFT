@@ -293,7 +293,7 @@ def _validate_explicit_target_modules(config: ModelConfig) -> None:
     resolver does not know; those skip this check. For known families,
     ``_validate_lora_config`` requires the client's module list to equal the
     slot pool's list exactly. An outdated list — for example one from before
-    issue #149 added the Qwen3.5/3.8 ``linear_attn.*`` modules — would
+    issue #149 added the Qwen3.5 ``linear_attn.*`` modules — would
     otherwise boot a server that rejects every create_training_run.
     """
 

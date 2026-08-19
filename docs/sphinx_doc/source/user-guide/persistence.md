@@ -166,12 +166,13 @@ model. This dedicated opt-in intentionally overrides client modifiers and record
 Q/V as the run's effective geometry. Configuring `[q_proj, v_proj]` only through
 `fsdp_target_modules` is rejected so this override cannot happen accidentally.
 
-**Breaking change: Qwen3.5/3.8 LoRA target modules.** The fix for issue #149
-added the `linear_attn.*` modules to the LoRA target list for Qwen3.5/3.8.
-Checkpoints and training runs from before this change use the old, shorter
-list, and the two lists must match exactly. After upgrading:
+**Breaking change: LoRA target modules for Qwen3.5-based models.** The fix for
+issue #149 added the `linear_attn.*` modules to the LoRA target list for
+Qwen3.5-based models (any model with model type `qwen3_5`, which Qwen3.8 also
+uses). Checkpoints and training runs from before this change use the old,
+shorter list, and the two lists must match exactly. After upgrading:
 
-- Old Qwen3.5/3.8 checkpoints cannot be loaded.
+- Old checkpoints for these models cannot be loaded.
 - Old FSDP training runs are marked corrupted when the server restarts.
 - A server config that sets `fsdp_target_modules` to the old list stops the
   server at startup. The error says how to fix the config.

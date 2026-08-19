@@ -83,7 +83,7 @@ def resolve_model_series_and_architecture(
     available, e.g. for configured Hugging Face IDs not yet downloaded.
 
     The series ('qwen'/'llama') selects the broad module map; the architecture
-    (currently only ``qwen3_5``, shared by Qwen3.5 and Qwen3.8) selects
+    (currently only ``qwen3_5``; Qwen3.8 uses it too) selects
     behavior a series cannot express, such as Gated DeltaNet projection names.
     """
     config = load_model_config_json(model_path)
