@@ -42,6 +42,7 @@ from tuft.backends.fsdp_engine import (
 )
 from tuft.backends.lora_modules import (
     achievable_target_module_sets,
+    find_unmatched_target_modules,
     gated_deltanet_mismatch_hint,
     get_target_modules,
     resolve_target_modules,
@@ -415,6 +416,21 @@ class MultiAdapterFSDPWorker:
         if self._initialized:
             return
         base_model = build_base_model(self.model_config)
+
+        # PEFT silently skips target names that match nothing, so a mislabeled
+        # model would get slots that train fewer modules than they record.
+        # Stop the worker instead.
+        unmatched = find_unmatched_target_modules(
+            (name for name, _ in base_model.named_modules()),
+            self.slot_config.target_modules,
+        )
+        if unmatched:
+            raise ValueError(
+                f"FSDP LoRA target modules {sorted(unmatched)} match no module in base "
+                f"model '{self.model_config.path}'. The model may be mislabeled "
+                "or use different module names; check that its config.json model_type "
+                "matches the real architecture, or fix fsdp_target_modules."
+            )
 
         peft_model = None
         for rank, count in self.slot_config.rank_slots.items():

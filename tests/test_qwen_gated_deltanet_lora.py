@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
-from peft import PeftModel, get_peft_model
+from peft import LoraConfig as PeftLoraConfig, PeftModel, get_peft_model
 from tinker import types
+from transformers.models.qwen3.configuration_qwen3 import Qwen3Config
+from transformers.models.qwen3.modeling_qwen3 import Qwen3ForCausalLM
 from transformers.models.qwen3_5.configuration_qwen3_5 import (
     Qwen3_5Config,
     Qwen3_5TextConfig,
@@ -25,11 +30,12 @@ from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
 )
 
 from tuft.backends.fsdp_training_backend import FSDPTrainingBackend, _config_to_worker_dict
-from tuft.backends.hf_training_model import build_peft_lora_config
+from tuft.backends.hf_training_model import HFTrainingModel, build_peft_lora_config
 from tuft.backends.lora_modules import (
     MODULE_MAP,
     QWEN3_5_DEFAULT_GATED_DELTANET_TARGET_MODULES,
     QWEN3_5_GATED_DELTANET_TARGET_MODULES,
+    find_unmatched_target_modules,
     gated_deltanet_mismatch_hint,
     get_target_modules,
 )
@@ -539,3 +545,76 @@ def test_outdated_fsdp_target_modules_fail_at_startup(tmp_path):
     with pytest.raises(ValueError) as excinfo:
         FSDPTrainingBackend(stale.model_copy(update={"fsdp_target_modules": ["q_proj"]}))
     assert "Gated DeltaNet" not in str(excinfo.value)
+
+
+def _tiny_qwen3() -> Qwen3ForCausalLM:
+    """A plain Qwen3 model: standard attention, no Gated DeltaNet layers."""
+
+    return Qwen3ForCausalLM(
+        Qwen3Config(
+            vocab_size=128,
+            hidden_size=16,
+            intermediate_size=32,
+            num_hidden_layers=2,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            head_dim=8,
+        )
+    )
+
+
+def test_every_resolved_target_must_match_a_real_module(tmp_path):
+    """A mislabeled model cannot silently receive partial LoRA coverage."""
+
+    model_dir = tmp_path / "model"
+    _write_qwen3_5_config(model_dir)
+    targets = get_target_modules(
+        str(model_dir),
+        types.LoraConfig(rank=2, train_attn=True, train_mlp=True, train_unembed=False),
+    )
+
+    # Both real Qwen3.5-based models carry every resolved target.
+    for model in (_tiny_qwen3_5(4), _tiny_qwen3_5_moe()):
+        names = [name for name, _ in model.named_modules()]
+        assert find_unmatched_target_modules(names, targets) == []
+
+    # A plain Qwen3 model has no Gated DeltaNet layers, so the linear_attn
+    # targets match nothing and must be reported.
+    plain_names = [name for name, _ in _tiny_qwen3().named_modules()]
+    assert (
+        find_unmatched_target_modules(plain_names, targets)
+        == QWEN3_5_DEFAULT_GATED_DELTANET_TARGET_MODULES
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_adapter_rejects_targets_missing_from_the_model(tmp_path):
+    """HFTrainingModel refuses an adapter whose targets are not all in the model."""
+
+    model_dir = tmp_path / "model"
+    _write_qwen3_5_config(model_dir)
+
+    hf_model = HFTrainingModel.__new__(HFTrainingModel)
+    hf_model.config = SimpleNamespace(  # type: ignore[assignment]
+        model_path=model_dir,
+        lora_alpha_ratio=1,
+        qwen_gated_deltanet_full_lora=False,
+    )
+    hf_model.adapter_optimizer = {}
+    hf_model._lock = asyncio.Lock()
+    hf_model.logger = logging.getLogger(__name__)
+
+    # The config claims Gated DeltaNet, but the real model is a plain Qwen3.
+    hf_model.model = _tiny_qwen3()  # type: ignore[assignment]
+    lora_config = types.LoraConfig(rank=2, train_attn=True, train_mlp=True, train_unembed=False)
+    with pytest.raises(ValueError, match="linear_attn.in_proj_qkv"):
+        await hf_model.create_adapter("mislabeled", lora_config)
+    assert hf_model.adapter_optimizer == {}
+
+    # With the real Gated DeltaNet model the same request succeeds. Wrap it
+    # the way _init_peft_model does, so add_adapter sees a PeftModel.
+    hf_model.model = get_peft_model(  # type: ignore[assignment]
+        _tiny_qwen3_5(4), PeftLoraConfig(target_modules=["q_proj"]), adapter_name="default"
+    )
+    await hf_model.create_adapter("run", lora_config)
+    assert "run" in hf_model.adapter_optimizer

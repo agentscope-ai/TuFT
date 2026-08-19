@@ -169,6 +169,26 @@ def achievable_target_module_sets(
     return achievable
 
 
+def find_unmatched_target_modules(
+    module_names: Iterable[str], target_modules: Iterable[str]
+) -> list[str]:
+    """Target names that match no module, using PEFT's suffix rule.
+
+    PEFT wraps a module when its name equals the target or ends with
+    ``"." + target``. A target that matches nothing is silently skipped
+    there, so the run would train fewer modules than it records. Callers
+    reject the request instead when this returns a non-empty list.
+    """
+
+    names = list(module_names)
+    unmatched: list[str] = []
+    for target in dict.fromkeys(target_modules):
+        suffix = "." + target
+        if not any(name == target or name.endswith(suffix) for name in names):
+            unmatched.append(target)
+    return unmatched
+
+
 def gated_deltanet_mismatch_hint(
     actual_modules: Iterable[str], expected_modules: Iterable[str]
 ) -> str | None:

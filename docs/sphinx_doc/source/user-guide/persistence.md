@@ -196,6 +196,13 @@ trains only the shared expert, and the routed experts stay frozen. vLLM
 applies LoRA to the same modules when serving, so trained and served modules
 match.
 
+TuFT also requires every resolved target module name to match at least one
+real module in the loaded model. The HF backend checks this when an adapter
+is created; the FSDP backend checks its slot list when the worker starts. A
+model whose `config.json` does not match its real architecture is rejected
+with the unmatched names, instead of silently training only part of the
+intended modules.
+
 ---
 
 ## Troubleshooting
