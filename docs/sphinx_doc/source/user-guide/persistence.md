@@ -180,6 +180,13 @@ shorter list, and the two lists must match exactly. After upgrading:
 Each error message names this change as the cause. To continue training,
 create a new training run.
 
+On the MoE variant (model type `qwen3_5_moe`, e.g. Qwen3.6-35B-A3B), the same
+target list applies, but the routed experts are fused parameters without
+per-expert `gate_proj`/`up_proj`/`down_proj` modules. `train_mlp` therefore
+trains only the shared expert, and the routed experts stay frozen. vLLM
+applies LoRA to the same modules when serving, so trained and served modules
+match.
+
 ---
 
 ## Troubleshooting

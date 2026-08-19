@@ -15,6 +15,14 @@ from transformers.models.qwen3_5.configuration_qwen3_5 import (
     Qwen3_5VisionConfig,
 )
 from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5ForConditionalGeneration
+from transformers.models.qwen3_5_moe.configuration_qwen3_5_moe import (
+    Qwen3_5MoeConfig,
+    Qwen3_5MoeTextConfig,
+    Qwen3_5MoeVisionConfig,
+)
+from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import (
+    Qwen3_5MoeForConditionalGeneration,
+)
 
 from tuft.backends.fsdp_training_backend import FSDPTrainingBackend, _config_to_worker_dict
 from tuft.backends.hf_training_model import build_peft_lora_config
@@ -24,7 +32,7 @@ from tuft.backends.lora_modules import (
     gated_deltanet_mismatch_hint,
     get_target_modules,
 )
-from tuft.backends.vllm_lora_compat import resolve_model_architecture
+from tuft.backends.vllm_lora_compat import resolve_model_architecture, vllm_nests_language_model
 from tuft.checkpoints import CheckpointRecord, read_adapter_target_modules
 from tuft.config import AppConfig, ModelConfig
 from tuft.exceptions import InvalidRequestException
@@ -229,6 +237,95 @@ def test_qwen_gated_deltanet_adapter_metadata_and_weights_round_trip(tmp_path):
         if name.endswith("layers.0.linear_attn.in_proj_qkv")
     )
     assert torch.all(reloaded_module.lora_B["default"].weight == 0.25)  # type: ignore[index]
+
+
+def _write_qwen3_5_moe_config(model_dir: Path) -> None:
+    model_dir.mkdir()
+    (model_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "model_type": "qwen3_5_moe",
+                "architectures": ["Qwen3_5MoeForConditionalGeneration"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _tiny_qwen3_5_moe() -> Qwen3_5MoeForConditionalGeneration:
+    """Four text layers, four routed experts, one shared expert per layer."""
+
+    text_config = Qwen3_5MoeTextConfig(
+        vocab_size=128,
+        hidden_size=16,
+        num_hidden_layers=4,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        head_dim=8,
+        linear_key_head_dim=8,
+        linear_value_head_dim=8,
+        linear_num_key_heads=2,
+        linear_num_value_heads=2,
+        layer_types=["linear_attention", "linear_attention", "linear_attention", "full_attention"],
+        num_experts=4,
+        num_experts_per_tok=2,
+        moe_intermediate_size=16,
+        shared_expert_intermediate_size=16,
+    )
+    vision_config = Qwen3_5MoeVisionConfig(
+        depth=1,
+        hidden_size=16,
+        intermediate_size=32,
+        num_heads=2,
+        out_hidden_size=16,
+        num_position_embeddings=16,
+    )
+    config = Qwen3_5MoeConfig(
+        text_config=text_config,
+        vision_config=vision_config,
+        image_token_id=120,
+        video_token_id=121,
+        vision_start_token_id=122,
+        vision_end_token_id=123,
+    )
+    return Qwen3_5MoeForConditionalGeneration(config)
+
+
+def test_qwen35_moe_lora_trains_shared_expert_and_skips_routed_experts(tmp_path):
+    """The MoE variant resolves the same targets; only the shared expert MLP trains.
+
+    The routed experts are fused parameters with no per-expert Linear modules,
+    so the mlp names cannot match them. The router (``mlp.gate``) and
+    ``shared_expert_gate`` must stay untouched too. vLLM applies LoRA to the
+    same modules when serving, so nothing trained here is dropped there.
+    """
+
+    model_dir = tmp_path / "model"
+    _write_qwen3_5_moe_config(model_dir)
+
+    assert resolve_model_architecture(model_dir) == "qwen3_5"
+    assert vllm_nests_language_model(model_dir) is True
+
+    public_config = types.LoraConfig(rank=2, train_attn=True, train_mlp=True, train_unembed=False)
+    assert get_target_modules(str(model_dir), public_config) == QWEN_TEXT_TARGETS
+
+    peft_model = get_peft_model(
+        _tiny_qwen3_5_moe(), build_peft_lora_config(str(model_dir), public_config)
+    )
+    wrapped = _wrapped_lora_modules(peft_model)
+
+    full_attention = [name for name in wrapped if ".self_attn." in name]
+    linear_attention = [name for name in wrapped if ".linear_attn." in name]
+    shared_expert = [name for name in wrapped if ".shared_expert." in name]
+
+    assert len(full_attention) == 1 * 4
+    assert len(linear_attention) == 3 * 5
+    assert len(shared_expert) == 4 * 3
+    assert len(wrapped) == len(full_attention) + len(linear_attention) + len(shared_expert)
+    assert not any(name.endswith(".mlp.gate") for name in wrapped)
+    assert not any(".mlp.experts" in name for name in wrapped)
+    assert not any(name.endswith("shared_expert_gate") for name in wrapped)
+    assert not any(".visual." in name for name in wrapped)
 
 
 def test_path_fallback_markers_are_anchored(tmp_path):

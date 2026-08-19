@@ -23,16 +23,23 @@ MODULE_MAP = {
 }
 
 # Qwen3.5-based models share Transformers' ``qwen3_5`` architecture (Qwen3.6
-# and Qwen3.8 use it too). Three out of every four text layers use Gated DeltaNet rather
-# than full attention, and
-# PEFT suffix-matches target names. Keeping the ``linear_attn.`` qualifier is
-# important: it selects only the text DeltaNet projections and cannot match
-# similarly named modules in the multimodal vision encoder.
+# and Qwen3.8 use it too). Three out of every four text layers use Gated
+# DeltaNet rather than full attention, and PEFT suffix-matches target names.
+# Keeping the ``linear_attn.`` qualifier is important: it selects only the
+# text DeltaNet projections and cannot match similarly named modules in the
+# multimodal vision encoder.
 #
 # Adding these modules changed the resolved target list for Qwen3.5-based
-# models (issue #149). Module lists must match exactly, so LoRA state saved before
-# the change is rejected; ``gated_deltanet_mismatch_hint`` explains why in
-# those errors.
+# models (issue #149). Module lists must match exactly, so LoRA state saved
+# before the change is rejected; ``gated_deltanet_mismatch_hint`` explains
+# why in those errors.
+#
+# The MoE variant (model type ``qwen3_5_moe``, e.g. Qwen3.6-35B-A3B) resolves
+# the same list. Its routed experts are fused parameters with no per-expert
+# Linear modules, so the mlp names match only the shared expert: LoRA trains
+# attention, these Gated DeltaNet projections, and the shared expert, while
+# the routed experts stay frozen. vLLM applies LoRA to the same modules when
+# serving, so trained and served modules agree.
 QWEN3_5_GATED_DELTANET_TARGET_MODULES = [
     "linear_attn.in_proj_qkv",
     "linear_attn.in_proj_z",
