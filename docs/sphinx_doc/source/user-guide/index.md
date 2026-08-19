@@ -37,6 +37,14 @@ Distill a teacher into a student on the student's own samples, via per-token rev
 Client-defined objectives (e.g. composite DPO + NLL) via `forward_backward_custom`, on HF and FSDP.
 :::
 
+:::{grid-item-card} LoRA Target Modules
+:link: lora-target-modules
+:link-type: doc
+:shadow: none
+
+How LoRA flags resolve to module names, and the Qwen3.5 breaking change.
+:::
+
 :::{grid-item-card} Persistence
 :link: persistence
 :link-type: doc
@@ -70,6 +78,7 @@ chat-sft
 countdown-rl
 on-policy-distillation
 custom-losses
+lora-target-modules
 persistence
 telemetry
 console
