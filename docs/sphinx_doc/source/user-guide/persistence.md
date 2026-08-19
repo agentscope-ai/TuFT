@@ -168,8 +168,8 @@ Q/V as the run's effective geometry. Configuring `[q_proj, v_proj]` only through
 
 **Breaking change: LoRA target modules for Qwen3.5-based models.** The fix for
 issue #149 added the `linear_attn.*` modules to the LoRA target list for
-Qwen3.5-based models (any model with model type `qwen3_5`, which Qwen3.8 also
-uses). Checkpoints and training runs from before this change use the old,
+Qwen3.5-based models (any model with model type `qwen3_5`, which Qwen3.6 and
+Qwen3.8 also use). Checkpoints and training runs from before this change use the old,
 shorter list, and the two lists must match exactly. After upgrading:
 
 - Old checkpoints for these models cannot be loaded.

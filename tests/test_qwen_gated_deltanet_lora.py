@@ -99,8 +99,9 @@ def _wrapped_lora_modules(model: torch.nn.Module) -> list[str]:
     return [name for name, module in model.named_modules() if hasattr(module, "lora_A")]
 
 
-def test_qwen35_and_qwen38_model_ids_resolve_to_shared_architecture(tmp_path):
+def test_qwen35_based_model_ids_resolve_to_shared_architecture(tmp_path):
     assert resolve_model_architecture("Qwen/Qwen3.5-4B") == "qwen3_5"
+    assert resolve_model_architecture("Qwen/Qwen3.6-27B") == "qwen3_5"
     assert resolve_model_architecture("Qwen/Qwen3.8-27B") == "qwen3_5"
     assert resolve_model_architecture("Qwen/Qwen3-8B") is None
 
@@ -236,9 +237,11 @@ def test_path_fallback_markers_are_anchored(tmp_path):
     # Official-style IDs resolve, with or without a size suffix.
     assert resolve_model_architecture("Qwen/Qwen3.5") == "qwen3_5"
     assert resolve_model_architecture("org/qwen3_5_sft-final") == "qwen3_5"
-    # A 'qwen3_8b' checkpoint is Qwen3-8B, not Qwen3.8.
+    # A 'qwen3_8b' checkpoint is Qwen3-8B, and 'qwen3-0.6b' is Qwen3-0.6B.
     assert resolve_model_architecture("someorg/qwen3_8b-sft") is None
     assert resolve_model_architecture(tmp_path / "Qwen3_8B") is None
+    assert resolve_model_architecture("Qwen/Qwen3-0.6B") is None
+    assert resolve_model_architecture("org/qwen3.6b-sft") is None
     assert resolve_model_architecture("org/qwen3.55-exp") is None
 
 

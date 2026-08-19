@@ -28,9 +28,10 @@ logger = logging.getLogger(__name__)
 _NATIVE_PREFIX = "base_model.model.model.layers."
 _ALIASED_PREFIX = "base_model.model.model.language_model.layers."
 
-# Anchored on both sides so unrelated names cannot collide: "qwen3_8b" is a
-# Qwen3-8B checkpoint, not Qwen3.8, and must not pick up Gated DeltaNet targets.
-_QWEN3_5_PATH_MARKER = re.compile(r"(?<![a-z0-9])qwen3[._][58](?![a-z0-9])")
+# Matches Qwen3.5, Qwen3.6, and Qwen3.8 names. Anchored on both sides so
+# unrelated names cannot collide: "qwen3_8b" is a Qwen3-8B checkpoint, and
+# "qwen3-0.6b" is Qwen3-0.6B; neither may pick up Gated DeltaNet targets.
+_QWEN3_5_PATH_MARKER = re.compile(r"(?<![a-z0-9])qwen3[._][568](?![a-z0-9])")
 
 
 def load_model_config_json(model_path: str | Path) -> dict | None:
@@ -83,7 +84,7 @@ def resolve_model_series_and_architecture(
     available, e.g. for configured Hugging Face IDs not yet downloaded.
 
     The series ('qwen'/'llama') selects the broad module map; the architecture
-    (currently only ``qwen3_5``; Qwen3.8 uses it too) selects
+    (currently only ``qwen3_5``; Qwen3.6 and Qwen3.8 use it too) selects
     behavior a series cannot express, such as Gated DeltaNet projection names.
     """
     config = load_model_config_json(model_path)

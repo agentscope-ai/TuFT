@@ -22,8 +22,8 @@ MODULE_MAP = {
     },
 }
 
-# Qwen3.5-based models share Transformers' ``qwen3_5`` architecture (Qwen3.8
-# uses it too). Three out of every four text layers use Gated DeltaNet rather
+# Qwen3.5-based models share Transformers' ``qwen3_5`` architecture (Qwen3.6
+# and Qwen3.8 use it too). Three out of every four text layers use Gated DeltaNet rather
 # than full attention, and
 # PEFT suffix-matches target names. Keeping the ``linear_attn.`` qualifier is
 # important: it selects only the text DeltaNet projections and cannot match
