@@ -990,9 +990,7 @@ class TrainingController:
         """Explain why a persisted run no longer matches current target resolution."""
 
         try:
-            expected_targets = self._effective_lora_targets(
-                record.base_model, record.lora_config()
-            )
+            expected_targets = self._effective_lora_targets(record.base_model, record.lora_config())
         except InvalidRequestException as exc:
             return exc.detail
 
@@ -1019,8 +1017,7 @@ class TrainingController:
             return (
                 "the run records target parameters "
                 f"{sorted(record.target_parameters or [])} but the server now "
-                f"resolves {sorted(expected_targets.parameters)}."
-                + (f" {hint}" if hint else "")
+                f"resolves {sorted(expected_targets.parameters)}." + (f" {hint}" if hint else "")
             )
 
         return None
