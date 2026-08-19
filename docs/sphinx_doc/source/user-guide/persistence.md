@@ -166,10 +166,10 @@ model. This dedicated opt-in intentionally overrides client modifiers and record
 Q/V as the run's effective geometry. Configuring `[q_proj, v_proj]` only through
 `fsdp_target_modules` is rejected so this override cannot happen accidentally.
 
-How client LoRA flags resolve to module names, the Qwen3.5 target-module
-breaking change (which makes old Qwen3.5 checkpoints unloadable and marks old
-FSDP runs corrupted on restart), and the other target-module rules are
-described in [LoRA Target Modules](lora-target-modules.md).
+How client LoRA flags resolve to module names, the 0.2.0 breaking change to
+Qwen3.5 target modules (which makes pre-0.2.0 Qwen3.5 checkpoints unloadable
+and marks old FSDP runs corrupted on restart), and the other target-module
+rules are described in [LoRA Target Modules](lora-target-modules.md).
 
 ---
 

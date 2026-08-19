@@ -18,13 +18,13 @@ use), three of every four text layers use Gated DeltaNet instead of full
 attention, so `train_attn` additionally covers `linear_attn.in_proj_qkv`,
 `linear_attn.in_proj_z`, and `linear_attn.out_proj`.
 
-## Breaking change: Qwen3.5-based models
+## Breaking change in 0.2.0: Qwen3.5-based models
 
-The fix for issue #149 added the Tinker-compatible `linear_attn.in_proj_qkv`,
-`linear_attn.in_proj_z`, and `linear_attn.out_proj` modules to the LoRA target
-list for Qwen3.5-based models. Checkpoints and training runs from before this
-change use the old, shorter list, and the two lists must match exactly. After
-upgrading:
+Release 0.2.0 (the fix for issue #149) added the Tinker-compatible
+`linear_attn.in_proj_qkv`, `linear_attn.in_proj_z`, and `linear_attn.out_proj`
+modules to the LoRA target list for Qwen3.5-based models. Checkpoints and
+training runs from before 0.2.0 use the old, shorter list, and the two lists
+must match exactly. After upgrading to 0.2.0:
 
 - Old checkpoints for these models cannot be loaded.
 - Old FSDP training runs are marked corrupted when the server restarts.
