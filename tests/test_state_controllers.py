@@ -1057,6 +1057,50 @@ async def test_restore_marks_run_corrupted_when_recorded_geometry_is_stale(
 
 
 @pytest.mark.asyncio
+async def test_restore_marks_run_corrupted_when_recorded_parameters_are_stale(
+    request, tmp_path, monkeypatch
+) -> None:
+    """A run whose recorded fused-parameter targets no longer resolve is corrupted.
+
+    Mirrors the module-geometry check: recreating the adapter would silently
+    train a different set of fused parameters (e.g. MoE routed experts,
+    issue #154) than the record and all past metadata say.
+    """
+    use_gpu = request.config.getoption("--gpu")
+    state = await _build_state(tmp_path, use_gpu)
+    session_id = _create_session(state)
+    training = await state.create_model(
+        session_id,
+        model_owner="tester",
+        base_model="Qwen/Qwen3-0.6B",
+        lora_config=types.LoraConfig(rank=4, train_unembed=False),
+        user_metadata=None,
+    )
+    record = state.training.training_runs[training.training_run_id]
+    backend = state.training.training_backends["Qwen/Qwen3-0.6B"]
+    await backend.remove_adapter(training.training_run_id)
+    # Simulate a record whose stored parameter targets the server no longer
+    # resolves for this model.
+    assert record.target_parameters == []
+    record.target_parameters = ["mlp.experts.gate_up_proj", "mlp.experts.down_proj"]
+
+    created: list[str] = []
+    original_create_adapter = backend.create_adapter
+
+    async def recording_create_adapter(lora_id, lora_config):
+        created.append(lora_id)
+        await original_create_adapter(lora_id, lora_config)
+
+    monkeypatch.setattr(backend, "create_adapter", recording_create_adapter)
+
+    restored = await state.training.restore_from_checkpoint(training.training_run_id)
+
+    assert restored is None
+    assert record.corrupted is True
+    assert created == []
+
+
+@pytest.mark.asyncio
 async def test_restore_releases_fallback_adapter_when_load_keeps_failing(
     request, tmp_path, monkeypatch
 ) -> None:

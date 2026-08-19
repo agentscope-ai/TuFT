@@ -107,6 +107,11 @@ class ModelConfig(BaseModel):
     # the same model-series map as the HF backend. Q/V-only geometry must use the
     # dedicated fsdp_qv_only setting above.
     fsdp_target_modules: list[str] | None = None
+    # Explicit fused-parameter targets (peft target_parameters), e.g. the routed
+    # experts of Qwen3.5-based MoE models. When omitted, they resolve from the
+    # fsdp_train_* modifiers through the same model map as the HF backend; an
+    # unknown model family resolves to none. fsdp_qv_only implies none.
+    fsdp_target_parameters: list[str] | None = None
     fsdp_train_attn: bool = True
     fsdp_train_mlp: bool = True
     fsdp_train_unembed: bool = True
@@ -193,6 +198,21 @@ class ModelConfig(BaseModel):
             if len(set(normalized)) != len(normalized):
                 raise ValueError("fsdp_target_modules cannot contain duplicates")
             self.fsdp_target_modules = normalized
+        if self.fsdp_target_parameters is not None:
+            # An explicit empty list is meaningful: it pins the pool to "no
+            # fused-parameter targets" instead of resolving them from flags.
+            normalized_parameters = [param.strip() for param in self.fsdp_target_parameters]
+            if any(not param for param in normalized_parameters):
+                raise ValueError("fsdp_target_parameters cannot contain empty parameter names")
+            if len(set(normalized_parameters)) != len(normalized_parameters):
+                raise ValueError("fsdp_target_parameters cannot contain duplicates")
+            self.fsdp_target_parameters = normalized_parameters
+            if self.fsdp_qv_only and normalized_parameters:
+                raise ValueError(
+                    "fsdp_qv_only=true conflicts with fsdp_target_parameters="
+                    f"{self.fsdp_target_parameters}; omit fsdp_target_parameters or set "
+                    "it to []"
+                )
         if self.fsdp_qv_only and self.training_backend != "fsdp":
             raise ValueError("fsdp_qv_only requires training_backend='fsdp'")
         if self.training_backend != "fsdp":

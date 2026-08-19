@@ -19,7 +19,8 @@ from transformers import AutoModelForCausalLM
 from tuft.backends.lora_modules import (
     MODULE_MAP,
     find_unmatched_target_modules,
-    get_target_modules,
+    find_unmatched_target_parameters,
+    get_lora_targets,
 )
 from tuft.backends.loss_inputs import (
     MODEL_DERIVED_LOSS_INPUTS,
@@ -110,14 +111,21 @@ def build_peft_lora_config(
     ``ModelConfig.lora_alpha_ratio`` via ``compute_lora_alpha`` — the same helper
     the FSDP backend's slot pool uses, so both backends scale a given rank
     identically.
+
+    ``target_parameters`` (fused MoE routed experts) is only set when the
+    resolved geometry has any: peft requires every adapter that uses
+    parameter targets to use the same set, and ``None`` keeps adapters
+    without them (e.g. ``train_mlp=False``) freely mixable with them.
     """
+    targets = get_lora_targets(
+        model_path,
+        lora_config,
+        qwen_gated_deltanet_full_lora=qwen_gated_deltanet_full_lora,
+    )
     return LoraConfig(
         r=lora_config.rank,
-        target_modules=get_target_modules(
-            model_path,
-            lora_config,
-            qwen_gated_deltanet_full_lora=qwen_gated_deltanet_full_lora,
-        ),
+        target_modules=targets.modules,
+        target_parameters=targets.parameters or None,
         lora_alpha=compute_lora_alpha(lora_config.rank, lora_alpha_ratio),
     )
 
@@ -186,6 +194,17 @@ class HFTrainingModel:
                         f"base model '{self.config.model_path}'. The model may be "
                         "mislabeled or use different module names; check that its "
                         "config.json model_type matches the real architecture."
+                    )
+                unmatched_parameters = find_unmatched_target_parameters(
+                    (name for name, _ in self.model.named_parameters()),
+                    peft_config.target_parameters or [],
+                )
+                if unmatched_parameters:
+                    raise ValueError(
+                        f"LoRA target parameters {sorted(unmatched_parameters)} match no "
+                        f"parameter in base model '{self.config.model_path}'. The model "
+                        "may be mislabeled or use different parameter names; check that "
+                        "its config.json model_type matches the real architecture."
                     )
 
                 self.model.add_adapter(adapter_name=lora_id, peft_config=peft_config)

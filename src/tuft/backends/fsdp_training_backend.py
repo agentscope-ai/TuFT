@@ -41,11 +41,13 @@ from tuft.backends.fsdp_engine import (
     forward_backward as fsdp_forward_backward,
 )
 from tuft.backends.lora_modules import (
-    achievable_target_module_sets,
+    achievable_lora_target_sets,
     find_unmatched_target_modules,
+    find_unmatched_target_parameters,
     gated_deltanet_mismatch_hint,
-    get_target_modules,
-    resolve_target_modules,
+    get_lora_targets,
+    resolve_lora_targets,
+    routed_expert_mismatch_hint,
 )
 from tuft.backends.loss_inputs import (
     FSDP_BACKEND_OWNED_LOSS_INPUTS,
@@ -213,6 +215,10 @@ class SlotPoolConfig:
     rank_slots: Dict[int, int] = field(default_factory=lambda: {8: 16, 16: 8})
     lora_alpha_ratio: int = DEFAULT_LORA_ALPHA_RATIO
     target_modules: List[str] = field(default_factory=lambda: list(_DEFAULT_TARGET_MODULES))
+    # Fused-parameter targets (peft target_parameters), e.g. MoE routed
+    # experts. Homogeneous across slots like target_modules — peft requires
+    # every adapter using parameter targets to use the same set anyway.
+    target_parameters: List[str] = field(default_factory=list)
 
     def get_lora_alpha(self, rank: int) -> int:
         return compute_lora_alpha(rank, self.lora_alpha_ratio)
@@ -226,6 +232,7 @@ class AdapterInfo:
     rank: int
     lora_alpha: int
     target_modules: List[str]
+    target_parameters: List[str] = field(default_factory=list)
     optimizer: Any = None
     step_count: int = 0
 
@@ -256,86 +263,126 @@ def _get_rank_slots_from_config(config: ModelConfig) -> Dict[int, int]:
     return {8: 16, max_rank: 8}
 
 
-def _get_target_modules_from_config(config: ModelConfig) -> List[str]:
-    """Resolve the homogeneous target geometry allocated by the FSDP slot pool."""
+def _get_target_geometry_from_config(config: ModelConfig) -> tuple[List[str], List[str]]:
+    """Resolve the homogeneous (modules, parameters) geometry of the slot pool.
+
+    ``fsdp_target_modules`` and ``fsdp_target_parameters`` each override their
+    side explicitly; a side left unset resolves from the ``fsdp_train_*``
+    modifiers through the shared model map. Unknown model families need an
+    explicit module list, and resolve to no fused-parameter targets — only
+    architectures the map knows (currently Qwen3.5-based MoE) have any.
+    """
 
     if config.fsdp_qv_only:
-        return list(FSDP_QV_TARGET_MODULES)
-    explicit = getattr(config, "fsdp_target_modules", None)
-    if explicit is not None:
-        return list(explicit)
+        return list(FSDP_QV_TARGET_MODULES), []
+    explicit_modules = getattr(config, "fsdp_target_modules", None)
+    explicit_parameters = getattr(config, "fsdp_target_parameters", None)
 
-    try:
-        modules = resolve_target_modules(
-            str(config.model_path),
-            train_attn=getattr(config, "fsdp_train_attn", True),
-            train_mlp=getattr(config, "fsdp_train_mlp", True),
-            train_unembed=getattr(config, "fsdp_train_unembed", True),
-            qwen_gated_deltanet_full_lora=getattr(config, "qwen_gated_deltanet_full_lora", False),
-        )
-    except ValueError as exc:
+    resolved = None
+    resolve_error: ValueError | None = None
+    if explicit_modules is None or explicit_parameters is None:
+        try:
+            resolved = resolve_lora_targets(
+                str(config.model_path),
+                train_attn=getattr(config, "fsdp_train_attn", True),
+                train_mlp=getattr(config, "fsdp_train_mlp", True),
+                train_unembed=getattr(config, "fsdp_train_unembed", True),
+                qwen_gated_deltanet_full_lora=getattr(
+                    config, "qwen_gated_deltanet_full_lora", False
+                ),
+            )
+        except ValueError as exc:
+            resolve_error = exc
+
+    if explicit_modules is not None:
+        modules = list(explicit_modules)
+    elif resolved is not None:
+        modules = list(resolved.modules)
+    else:
         raise ValueError(
             "Cannot infer FSDP LoRA target modules for model "
-            f"{config.model_path}: {exc}. FSDP must allocate its adapter geometry "
-            "before sharding; configure fsdp_target_modules explicitly."
-        ) from exc
-    if not modules:
+            f"{config.model_path}: {resolve_error}. FSDP must allocate its adapter "
+            "geometry before sharding; configure fsdp_target_modules explicitly."
+        ) from resolve_error
+
+    if explicit_parameters is not None:
+        parameters = list(explicit_parameters)
+    else:
+        # An unknown family cannot resolve, and only ever ran through the
+        # explicit-modules escape hatch; keep it running with no fused
+        # parameters instead of failing on the side it never used.
+        parameters = list(resolved.parameters) if resolved is not None else []
+
+    if not modules and not parameters:
         raise ValueError(
-            "FSDP LoRA slot geometry resolved to no target modules; enable at least one "
+            "FSDP LoRA slot geometry resolved to no targets; enable at least one "
             "of fsdp_train_attn/fsdp_train_mlp/fsdp_train_unembed or set "
             "fsdp_target_modules explicitly."
         )
-    return modules
+    return modules, parameters
 
 
 def _validate_explicit_target_modules(config: ModelConfig) -> None:
-    """Stop startup when no client request can match the configured module list.
+    """Stop startup when no client request can match the configured geometry.
 
     ``fsdp_target_modules`` is still the escape hatch for model families the
     resolver does not know; those skip this check. For known families,
-    ``_validate_lora_config`` requires the client's module list to equal the
-    slot pool's list exactly. An outdated list — for example one from before
-    issue #149 added the Qwen3.5 ``linear_attn.*`` modules — would
+    ``_validate_lora_config`` requires the client's geometry to equal the
+    slot pool's exactly. An outdated list — for example one from before
+    issue #149 added the Qwen3.5 ``linear_attn.*`` modules, or one from
+    before issue #154 added the MoE routed-expert parameters — would
     otherwise boot a server that rejects every create_training_run.
     """
 
     if config.fsdp_qv_only:
         return
-    explicit = getattr(config, "fsdp_target_modules", None)
-    if explicit is None:
+    explicit_modules = getattr(config, "fsdp_target_modules", None)
+    explicit_parameters = getattr(config, "fsdp_target_parameters", None)
+    if explicit_modules is None and explicit_parameters is None:
         return
-    achievable = achievable_target_module_sets(
+    achievable = achievable_lora_target_sets(
         str(config.model_path),
         qwen_gated_deltanet_full_lora=config.qwen_gated_deltanet_full_lora,
     )
     if achievable is None:
         return
-    explicit_set = set(explicit)
-    if any(explicit_set == set(modules) for modules in achievable):
+    modules, parameters = _get_target_geometry_from_config(config)
+    module_set, parameter_set = set(modules), set(parameters)
+    if any(
+        module_set == set(targets.modules) and parameter_set == set(targets.parameters)
+        for targets in achievable
+    ):
         return
     hint = next(
         (
             notice
-            for modules in achievable
-            if (notice := gated_deltanet_mismatch_hint(explicit, modules)) is not None
+            for targets in achievable
+            if (
+                notice := gated_deltanet_mismatch_hint(modules, targets.modules)
+                or routed_expert_mismatch_hint(parameters, targets.parameters)
+            )
+            is not None
         ),
         None,
     )
-    achievable_summary = " or ".join(str(sorted(set(modules))) for modules in achievable)
+    achievable_summary = " or ".join(
+        f"modules {sorted(set(targets.modules))} with parameters {sorted(set(targets.parameters))}"
+        for targets in achievable
+    )
     raise ValueError(
-        f"fsdp_target_modules={sorted(explicit_set)} for model "
+        f"fsdp_target_modules={sorted(module_set)} with "
+        f"fsdp_target_parameters={sorted(parameter_set)} for model "
         f"'{config.model_name}' ({config.model_path}) cannot be requested by any client: "
         f"client LoRA flags can only produce {achievable_summary}, so every "
-        "create_training_run would fail. Set fsdp_target_modules to one of those "
-        "lists, or remove it to use the default, then restart the server."
-        + (f" {hint}" if hint else "")
+        "create_training_run would fail. Set the explicit geometry to one of those, "
+        "or remove it to use the default, then restart the server." + (f" {hint}" if hint else "")
     )
 
 
 def _config_to_worker_dict(config: ModelConfig) -> dict:
     """Convert ModelConfig to the serializable subset needed by Ray workers."""
 
-    target_modules = _get_target_modules_from_config(config)
+    target_modules, target_parameters = _get_target_geometry_from_config(config)
     rank_slots = _get_rank_slots_from_config(config)
     return {
         "model_path": str(config.model_path),
@@ -346,6 +393,7 @@ def _config_to_worker_dict(config: ModelConfig) -> dict:
             "rank_slots": rank_slots,
             "lora_alpha_ratio": int(getattr(config, "lora_alpha_ratio", DEFAULT_LORA_ALPHA_RATIO)),
             "target_modules": target_modules,
+            "target_parameters": target_parameters,
         },
     }
 
@@ -374,6 +422,7 @@ def _worker_dict_to_configs(config_dict: dict) -> tuple[FSDPModelConfig, SlotPoo
         rank_slots=dict(sc.get("rank_slots", {8: 16})),
         lora_alpha_ratio=int(sc.get("lora_alpha_ratio", DEFAULT_LORA_ALPHA_RATIO)),
         target_modules=list(sc.get("target_modules", _DEFAULT_TARGET_MODULES)),
+        target_parameters=list(sc.get("target_parameters", [])),
     )
     return model_config, slot_config
 
@@ -431,6 +480,17 @@ class MultiAdapterFSDPWorker:
                 "or use different module names; check that its config.json model_type "
                 "matches the real architecture, or fix fsdp_target_modules."
             )
+        unmatched_parameters = find_unmatched_target_parameters(
+            (name for name, _ in base_model.named_parameters()),
+            self.slot_config.target_parameters,
+        )
+        if unmatched_parameters:
+            raise ValueError(
+                f"FSDP LoRA target parameters {sorted(unmatched_parameters)} match no "
+                f"parameter in base model '{self.model_config.path}'. The model may be "
+                "mislabeled or use different parameter names; check that its config.json "
+                "model_type matches the real architecture, or fix fsdp_target_parameters."
+            )
 
         peft_model = None
         for rank, count in self.slot_config.rank_slots.items():
@@ -442,6 +502,7 @@ class MultiAdapterFSDPWorker:
                     r=rank,
                     lora_alpha=lora_alpha,
                     target_modules=list(self.slot_config.target_modules),
+                    target_parameters=list(self.slot_config.target_parameters) or None,
                 )
                 if peft_model is None:
                     peft_model = get_peft_model(
@@ -457,6 +518,7 @@ class MultiAdapterFSDPWorker:
                     rank=rank,
                     lora_alpha=lora_alpha,
                     target_modules=list(self.slot_config.target_modules),
+                    target_parameters=list(self.slot_config.target_parameters),
                 )
                 self._adapters_by_rank.setdefault(rank, []).append(name)
                 self._allocated[name] = False
@@ -718,6 +780,10 @@ class MultiAdapterFSDPWorker:
                     "r": info.rank,
                     "lora_alpha": info.lora_alpha,
                     "target_modules": list(info.target_modules),
+                    # peft restores fused-parameter targets (MoE routed experts)
+                    # from this field; without it a reload would silently drop
+                    # their weights.
+                    "target_parameters": list(info.target_parameters) or None,
                     "lora_dropout": 0.0,
                     "fan_in_fan_out": False,
                     "bias": "none",
@@ -756,6 +822,7 @@ class MultiAdapterFSDPWorker:
         path: str | Path,
         checkpoint_modules: List[str],
         optimizer: bool = True,
+        checkpoint_parameters: List[str] | None = None,
     ) -> None:
         path = Path(path)
         expected_modules = self._adapters[adapter_name].target_modules
@@ -763,6 +830,13 @@ class MultiAdapterFSDPWorker:
             raise RuntimeError(
                 f"Cannot load FSDP checkpoint targeting modules {sorted(checkpoint_modules)} "
                 f"into a slot targeting {sorted(expected_modules)}."
+            )
+        expected_parameters = self._adapters[adapter_name].target_parameters
+        if set(checkpoint_parameters or []) != set(expected_parameters):
+            raise RuntimeError(
+                f"Cannot load FSDP checkpoint targeting parameters "
+                f"{sorted(checkpoint_parameters or [])} into a slot targeting "
+                f"parameters {sorted(expected_parameters)}."
             )
         state = torch.load(path / "adapter.pt", map_location="cpu", weights_only=True)
         # Build a slot-name-independent lookup: canonicalize saved keys so a checkpoint
@@ -983,10 +1057,17 @@ class FSDPWorkerActor:
         path: str,
         checkpoint_modules: List[str],
         optimizer: bool = True,
+        checkpoint_parameters: List[str] | None = None,
     ) -> None:
         if self._worker is None:
             return
-        self._worker.load_checkpoint(adapter_name, Path(path), checkpoint_modules, optimizer)
+        self._worker.load_checkpoint(
+            adapter_name,
+            Path(path),
+            checkpoint_modules,
+            optimizer,
+            checkpoint_parameters=checkpoint_parameters,
+        )
 
 
 # =============================================================================
@@ -1169,7 +1250,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             return
         explicit_modules = self.config.fsdp_target_modules
         try:
-            requested_modules = get_target_modules(
+            requested = get_lora_targets(
                 str(self.config.model_path),
                 lora_config,
                 qwen_gated_deltanet_full_lora=self.config.qwen_gated_deltanet_full_lora,
@@ -1182,26 +1263,34 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                 return
             raise InvalidRequestException(str(exc)) from exc
         slot_modules = self._slot_config.target_modules
-        if set(requested_modules) == set(slot_modules):
+        slot_parameters = self._slot_config.target_parameters
+        if set(requested.modules) == set(slot_modules) and set(requested.parameters) == set(
+            slot_parameters
+        ):
             return
         modifier_summary = (
             f"train_attn={lora_config.train_attn}, train_mlp={lora_config.train_mlp}, "
             f"train_unembed={lora_config.train_unembed}"
         )
         slot_description = (
-            f"the server's explicit fsdp_target_modules={sorted(slot_modules)}"
-            if explicit_modules is not None
-            else f"the preallocated slot pool targets {sorted(slot_modules)}"
+            f"the server's explicit FSDP geometry targets modules {sorted(slot_modules)} "
+            f"with parameters {sorted(slot_parameters)}"
+            if explicit_modules is not None or self.config.fsdp_target_parameters is not None
+            else f"the preallocated slot pool targets modules {sorted(slot_modules)} "
+            f"with parameters {sorted(slot_parameters)}"
         )
         raise InvalidRequestException(
-            "FSDP LoRA target-module mismatch: client modifiers "
-            f"({modifier_summary}) resolve to {sorted(requested_modules)}, but "
+            "FSDP LoRA target mismatch: client modifiers "
+            f"({modifier_summary}) resolve to modules {sorted(requested.modules)} with "
+            f"parameters {sorted(requested.parameters)}, but "
             f"{slot_description}. The training run was not created. Change the client modifiers, "
-            "or reconfigure the server's FSDP target geometry and restart it so both module "
-            "sets match."
+            "or reconfigure the server's FSDP target geometry and restart it so both "
+            "geometries match."
         )
 
-    def _validate_checkpoint_geometry(self, checkpoint_record: CheckpointRecord) -> List[str]:
+    def _validate_checkpoint_geometry(
+        self, checkpoint_record: CheckpointRecord
+    ) -> tuple[List[str], List[str]]:
         """Return validated checkpoint geometry for the worker load."""
 
         checkpoint_modules = checkpoint_record.saved_target_modules
@@ -1220,7 +1309,16 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                 f"modules {sorted(checkpoint_modules)} into a slot targeting "
                 f"{sorted(slot_modules)}." + (f" {hint}" if hint else "")
             )
-        return checkpoint_modules
+        checkpoint_parameters = checkpoint_record.saved_target_parameters
+        slot_parameters = self._slot_config.target_parameters
+        if set(checkpoint_parameters) != set(slot_parameters):
+            hint = routed_expert_mismatch_hint(checkpoint_parameters, slot_parameters)
+            raise InvalidRequestException(
+                f"Cannot load FSDP checkpoint {checkpoint_record.checkpoint_id} targeting "
+                f"parameters {sorted(checkpoint_parameters)} into a slot targeting "
+                f"parameters {sorted(slot_parameters)}." + (f" {hint}" if hint else "")
+            )
+        return checkpoint_modules, checkpoint_parameters
 
     async def create_adapter(self, lora_id: str, lora_config: types.LoraConfig) -> None:
         self._validate_lora_config(lora_config)
@@ -1481,7 +1579,9 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         checkpoint_record: CheckpointRecord,
         optimizer: bool,
     ) -> None:
-        checkpoint_modules = self._validate_checkpoint_geometry(checkpoint_record)
+        checkpoint_modules, checkpoint_parameters = self._validate_checkpoint_geometry(
+            checkpoint_record
+        )
         adapter_name = self._get_adapter_name(lora_id)
         path = checkpoint_record.adapter_path
         if self._worker is not None:
@@ -1492,6 +1592,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                     path,
                     checkpoint_modules,
                     optimizer,
+                    checkpoint_parameters,
                 )
         else:
             import ray
@@ -1502,6 +1603,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                     str(path),
                     checkpoint_modules,
                     optimizer,
+                    checkpoint_parameters,
                 )
                 for a in self._actors
             ]

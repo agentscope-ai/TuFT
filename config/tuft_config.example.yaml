@@ -49,6 +49,9 @@ model_owner: local-user
 #       modifiers so Q/V-only checkpoints can be loaded (default: false)
 #   - fsdp_target_modules: Explicit homogeneous target geometry for every FSDP slot
 #       (default: null; inferred from the fsdp_train_* modifiers at startup)
+#   - fsdp_target_parameters: Explicit fused-parameter targets (peft
+#       target_parameters), e.g. the routed experts of Qwen3.5-based MoE models
+#       (default: null; inferred from the fsdp_train_* modifiers at startup)
 #   - fsdp_train_attn/fsdp_train_mlp/fsdp_train_unembed: Target geometry modifiers
 #       (defaults: true/true/true)
 #       FSDP target geometry is allocated at server startup and cannot be changed

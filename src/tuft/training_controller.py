@@ -77,6 +77,10 @@ class TrainingRunRecord(BaseModel):
     # Concrete module geometry resolved when the adapter was created. None is
     # accepted only while reading older persisted records, which become read-only.
     target_modules: list[str] | None = None
+    # Concrete fused-parameter geometry (peft target_parameters), e.g. MoE
+    # routed experts. None on records from before the field existed; those
+    # trained none, so None compares as the empty list.
+    target_parameters: list[str] | None = None
     session_id: str
     model_owner: str
     user_metadata: dict[str, str] | None = None
@@ -391,7 +395,7 @@ class TrainingController:
                 if base_model not in self.training_backends:
                     raise UnknownModelException(model_name=base_model)
                 backend = self.training_backends[base_model]
-                target_modules = self._effective_target_modules(base_model, lora_config)
+                effective_targets = self._effective_lora_targets(base_model, lora_config)
                 record = TrainingRunRecord(
                     training_run_id=model_id,
                     base_model=base_model,
@@ -399,7 +403,8 @@ class TrainingController:
                     train_attn=lora_config.train_attn,
                     train_mlp=lora_config.train_mlp,
                     train_unembed=lora_config.train_unembed,
-                    target_modules=target_modules,
+                    target_modules=effective_targets.modules,
+                    target_parameters=effective_targets.parameters,
                     session_id=session_id,
                     model_owner=model_owner,
                     user_metadata=user_metadata,
@@ -649,6 +654,7 @@ class TrainingController:
                     train_mlp=training_run.train_mlp,
                     train_unembed=training_run.train_unembed,
                     target_modules=training_run.target_modules,
+                    target_parameters=training_run.target_parameters,
                 )
 
                 # Compute total size including metadata.json
@@ -664,6 +670,7 @@ class TrainingController:
                     train_mlp=training_run.train_mlp,
                     train_unembed=training_run.train_unembed,
                     target_modules=training_run.target_modules,
+                    target_parameters=training_run.target_parameters,
                 )
                 # save the checkpoint record in the training run
                 target_map[checkpoint_name] = checkpoint
@@ -821,6 +828,19 @@ class TrainingController:
                 f"{sorted(source_modules)} into a training run targeting "
                 f"{sorted(destination_modules)}." + (f" {hint}" if hint else "")
             )
+        # Runs and checkpoints from before issue #154 record no fused-parameter
+        # targets and trained none, so absence compares as the empty set.
+        source_parameters = set(checkpoint.saved_target_parameters)
+        destination_parameters = set(destination.target_parameters or [])
+        if source_parameters != destination_parameters:
+            from .backends.lora_modules import routed_expert_mismatch_hint
+
+            hint = routed_expert_mismatch_hint(source_parameters, destination_parameters)
+            raise InvalidRequestException(
+                f"Cannot load checkpoint {checkpoint_id} targeting LoRA parameters "
+                f"{sorted(source_parameters)} into a training run targeting "
+                f"parameters {sorted(destination_parameters)}." + (f" {hint}" if hint else "")
+            )
 
     def _model_config_for(self, base_model: str) -> ModelConfig | None:
         return next(
@@ -828,25 +848,32 @@ class TrainingController:
             None,
         )
 
-    def _effective_target_modules(
-        self, base_model: str, lora_config: types.LoraConfig
-    ) -> list[str]:
+    def _effective_lora_targets(self, base_model: str, lora_config: types.LoraConfig):
         """Resolve the concrete geometry persisted for a newly created run."""
+
+        from .backends.lora_modules import LoraTargets, get_lora_targets
 
         model_config = self._model_config_for(base_model)
         if model_config is None:
             raise UnknownModelException(model_name=base_model)
         if model_config.training_backend == "fsdp" and model_config.fsdp_qv_only:
             # fsdp_qv_only is a documented override of all client modifiers.
-            return list(FSDP_QV_TARGET_MODULES)
-        if model_config.training_backend == "fsdp" and model_config.fsdp_target_modules is not None:
-            # Persist the explicit slot geometry. FSDPTrainingBackend separately
-            # rejects resolvable client modifiers that request a different set.
-            return list(model_config.fsdp_target_modules)
-        from .backends.lora_modules import get_target_modules
+            return LoraTargets(modules=list(FSDP_QV_TARGET_MODULES), parameters=[])
+        if model_config.training_backend == "fsdp" and (
+            model_config.fsdp_target_modules is not None
+            or model_config.fsdp_target_parameters is not None
+        ):
+            # Persist the explicit slot geometry, resolving whichever side the
+            # operator left implicit exactly the way the slot pool does.
+            # FSDPTrainingBackend separately rejects resolvable client
+            # modifiers that request a different set.
+            from .backends.fsdp_training_backend import _get_target_geometry_from_config
+
+            modules, parameters = _get_target_geometry_from_config(model_config)
+            return LoraTargets(modules=modules, parameters=parameters)
 
         try:
-            return get_target_modules(
+            return get_lora_targets(
                 str(model_config.model_path),
                 lora_config,
                 qwen_gated_deltanet_full_lora=model_config.qwen_gated_deltanet_full_lora,
@@ -856,6 +883,13 @@ class TrainingController:
                 f"Cannot resolve effective LoRA target modules for base model {base_model}: "
                 f"{exc}. Use a supported model series or configure explicit FSDP targets."
             ) from exc
+
+    def _effective_target_modules(
+        self, base_model: str, lora_config: types.LoraConfig
+    ) -> list[str]:
+        """Resolve the concrete module geometry persisted for a newly created run."""
+
+        return self._effective_lora_targets(base_model, lora_config).modules
 
     def delete_checkpoint(self, model_id: str, user_id: str, checkpoint_id: str) -> None:
         training_run = self.get_run_record(model_id, user_id)
@@ -967,21 +1001,39 @@ class TrainingController:
             # corrupted instead of silently training different modules.
             mismatch: str | None = None
             try:
-                expected_modules = self._effective_target_modules(
+                expected_targets = self._effective_lora_targets(
                     record.base_model, record.lora_config()
                 )
             except InvalidRequestException as exc:
-                expected_modules = None
+                expected_targets = None
                 mismatch = exc.detail
-            if expected_modules is not None and set(expected_modules) != set(
+            if expected_targets is not None and set(expected_targets.modules) != set(
                 record.target_modules or []
             ):
                 from .backends.lora_modules import gated_deltanet_mismatch_hint
 
-                hint = gated_deltanet_mismatch_hint(record.target_modules or [], expected_modules)
+                hint = gated_deltanet_mismatch_hint(
+                    record.target_modules or [], expected_targets.modules
+                )
                 mismatch = (
                     f"the run records target modules {sorted(record.target_modules or [])} "
-                    f"but the server now resolves {sorted(expected_modules)}."
+                    f"but the server now resolves {sorted(expected_targets.modules)}."
+                    + (f" {hint}" if hint else "")
+                )
+            elif expected_targets is not None and set(expected_targets.parameters) != set(
+                # Runs from before issue #154 record no parameter targets and
+                # trained none, so absence compares as the empty set.
+                record.target_parameters or []
+            ):
+                from .backends.lora_modules import routed_expert_mismatch_hint
+
+                hint = routed_expert_mismatch_hint(
+                    record.target_parameters or [], expected_targets.parameters
+                )
+                mismatch = (
+                    "the run records target parameters "
+                    f"{sorted(record.target_parameters or [])} but the server now "
+                    f"resolves {sorted(expected_targets.parameters)}."
                     + (f" {hint}" if hint else "")
                 )
             if mismatch is not None:

@@ -36,7 +36,10 @@ dependencies = [
     # Ray workers install only main dependencies when packing; training and sampling need these.
     # vLLM CUDA extensions are built against this exact PyTorch ABI.
     "torch==2.11.0",
-    "peft>=0.18.0",
+    # 0.20 is the first release that supports multiple adapters with
+    # target_parameters on one model, which both training backends need for
+    # Qwen3.5 MoE routed-expert LoRA (multi-run HF adapters, FSDP slot pool).
+    "peft>=0.20.0",
     # Used by transformers device_map="auto" in the HF backend.
     "accelerate>=1.0.0",
     # TuFT integrates with vLLM directly (src/tuft/backends/vllm_engine.py);

@@ -35,8 +35,11 @@ from tuft.backends.lora_modules import (
     MODULE_MAP,
     QWEN3_5_DEFAULT_GATED_DELTANET_TARGET_MODULES,
     QWEN3_5_GATED_DELTANET_TARGET_MODULES,
+    QWEN3_5_MOE_EXPERT_TARGET_PARAMETERS,
     find_unmatched_target_modules,
+    find_unmatched_target_parameters,
     gated_deltanet_mismatch_hint,
+    get_lora_targets,
     get_target_modules,
 )
 from tuft.backends.vllm_lora_compat import resolve_model_architecture, vllm_nests_language_model
@@ -349,23 +352,32 @@ def _tiny_qwen3_5_moe() -> Qwen3_5MoeForConditionalGeneration:
     return Qwen3_5MoeForConditionalGeneration(config)
 
 
-def test_qwen35_moe_lora_trains_shared_expert_and_skips_routed_experts(tmp_path):
-    """The MoE variant resolves the same targets; only the shared expert MLP trains.
+def test_qwen35_moe_lora_trains_shared_and_routed_experts(tmp_path):
+    """train_mlp covers the shared expert modules AND the fused routed experts.
 
-    The routed experts are fused parameters with no per-expert Linear modules,
-    so the mlp names cannot match them. The router (``mlp.gate``) and
-    ``shared_expert_gate`` must stay untouched too. vLLM applies LoRA to the
-    same modules when serving, so nothing trained here is dropped there.
+    The routed experts are fused 3D parameters with no per-expert Linear
+    modules, so they are reached through peft ``target_parameters`` (issue
+    #154), matching Tinker's documented MoE coverage. The router
+    (``mlp.gate``) and ``shared_expert_gate`` must stay untouched. vLLM
+    parses the peft-format expert adapter keys when serving, so nothing
+    trained here is dropped there.
     """
 
     model_dir = tmp_path / "model"
     _write_qwen3_5_moe_config(model_dir)
 
-    assert resolve_model_architecture(model_dir) == "qwen3_5"
+    assert resolve_model_architecture(model_dir) == "qwen3_5_moe"
     assert vllm_nests_language_model(model_dir) is True
 
     public_config = types.LoraConfig(rank=2, train_attn=True, train_mlp=True, train_unembed=False)
+    targets = get_lora_targets(str(model_dir), public_config)
+    assert targets.modules == QWEN_TEXT_TARGETS
+    assert targets.parameters == QWEN3_5_MOE_EXPERT_TARGET_PARAMETERS
     assert get_target_modules(str(model_dir), public_config) == QWEN_TEXT_TARGETS
+
+    # train_mlp=False must not create any routed-expert LoRA weights.
+    attn_only = types.LoraConfig(rank=2, train_attn=True, train_mlp=False, train_unembed=False)
+    assert get_lora_targets(str(model_dir), attn_only).parameters == []
 
     peft_model = get_peft_model(
         _tiny_qwen3_5_moe(), build_peft_lora_config(str(model_dir), public_config)
@@ -375,15 +387,58 @@ def test_qwen35_moe_lora_trains_shared_expert_and_skips_routed_experts(tmp_path)
     full_attention = [name for name in wrapped if ".self_attn." in name]
     linear_attention = [name for name in wrapped if ".linear_attn." in name]
     shared_expert = [name for name in wrapped if ".shared_expert." in name]
+    routed_experts = [name for name in wrapped if name.endswith(".mlp.experts")]
+    nested_experts = [name for name in wrapped if name.endswith(".mlp.experts.base_layer")]
 
     assert len(full_attention) == 1 * 4
     assert len(linear_attention) == 3 * 3
     assert len(shared_expert) == 4 * 3
-    assert len(wrapped) == len(full_attention) + len(linear_attention) + len(shared_expert)
+    # Each layer's fused gate_up_proj/down_proj pair becomes two nested
+    # ParamWrappers on the experts module.
+    assert len(routed_experts) == 4
+    assert len(nested_experts) == 4
+    assert len(wrapped) == (
+        len(full_attention)
+        + len(linear_attention)
+        + len(shared_expert)
+        + len(routed_experts)
+        + len(nested_experts)
+    )
     assert not any(name.endswith(".mlp.gate") for name in wrapped)
-    assert not any(".mlp.experts" in name for name in wrapped)
     assert not any(name.endswith("shared_expert_gate") for name in wrapped)
     assert not any(".visual." in name for name in wrapped)
+
+    # The routed-expert LoRA weights are trainable and reachable by autograd.
+    peft_model.set_adapter("default")
+    expert_lora = {
+        name: param
+        for name, param in peft_model.named_parameters()
+        if ".mlp.experts" in name and ".lora_" in name
+    }
+    assert len(expert_lora) == 4 * 2 * 2  # layers x parameters x (A, B)
+    assert all(param.requires_grad for param in expert_lora.values())
+    input_ids = torch.randint(0, 100, (2, 8))
+    loss = peft_model(input_ids=input_ids, attention_mask=torch.ones_like(input_ids)).logits.sum()
+    loss.backward()
+    lora_b_grads = [param.grad for name, param in expert_lora.items() if ".lora_B." in name]
+    assert all(grad is not None and bool(grad.abs().sum() > 0) for grad in lora_b_grads)
+
+
+def test_qwen35_moe_lora_without_train_mlp_leaves_experts_untouched(tmp_path):
+    """train_mlp=False wraps no expert module and creates no expert weights."""
+
+    model_dir = tmp_path / "model"
+    _write_qwen3_5_moe_config(model_dir)
+    attn_only = types.LoraConfig(rank=2, train_attn=True, train_mlp=False, train_unembed=False)
+    peft_config = build_peft_lora_config(str(model_dir), attn_only)
+    assert not peft_config.target_parameters
+
+    peft_model = get_peft_model(_tiny_qwen3_5_moe(), peft_config)
+    wrapped = _wrapped_lora_modules(peft_model)
+    assert not any(".mlp." in name for name in wrapped)
+    assert not any(
+        ".experts" in name for name, param in peft_model.named_parameters() if param.requires_grad
+    )
 
 
 def test_path_fallback_markers_are_anchored(tmp_path):
@@ -398,6 +453,14 @@ def test_path_fallback_markers_are_anchored(tmp_path):
     assert resolve_model_architecture("Qwen/Qwen3-0.6B") is None
     assert resolve_model_architecture("org/qwen3.6b-sft") is None
     assert resolve_model_architecture("org/qwen3.55-exp") is None
+    # MoE checkpoints carry an active-parameter component such as "A3B".
+    assert resolve_model_architecture("Qwen/Qwen3.6-35B-A3B") == "qwen3_5_moe"
+    assert resolve_model_architecture("org/qwen3_5-30b-a3b-sft") == "qwen3_5_moe"
+    # The marker must be a standalone token of a Qwen3.5-based name.
+    assert resolve_model_architecture("Qwen/Qwen3.5-4B") == "qwen3_5"
+    assert resolve_model_architecture("org/qwen3.5-ba3b") == "qwen3_5"
+    # A Qwen3 MoE checkpoint is not Qwen3.5-based at all.
+    assert resolve_model_architecture("Qwen/Qwen3-30B-A3B") is None
 
 
 def test_resolve_target_modules_reads_config_json_once(monkeypatch, tmp_path):
@@ -584,6 +647,19 @@ def test_every_resolved_target_must_match_a_real_module(tmp_path):
     assert (
         find_unmatched_target_modules(plain_names, targets)
         == QWEN3_5_DEFAULT_GATED_DELTANET_TARGET_MODULES
+    )
+
+    # Parameter targets resolve on the MoE model only; a dense model reports
+    # every fused-expert target as unmatched.
+    moe_param_names = [name for name, _ in _tiny_qwen3_5_moe().named_parameters()]
+    assert (
+        find_unmatched_target_parameters(moe_param_names, QWEN3_5_MOE_EXPERT_TARGET_PARAMETERS)
+        == []
+    )
+    dense_param_names = [name for name, _ in _tiny_qwen3_5(4).named_parameters()]
+    assert (
+        find_unmatched_target_parameters(dense_param_names, QWEN3_5_MOE_EXPERT_TARGET_PARAMETERS)
+        == QWEN3_5_MOE_EXPERT_TARGET_PARAMETERS
     )
 
 
