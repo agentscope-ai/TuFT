@@ -40,7 +40,13 @@ from tuft.backends.fsdp_engine import (
     build_base_model,
     forward_backward as fsdp_forward_backward,
 )
-from tuft.backends.lora_modules import get_target_modules, resolve_target_modules
+from tuft.backends.lora_modules import (
+    achievable_target_module_sets,
+    find_unmatched_target_modules,
+    gated_deltanet_mismatch_hint,
+    get_target_modules,
+    resolve_target_modules,
+)
 from tuft.backends.loss_inputs import (
     FSDP_BACKEND_OWNED_LOSS_INPUTS,
     validate_client_loss_fn_inputs,
@@ -265,6 +271,7 @@ def _get_target_modules_from_config(config: ModelConfig) -> List[str]:
             train_attn=getattr(config, "fsdp_train_attn", True),
             train_mlp=getattr(config, "fsdp_train_mlp", True),
             train_unembed=getattr(config, "fsdp_train_unembed", True),
+            qwen_gated_deltanet_full_lora=getattr(config, "qwen_gated_deltanet_full_lora", False),
         )
     except ValueError as exc:
         raise ValueError(
@@ -279,6 +286,50 @@ def _get_target_modules_from_config(config: ModelConfig) -> List[str]:
             "fsdp_target_modules explicitly."
         )
     return modules
+
+
+def _validate_explicit_target_modules(config: ModelConfig) -> None:
+    """Stop startup when no client request can match the configured module list.
+
+    ``fsdp_target_modules`` is still the escape hatch for model families the
+    resolver does not know; those skip this check. For known families,
+    ``_validate_lora_config`` requires the client's module list to equal the
+    slot pool's list exactly. An outdated list — for example one from before
+    issue #149 added the Qwen3.5 ``linear_attn.*`` modules — would
+    otherwise boot a server that rejects every create_training_run.
+    """
+
+    if config.fsdp_qv_only:
+        return
+    explicit = getattr(config, "fsdp_target_modules", None)
+    if explicit is None:
+        return
+    achievable = achievable_target_module_sets(
+        str(config.model_path),
+        qwen_gated_deltanet_full_lora=config.qwen_gated_deltanet_full_lora,
+    )
+    if achievable is None:
+        return
+    explicit_set = set(explicit)
+    if any(explicit_set == set(modules) for modules in achievable):
+        return
+    hint = next(
+        (
+            notice
+            for modules in achievable
+            if (notice := gated_deltanet_mismatch_hint(explicit, modules)) is not None
+        ),
+        None,
+    )
+    achievable_summary = " or ".join(str(sorted(set(modules))) for modules in achievable)
+    raise ValueError(
+        f"fsdp_target_modules={sorted(explicit_set)} for model "
+        f"'{config.model_name}' ({config.model_path}) cannot be requested by any client: "
+        f"client LoRA flags can only produce {achievable_summary}, so every "
+        "create_training_run would fail. Set fsdp_target_modules to one of those "
+        "lists, or remove it to use the default, then restart the server."
+        + (f" {hint}" if hint else "")
+    )
 
 
 def _config_to_worker_dict(config: ModelConfig) -> dict:
@@ -365,6 +416,21 @@ class MultiAdapterFSDPWorker:
         if self._initialized:
             return
         base_model = build_base_model(self.model_config)
+
+        # PEFT silently skips target names that match nothing, so a mislabeled
+        # model would get slots that train fewer modules than they record.
+        # Stop the worker instead.
+        unmatched = find_unmatched_target_modules(
+            (name for name, _ in base_model.named_modules()),
+            self.slot_config.target_modules,
+        )
+        if unmatched:
+            raise ValueError(
+                f"FSDP LoRA target modules {sorted(unmatched)} match no module in base "
+                f"model '{self.model_config.path}'. The model may be mislabeled "
+                "or use different module names; check that its config.json model_type "
+                "matches the real architecture, or fix fsdp_target_modules."
+            )
 
         peft_model = None
         for rank, count in self.slot_config.rank_slots.items():
@@ -956,6 +1022,9 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         # target modules.
         self._config_dict = _config_to_worker_dict(config)
         _, self._slot_config = _worker_dict_to_configs(self._config_dict)
+        # A fsdp_target_modules list no client can match should stop the
+        # server here, before any create_training_run arrives.
+        _validate_explicit_target_modules(config)
         self.logger = logging.getLogger(f"{__name__}.FSDPTrainingBackend")
 
     async def shutdown(self) -> None:
@@ -1008,7 +1077,14 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                 model_config=model_config,
                 slot_config=slot_config,
             )
-            await asyncio.to_thread(self._worker.initialize)
+            try:
+                await asyncio.to_thread(self._worker.initialize)
+            except Exception:
+                # Keep the backend re-initializable: a half-built worker would
+                # make every later create_adapter report slot exhaustion
+                # instead of the real initialization error.
+                self._worker = None
+                raise
             self._world_size = 1
             return
         import ray
@@ -1093,7 +1169,11 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             return
         explicit_modules = self.config.fsdp_target_modules
         try:
-            requested_modules = get_target_modules(str(self.config.model_path), lora_config)
+            requested_modules = get_target_modules(
+                str(self.config.model_path),
+                lora_config,
+                qwen_gated_deltanet_full_lora=self.config.qwen_gated_deltanet_full_lora,
+            )
         except ValueError as exc:
             # An explicit operator-provided geometry is the escape hatch for
             # unsupported model families, where client modifiers cannot be
@@ -1134,10 +1214,11 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             )
         slot_modules = self._slot_config.target_modules
         if set(checkpoint_modules) != set(slot_modules):
+            hint = gated_deltanet_mismatch_hint(checkpoint_modules, slot_modules)
             raise InvalidRequestException(
                 f"Cannot load FSDP checkpoint {checkpoint_record.checkpoint_id} targeting "
                 f"modules {sorted(checkpoint_modules)} into a slot targeting "
-                f"{sorted(slot_modules)}."
+                f"{sorted(slot_modules)}." + (f" {hint}" if hint else "")
             )
         return checkpoint_modules
 

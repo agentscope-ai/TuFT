@@ -131,7 +131,7 @@ def create_training_client(service_client: tinker.ServiceClient, cfg: Config):
         rank=cfg.lora_rank,
         train_mlp=True,
         train_attn=True,
-        train_unembed=True,
+        train_unembed=False,
     )
 
 

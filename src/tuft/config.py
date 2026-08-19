@@ -110,6 +110,10 @@ class ModelConfig(BaseModel):
     fsdp_train_attn: bool = True
     fsdp_train_mlp: bool = True
     fsdp_train_unembed: bool = True
+    # Keep Tinker's Qwen3.5 train_attn geometry by default. Operators can opt
+    # into LoRA on the additional Gated DeltaNet A/B gate projections for both
+    # HF and FSDP backends.
+    qwen_gated_deltanet_full_lora: bool = False
     # optional override for FSDP backend HFModelConfig (e.g. attn_implementation)
     fsdp_override_config: dict[str, Any] | None = None
     # Attention implementation passed to AutoModelForCausalLM.from_pretrained for the

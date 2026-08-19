@@ -706,6 +706,7 @@ class TestTrainAndOAIIntegration:
             training_client = service_client.create_lora_training_client(
                 base_model=base_model,
                 rank=8,
+                train_unembed=False,
             )
             _log(f"[Integration] model_id={training_client.model_id}")
 

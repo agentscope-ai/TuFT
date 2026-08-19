@@ -124,7 +124,7 @@ def main() -> None:
         rank=args.lora_rank,
         train_mlp=True,
         train_attn=True,
-        train_unembed=True,
+        train_unembed=False,
     )
     pairs = [
         [{"role": "user", "content": u}, {"role": "assistant", "content": a}] for u, a in YODA_PAIRS

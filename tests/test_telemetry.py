@@ -164,7 +164,7 @@ async def _create_training(state, session_id, user_id="tester", rank=4):
     return await state.create_model(
         session_id,
         base_model="Qwen/Qwen3-0.6B",
-        lora_config=types.LoraConfig(rank=rank),
+        lora_config=types.LoraConfig(rank=rank, train_unembed=False),
         model_owner=user_id,
         user_metadata=None,
     )
@@ -468,8 +468,12 @@ def test_http_trace_isolation(telemetry_server: str, span_exporter, setup_tracer
     try:
         caps = client1.get_server_capabilities()
         base_model = caps.supported_models[0].model_name or "Qwen/Qwen3-0.6B"
-        tc1 = client1.create_lora_training_client(base_model=base_model, rank=8)
-        tc2 = client2.create_lora_training_client(base_model=base_model, rank=4)
+        tc1 = client1.create_lora_training_client(
+            base_model=base_model, rank=8, train_unembed=False
+        )
+        tc2 = client2.create_lora_training_client(
+            base_model=base_model, rank=4, train_unembed=False
+        )
 
         datum = _make_datum([11, 12, 13, 14])
         r1 = tc1.forward_backward([datum], "cross_entropy").result(timeout=CPU_TEST_TIMEOUT)

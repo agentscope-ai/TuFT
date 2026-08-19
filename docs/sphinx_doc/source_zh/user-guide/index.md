@@ -21,6 +21,14 @@
 基于可验证任务的 GRPO 风格强化学习训练。
 :::
 
+:::{grid-item-card} LoRA 目标模块
+:link: lora-target-modules
+:link-type: doc
+:shadow: none
+
+LoRA 标志如何解析为模块名，以及 Qwen3.5 的破坏性变更。
+:::
+
 :::{grid-item-card} 持久化
 :link: persistence
 :link-type: doc
@@ -52,6 +60,7 @@
 
 chat-sft
 countdown-rl
+lora-target-modules
 persistence
 telemetry
 console

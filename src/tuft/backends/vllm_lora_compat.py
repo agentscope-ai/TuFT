@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 
 import torch
@@ -26,6 +27,11 @@ logger = logging.getLogger(__name__)
 
 _NATIVE_PREFIX = "base_model.model.model.layers."
 _ALIASED_PREFIX = "base_model.model.model.language_model.layers."
+
+# Matches Qwen3.5, Qwen3.6, and Qwen3.8 names. Anchored on both sides so
+# unrelated names cannot collide: "qwen3_8b" is a Qwen3-8B checkpoint, and
+# "qwen3-0.6b" is Qwen3-0.6B; neither may pick up Gated DeltaNet targets.
+_QWEN3_5_PATH_MARKER = re.compile(r"(?<![a-z0-9])qwen3[._][568](?![a-z0-9])")
 
 
 def load_model_config_json(model_path: str | Path) -> dict | None:
@@ -37,30 +43,72 @@ def load_model_config_json(model_path: str | Path) -> dict | None:
         return None
 
 
-def resolve_model_series(model_path: str | Path) -> str | None:
-    """Resolve the model series ('qwen'/'llama') for module mapping.
+def _series_from_model_type(model_type: str) -> str | None:
+    if model_type.startswith("qwen"):
+        return "qwen"
+    if model_type.startswith("llama"):
+        return "llama"
+    return None
 
-    Prefer ``model_type`` from ``config.json`` so directories not named after
-    the model family (e.g. ``checkpoint-1000``, ``sft-final``) resolve
-    correctly. When a config exists it is authoritative (an unknown
-    ``model_type`` resolves to None instead of falling back to unreliable
-    path substrings); the path-substring match is only used when no config
-    is available.
-    """
-    config = load_model_config_json(model_path)
-    if config is not None:
-        model_type = str(config.get("model_type", "")).lower()
-        if model_type.startswith("qwen"):
-            return "qwen"
-        if model_type.startswith("llama"):
-            return "llama"
-        return None
-    path_lower = str(model_path).lower()
+
+def _series_from_path(path_lower: str) -> str | None:
     if "qwen" in path_lower:
         return "qwen"
     if "llama" in path_lower:
         return "llama"
     return None
+
+
+def _architecture_from_model_type(model_type: str) -> str | None:
+    if model_type.startswith("qwen3_5"):
+        return "qwen3_5"
+    return None
+
+
+def _architecture_from_path(path_lower: str) -> str | None:
+    if _QWEN3_5_PATH_MARKER.search(path_lower):
+        return "qwen3_5"
+    return None
+
+
+def resolve_model_series_and_architecture(
+    model_path: str | Path,
+) -> tuple[str | None, str | None]:
+    """Resolve the (series, architecture) pair with a single ``config.json`` read.
+
+    Prefer ``model_type`` from ``config.json`` so directories not named after
+    the model family (e.g. ``checkpoint-1000``, ``sft-final``) resolve
+    correctly. When a config exists it is authoritative (an unknown
+    ``model_type`` resolves to None instead of falling back to unreliable
+    path substrings); the path-based match is only used when no config is
+    available, e.g. for configured Hugging Face IDs not yet downloaded.
+
+    The series ('qwen'/'llama') selects the broad module map; the architecture
+    (currently only ``qwen3_5``; Qwen3.6 and Qwen3.8 use it too) selects
+    behavior a series cannot express, such as Gated DeltaNet projection names.
+    """
+    config = load_model_config_json(model_path)
+    if config is not None:
+        model_type = str(config.get("model_type", "")).lower()
+        return _series_from_model_type(model_type), _architecture_from_model_type(model_type)
+    path_lower = str(model_path).lower()
+    return _series_from_path(path_lower), _architecture_from_path(path_lower)
+
+
+def resolve_model_series(model_path: str | Path) -> str | None:
+    """Resolve the model series ('qwen'/'llama') for module mapping.
+
+    See :func:`resolve_model_series_and_architecture` for the resolution rules.
+    """
+    return resolve_model_series_and_architecture(model_path)[0]
+
+
+def resolve_model_architecture(model_path: str | Path) -> str | None:
+    """Resolve architecture-specific behavior that a broad model series cannot express.
+
+    See :func:`resolve_model_series_and_architecture` for the resolution rules.
+    """
+    return resolve_model_series_and_architecture(model_path)[1]
 
 
 def vllm_nests_language_model(model_path: str | Path) -> bool:
@@ -70,10 +118,15 @@ def vllm_nests_language_model(model_path: str | Path) -> bool:
     classes (e.g. ``Qwen3_5ForConditionalGeneration``) expose
     ``language_model.model.layers.*`` in vLLM, while HF maps the same
     ``model_type`` to a ``*ForCausalLM`` class exposing ``model.layers.*``.
+    Without a local config, recognized Qwen3.5-family model IDs count as
+    nested, matching the target-resolution fallback.
     """
     config = load_model_config_json(model_path)
     if config is None:
-        return False
+        # Hub IDs without a local config: the qwen3_5 family — the only
+        # architecture the path fallback recognizes — always nests the text
+        # backbone, so alias export must stay in step with target resolution.
+        return _architecture_from_path(str(model_path).lower()) is not None
     architectures = config.get("architectures") or []
     return any(str(arch).endswith("ForConditionalGeneration") for arch in architectures)
 

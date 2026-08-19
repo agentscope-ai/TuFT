@@ -53,6 +53,9 @@ model_owner: local-user
 #       (defaults: true/true/true)
 #       FSDP target geometry is allocated at server startup and cannot be changed
 #       while the server is running; restart with a new configuration to change it.
+#   - qwen_gated_deltanet_full_lora: For Qwen3.5-based models, also target the
+#       Gated DeltaNet A/B gate projections (default: false). The default targets
+#       match Tinker's public train_attn geometry. Applies to HF and FSDP.
 #   - lora_alpha_ratio: lora_alpha = rank * this ratio (default: 2)
 #       Applies to both the "hf" and "fsdp" training backends, so the same rank
 #       gets the same LoRA update scaling whichever backend serves the model.
@@ -88,6 +91,9 @@ supported_models:
     # fsdp_train_attn: true
     # fsdp_train_mlp: true
     # fsdp_train_unembed: true
+    # Keep false for Tinker-compatible Qwen3.5 defaults. Set true to add LoRA to
+    # linear_attn.in_proj_a and linear_attn.in_proj_b on both training backends:
+    # qwen_gated_deltanet_full_lora: false
     # Set this only when Q/V-only geometry is intentional. It overrides client
     # modifiers and allows checkpoints targeting [q_proj, v_proj] to seed or
     # restore a run. An explicit [q_proj, v_proj] list without this opt-in is

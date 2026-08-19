@@ -174,7 +174,7 @@ def main() -> None:
         seed=args.seed,
         train_mlp=True,
         train_attn=True,
-        train_unembed=True,
+        train_unembed=False,
     )
 
     print(f"[{args.tag}] creating sampling client model={args.model}")

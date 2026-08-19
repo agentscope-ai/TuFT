@@ -16,7 +16,11 @@ from tinker.types import LoraConfig as TinkerLoraConfig
 from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoModelForCausalLM
 
-from tuft.backends.lora_modules import MODULE_MAP, get_target_modules
+from tuft.backends.lora_modules import (
+    MODULE_MAP,
+    find_unmatched_target_modules,
+    get_target_modules,
+)
 from tuft.backends.loss_inputs import (
     MODEL_DERIVED_LOSS_INPUTS,
     batch_loss_fn_input,
@@ -97,6 +101,8 @@ def build_peft_lora_config(
     model_path: str,
     lora_config: TinkerLoraConfig,
     lora_alpha_ratio: int = DEFAULT_LORA_ALPHA_RATIO,
+    *,
+    qwen_gated_deltanet_full_lora: bool = False,
 ) -> LoraConfig:
     """Translate a Tinker ``LoraConfig`` into the peft config for one adapter.
 
@@ -107,7 +113,11 @@ def build_peft_lora_config(
     """
     return LoraConfig(
         r=lora_config.rank,
-        target_modules=get_target_modules(model_path, lora_config),
+        target_modules=get_target_modules(
+            model_path,
+            lora_config,
+            qwen_gated_deltanet_full_lora=qwen_gated_deltanet_full_lora,
+        ),
         lora_alpha=compute_lora_alpha(lora_config.rank, lora_alpha_ratio),
     )
 
@@ -159,8 +169,24 @@ class HFTrainingModel:
                     str(self.config.model_path),
                     lora_config,
                     self.config.lora_alpha_ratio,
+                    qwen_gated_deltanet_full_lora=self.config.qwen_gated_deltanet_full_lora,
                 )
                 span.set_attribute("tuft.lora_alpha", peft_config.lora_alpha)
+
+                # PEFT silently skips target names that match nothing, which
+                # would train fewer modules than the run records. Reject the
+                # request instead.
+                unmatched = find_unmatched_target_modules(
+                    (name for name, _ in self.model.named_modules()),
+                    peft_config.target_modules or [],
+                )
+                if unmatched:
+                    raise ValueError(
+                        f"LoRA target modules {sorted(unmatched)} match no module in "
+                        f"base model '{self.config.model_path}'. The model may be "
+                        "mislabeled or use different module names; check that its "
+                        "config.json model_type matches the real architecture."
+                    )
 
                 self.model.add_adapter(adapter_name=lora_id, peft_config=peft_config)
                 async with self._lock:

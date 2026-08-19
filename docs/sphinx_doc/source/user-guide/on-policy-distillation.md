@@ -112,7 +112,7 @@ teacher = client.create_sampling_client(base_model=BASE_MODEL)
 # Student = a LoRA we train.
 training = client.create_lora_training_client(
     base_model=BASE_MODEL, rank=LORA_RANK,
-    train_mlp=True, train_attn=True, train_unembed=True,
+    train_mlp=True, train_attn=True, train_unembed=False,
 )
 ```
 

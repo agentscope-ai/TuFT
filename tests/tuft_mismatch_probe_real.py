@@ -162,7 +162,7 @@ def main() -> None:
         seed=args.seed,
         train_mlp=True,
         train_attn=True,
-        train_unembed=True,
+        train_unembed=False,
     )
 
     # Create sampling client (base model, no LoRA)

@@ -347,7 +347,7 @@ class TestTrainingRunPersistence:
             lora_rank=8,
             train_attn=True,
             train_mlp=True,
-            train_unembed=True,
+            train_unembed=False,
             target_modules=[
                 "q_proj",
                 "k_proj",
@@ -403,7 +403,7 @@ class TestTrainingRunPersistence:
             lora_rank=4,
             train_attn=True,
             train_mlp=True,
-            train_unembed=True,
+            train_unembed=False,
             # The unreleased intermediate format had modifier flags but no
             # concrete effective target_modules; it must be read-only.
             session_id="session-002",
@@ -512,7 +512,7 @@ class TestServerStatePersistence:
         training = await state.create_model(
             session_id=session.session_id,
             base_model="Qwen/Qwen3-0.6B",
-            lora_config=types.LoraConfig(rank=8),
+            lora_config=types.LoraConfig(rank=8, train_unembed=False),
             model_owner="trainer",
             user_metadata={"model_version": "v1"},
         )
@@ -947,7 +947,7 @@ class TestConfigSignatureValidation:
             lora_rank=8,
             train_attn=True,
             train_mlp=True,
-            train_unembed=True,
+            train_unembed=False,
             target_modules=["q_proj"],
             session_id="session-001",
             model_owner="user1",
