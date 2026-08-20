@@ -16,23 +16,6 @@ Hugging Face 模型 ID）时，由模型名决定。
 额外覆盖 `linear_attn.in_proj_qkv`、`linear_attn.in_proj_z` 和
 `linear_attn.out_proj`。
 
-## 0.2.0 中的破坏性变更：Qwen3.5 系列模型
-
-0.2.0 版本（issue #149 的修复）为 Qwen3.5 系列模型的 LoRA 目标模块列表新增了
-与 Tinker 兼容的 `linear_attn.in_proj_qkv`、`linear_attn.in_proj_z` 和
-`linear_attn.out_proj` 模块。0.2.0 之前保存的检查点和训练运行使用旧的、更短的
-列表，而两份列表必须完全一致。升级到 0.2.0 后：
-
-- 这些模型的旧检查点无法加载。
-- 服务器重启时，旧的 FSDP 训练运行会被标记为损坏（corrupted）。
-- 如果服务器配置中的 `fsdp_target_modules` 仍是旧列表，服务器会在启动时报错
-  退出，错误信息会说明如何修改配置。
-- 启用持久化时，新增的 `qwen_gated_deltanet_full_lora` 模型字段会改变已存储的
-  配置签名，启动会因“配置不匹配”而失败；请切换到新命名空间或清除旧命名空间
-  （参见[安全更改配置](persistence.md#安全更改配置)）。
-
-每条错误信息都会指出原因是这项变更。要继续训练，请创建新的训练运行。
-
 ## 完整 Gated DeltaNet 覆盖（可选项）
 
 在模型配置中设置 `qwen_gated_deltanet_full_lora: true`，可以额外为

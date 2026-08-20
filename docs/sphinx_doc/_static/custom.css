@@ -211,3 +211,14 @@ header a span.font-bold {
     background: var(--accent);
     color: var(--accent-foreground);
 }
+
+/* Wrap long code lines at the container edge instead of scrolling horizontally.
+   pre-wrap keeps indentation and newlines; anywhere lets unbreakable tokens
+   (long URLs, identifiers) split mid-token when nothing else fits. The theme
+   renders each line as a block-level span[id^="line-"] with its own
+   white-space: pre, so those need the override too, not just the pre. */
+.highlight pre,
+.highlight pre span[id^="line-"] {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
