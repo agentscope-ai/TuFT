@@ -27,6 +27,30 @@
 tuft
 ```
 
+### GPU wheel 变体选择与安装器选项
+
+默认情况下（`--torch-backend auto`），安装器会**在下载任何内容之前**检测 NVIDIA 驱动，为固定版本的 torch/vLLM 依赖栈选择已验证的 CUDA 13.0 wheel 变体（`cu130`），并在安装完成后运行导入检查和 CUDA 冒烟测试。如果驱动不支持 CUDA 13.0，安装器会给出明确的指引并失败，而不是装出一个无法运行的环境。也可以显式指定后端，例如在没有 GPU 的机器上构建镜像或使用自定义 wheel 时：
+
+```bash
+# 显式使用 CUDA 13.0 wheels
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install.sh)" -- --torch-backend cu130
+
+# 仅 CPU 环境
+TUFT_TORCH_BACKEND=cpu /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install.sh)"
+```
+
+`tuft upgrade` 会复用安装时记录的后端（保存在 `$TUFT_HOME/torch-backend`），使升级与安装以相同方式解析依赖；可通过 `tuft upgrade --torch-backend ...` 覆盖。使用 `--skip-gpu-checks`（或 `TUFT_SKIP_GPU_CHECKS=1`）可将 GPU 预检 / 冒烟测试失败降级为警告。
+
+安装器还支持以下环境变量：
+
+| 变量 | 用途 |
+| --- | --- |
+| `TUFT_HOME` | 安装目录（默认：`~/.tuft`） |
+| `TUFT_VENV` | 虚拟环境位置（默认：`$TUFT_HOME/venv`），例如放到更快或更大的存储上 |
+| `TUFT_TORCH_BACKEND` | `--torch-backend` 的默认值（`auto`、`cpu` 或 `cuNNN`） |
+| `TUFT_PYPI_REQUIREMENT` | 覆盖默认的 PyPI 依赖声明 |
+| `UV_CACHE_DIR`、`UV_LINK_MODE`、`UV_SYSTEM_CERTS`、`UV_DEFAULT_INDEX`、`UV_INDEX` | 透传给 [uv](https://docs.astral.sh/uv/)，用于缓存位置、链接模式（如跨文件系统时用 `copy`）、系统 TLS 证书以及包索引 / 镜像 |
+
 ## 从源代码安装
 
 我们推荐使用 [uv](https://github.com/astral-sh/uv) 进行依赖管理。

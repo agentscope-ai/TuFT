@@ -164,6 +164,43 @@ laptop. See the <strong><a class="reference internal" href="../deployment/index.
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">tuft
 </span></code></pre></div>
 </div>
+<section id="gpu-wheel-selection-and-installer-options">
+<h3>GPU wheel selection and installer options<a class="headerlink" href="#gpu-wheel-selection-and-installer-options" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#gpu-wheel-selection-and-installer-options'">¶</a></h3>
+<p>By default (<code class="docutils literal notranslate"><span class="pre">--torch-backend</span> <span class="pre">auto</span></code>) the installer inspects the NVIDIA driver <strong>before downloading anything</strong>, selects the validated CUDA 13.0 wheel variant (<code class="docutils literal notranslate"><span class="pre">cu130</span></code>) for the pinned torch/vLLM stack, and runs import and CUDA smoke tests after installing. If the driver does not support CUDA 13.0, it fails with guidance instead of installing a broken environment. Pass a backend explicitly to override, e.g. when building an image on a machine without a GPU or using custom wheels:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="c1"># Explicit CUDA 13.0 wheels</span>
+</span><span id="line-2">/bin/bash<span class="w"> </span>-c<span class="w"> </span><span class="s2">"</span><span class="k">$(</span>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install.sh<span class="k">)</span><span class="s2">"</span><span class="w"> </span>--<span class="w"> </span>--torch-backend<span class="w"> </span>cu130
+</span><span id="line-3">
+</span><span id="line-4"><span class="c1"># CPU-only environment</span>
+</span><span id="line-5"><span class="nv">TUFT_TORCH_BACKEND</span><span class="o">=</span>cpu<span class="w"> </span>/bin/bash<span class="w"> </span>-c<span class="w"> </span><span class="s2">"</span><span class="k">$(</span>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install.sh<span class="k">)</span><span class="s2">"</span>
+</span></code></pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">tuft</span> <span class="pre">upgrade</span></code> reuses the backend recorded at install time (in <code class="docutils literal notranslate"><span class="pre">$TUFT_HOME/torch-backend</span></code>), so upgrades resolve packages the same way; override with <code class="docutils literal notranslate"><span class="pre">tuft</span> <span class="pre">upgrade</span> <span class="pre">--torch-backend</span> <span class="pre">...</span></code>. Use <code class="docutils literal notranslate"><span class="pre">--skip-gpu-checks</span></code> (or <code class="docutils literal notranslate"><span class="pre">TUFT_SKIP_GPU_CHECKS=1</span></code>) to turn GPU preflight/smoke-test failures into warnings.</p>
+<p>The installer also honors these environment variables:</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Variable</p></th>
+<th class="head"><p>Purpose</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TUFT_HOME</span></code></p></td>
+<td><p>Installation directory (default: <code class="docutils literal notranslate"><span class="pre">~/.tuft</span></code>)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TUFT_VENV</span></code></p></td>
+<td><p>Virtual environment location (default: <code class="docutils literal notranslate"><span class="pre">$TUFT_HOME/venv</span></code>), e.g. to place it on faster or larger storage</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TUFT_TORCH_BACKEND</span></code></p></td>
+<td><p>Default value for <code class="docutils literal notranslate"><span class="pre">--torch-backend</span></code> (<code class="docutils literal notranslate"><span class="pre">auto</span></code>, <code class="docutils literal notranslate"><span class="pre">cpu</span></code>, or <code class="docutils literal notranslate"><span class="pre">cuNNN</span></code>)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TUFT_PYPI_REQUIREMENT</span></code></p></td>
+<td><p>Override the default PyPI requirement</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">UV_CACHE_DIR</span></code>, <code class="docutils literal notranslate"><span class="pre">UV_LINK_MODE</span></code>, <code class="docutils literal notranslate"><span class="pre">UV_SYSTEM_CERTS</span></code>, <code class="docutils literal notranslate"><span class="pre">UV_DEFAULT_INDEX</span></code>, <code class="docutils literal notranslate"><span class="pre">UV_INDEX</span></code></p></td>
+<td><p>Passed through to <a class="reference external" href="https://docs.astral.sh/uv/">uv</a> for cache placement, link mode (e.g. <code class="docutils literal notranslate"><span class="pre">copy</span></code> across filesystems), system TLS trust stores, and package indexes/mirrors</p></td>
+</tr>
+</tbody>
+</table>
+</section>
 </section>
 <section id="install-from-source-code">
 <h2>Install from Source Code<a class="headerlink" href="#install-from-source-code" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#install-from-source-code'">¶</a></h2>
@@ -268,7 +305,10 @@ laptop. See the <strong><a class="reference internal" href="../deployment/index.
 </div></div><aside class="hidden text-sm xl:block" id="right-sidebar">
 <div class="sticky top-16 -mt-10 max-h-[calc(100vh-5rem)] h-full overflow-y-auto pt-6 space-y-2"><p class="font-medium">On this page</p>
 <ul>
-<li><a :data-current="activeSection === '#quick-install'" class="reference internal" href="#quick-install">Quick Install</a></li>
+<li><a :data-current="activeSection === '#quick-install'" class="reference internal" href="#quick-install">Quick Install</a><ul>
+<li><a :data-current="activeSection === '#gpu-wheel-selection-and-installer-options'" class="reference internal" href="#gpu-wheel-selection-and-installer-options">GPU wheel selection and installer options</a></li>
+</ul>
+</li>
 <li><a :data-current="activeSection === '#install-from-source-code'" class="reference internal" href="#install-from-source-code">Install from Source Code</a></li>
 <li><a :data-current="activeSection === '#install-via-pypi'" class="reference internal" href="#install-via-pypi">Install via PyPI</a></li>
 <li><a :data-current="activeSection === '#use-the-pre-built-docker-image'" class="reference internal" href="#use-the-pre-built-docker-image">Use the Pre-built Docker Image</a></li>

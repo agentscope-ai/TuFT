@@ -164,6 +164,43 @@
 <div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1">tuft
 </span></code></pre></div>
 </div>
+<section id="gpu-wheel">
+<h3>GPU wheel 变体选择与安装器选项<a class="headerlink" href="#gpu-wheel" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#gpu-wheel'">¶</a></h3>
+<p>默认情况下（<code class="docutils literal notranslate"><span class="pre">--torch-backend</span> <span class="pre">auto</span></code>），安装器会<strong>在下载任何内容之前</strong>检测 NVIDIA 驱动，为固定版本的 torch/vLLM 依赖栈选择已验证的 CUDA 13.0 wheel 变体（<code class="docutils literal notranslate"><span class="pre">cu130</span></code>），并在安装完成后运行导入检查和 CUDA 冒烟测试。如果驱动不支持 CUDA 13.0，安装器会给出明确的指引并失败，而不是装出一个无法运行的环境。也可以显式指定后端，例如在没有 GPU 的机器上构建镜像或使用自定义 wheel 时：</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="c1"># 显式使用 CUDA 13.0 wheels</span>
+</span><span id="line-2">/bin/bash<span class="w"> </span>-c<span class="w"> </span><span class="s2">"</span><span class="k">$(</span>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install.sh<span class="k">)</span><span class="s2">"</span><span class="w"> </span>--<span class="w"> </span>--torch-backend<span class="w"> </span>cu130
+</span><span id="line-3">
+</span><span id="line-4"><span class="c1"># 仅 CPU 环境</span>
+</span><span id="line-5"><span class="nv">TUFT_TORCH_BACKEND</span><span class="o">=</span>cpu<span class="w"> </span>/bin/bash<span class="w"> </span>-c<span class="w"> </span><span class="s2">"</span><span class="k">$(</span>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install.sh<span class="k">)</span><span class="s2">"</span>
+</span></code></pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">tuft</span> <span class="pre">upgrade</span></code> 会复用安装时记录的后端（保存在 <code class="docutils literal notranslate"><span class="pre">$TUFT_HOME/torch-backend</span></code>），使升级与安装以相同方式解析依赖；可通过 <code class="docutils literal notranslate"><span class="pre">tuft</span> <span class="pre">upgrade</span> <span class="pre">--torch-backend</span> <span class="pre">...</span></code> 覆盖。使用 <code class="docutils literal notranslate"><span class="pre">--skip-gpu-checks</span></code>（或 <code class="docutils literal notranslate"><span class="pre">TUFT_SKIP_GPU_CHECKS=1</span></code>）可将 GPU 预检 / 冒烟测试失败降级为警告。</p>
+<p>安装器还支持以下环境变量：</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>变量</p></th>
+<th class="head"><p>用途</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TUFT_HOME</span></code></p></td>
+<td><p>安装目录（默认：<code class="docutils literal notranslate"><span class="pre">~/.tuft</span></code>）</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TUFT_VENV</span></code></p></td>
+<td><p>虚拟环境位置（默认：<code class="docutils literal notranslate"><span class="pre">$TUFT_HOME/venv</span></code>），例如放到更快或更大的存储上</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">TUFT_TORCH_BACKEND</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">--torch-backend</span></code> 的默认值（<code class="docutils literal notranslate"><span class="pre">auto</span></code>、<code class="docutils literal notranslate"><span class="pre">cpu</span></code> 或 <code class="docutils literal notranslate"><span class="pre">cuNNN</span></code>）</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">TUFT_PYPI_REQUIREMENT</span></code></p></td>
+<td><p>覆盖默认的 PyPI 依赖声明</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">UV_CACHE_DIR</span></code>、<code class="docutils literal notranslate"><span class="pre">UV_LINK_MODE</span></code>、<code class="docutils literal notranslate"><span class="pre">UV_SYSTEM_CERTS</span></code>、<code class="docutils literal notranslate"><span class="pre">UV_DEFAULT_INDEX</span></code>、<code class="docutils literal notranslate"><span class="pre">UV_INDEX</span></code></p></td>
+<td><p>透传给 <a class="reference external" href="https://docs.astral.sh/uv/">uv</a>，用于缓存位置、链接模式（如跨文件系统时用 <code class="docutils literal notranslate"><span class="pre">copy</span></code>）、系统 TLS 证书以及包索引 / 镜像</p></td>
+</tr>
+</tbody>
+</table>
+</section>
 </section>
 <section id="id3">
 <h2>从源代码安装<a class="headerlink" href="#id3" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#id3'">¶</a></h2>
@@ -268,7 +305,10 @@
 </div></div><aside class="hidden text-sm xl:block" id="right-sidebar">
 <div class="sticky top-16 -mt-10 max-h-[calc(100vh-5rem)] h-full overflow-y-auto pt-6 space-y-2"><p class="font-medium">On this page</p>
 <ul>
-<li><a :data-current="activeSection === '#id2'" class="reference internal" href="#id2">快速安装</a></li>
+<li><a :data-current="activeSection === '#id2'" class="reference internal" href="#id2">快速安装</a><ul>
+<li><a :data-current="activeSection === '#gpu-wheel'" class="reference internal" href="#gpu-wheel">GPU wheel 变体选择与安装器选项</a></li>
+</ul>
+</li>
 <li><a :data-current="activeSection === '#id3'" class="reference internal" href="#id3">从源代码安装</a></li>
 <li><a :data-current="activeSection === '#pypi'" class="reference internal" href="#pypi">通过 PyPI 安装</a></li>
 <li><a :data-current="activeSection === '#docker'" class="reference internal" href="#docker">使用预构建的 Docker 镜像</a></li>
