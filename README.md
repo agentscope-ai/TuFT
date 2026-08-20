@@ -59,7 +59,7 @@ tuft
 
 ### GPU wheel selection and installer options
 
-By default (`--torch-backend auto`) the installer inspects the NVIDIA driver **before downloading anything**, selects a compatible CUDA wheel variant for the pinned torch/vLLM stack (`cu130`, or `cu129` for older 12.9 drivers), and runs a CUDA smoke test after installing. If no compatible variant exists for your driver, it fails with guidance instead of installing a broken environment. Pass a backend explicitly to override, e.g. when building an image on a machine without a GPU:
+By default (`--torch-backend auto`) the installer inspects the NVIDIA driver **before downloading anything**, selects the validated CUDA 13.0 wheel variant (`cu130`) for the pinned torch/vLLM stack, and runs import and CUDA smoke tests after installing. If the driver does not support CUDA 13.0, it fails with guidance instead of installing a broken environment. Pass a backend explicitly to override, e.g. when building an image on a machine without a GPU or using custom wheels:
 
 ```bash
 # Explicit CUDA 13.0 wheels

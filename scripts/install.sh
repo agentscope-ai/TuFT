@@ -22,7 +22,7 @@ INSTALL_FROM_SOURCE=false
 LOCAL_SOURCE_PATH=""
 CLEAN_INSTALL=false
 # Torch/vLLM wheel variant: auto (detect from NVIDIA driver), cpu, or an
-# explicit CUDA backend such as cu130/cu129 (see tuft_resolve_torch_backend).
+# explicit CUDA backend such as cu130 (see tuft_resolve_torch_backend).
 TORCH_BACKEND="${TUFT_TORCH_BACKEND:-auto}"
 # Set to 1 (or pass --skip-gpu-checks) to degrade GPU preflight and CUDA
 # smoke-test failures to warnings. Exported so the shared backend helpers
@@ -90,7 +90,7 @@ parse_args() {
                 echo "  --local-source PATH    Install from local source directory (for development/CI)"
                 echo "  --clean                Remove existing installation before installing"
                 echo "  --torch-backend VALUE  Torch/vLLM wheel variant: auto (default), cpu, or an"
-                echo "                         explicit CUDA backend such as cu130 or cu129. 'auto'"
+                echo "                         explicit CUDA backend such as cu130. 'auto'"
                 echo "                         inspects the NVIDIA driver before downloading anything"
                 echo "                         and picks a compatible backend; without a driver it"
                 echo "                         falls back to the default PyPI wheels."
@@ -131,9 +131,10 @@ parse_args() {
 # stay self-contained: no colors, no print_* helpers, diagnostics to stderr.
 
 tuft_supported_cuda_backends() {
-    # Newest first. TuFT's pinned torch/vLLM stack is built against the CUDA
-    # 13.0 wheel ABI (see docker/Dockerfile); cu129 covers older 12.9 drivers.
-    echo "cu130 cu129"
+    # TuFT's pinned upstream torch/vLLM stack is built against the CUDA 13.0
+    # wheel ABI (see docker/Dockerfile). Other cuNNN values remain available
+    # as explicit, unvalidated overrides for custom wheel/index deployments.
+    echo "cu130"
 }
 
 tuft_backend_cuda_version() {
@@ -287,6 +288,28 @@ if total != 16.0:
 count = torch.cuda.device_count()
 print(f"CUDA smoke test OK: {count} GPU(s), device 0: {torch.cuda.get_device_name(0)}")
 TUFT_SMOKE_EOF
+}
+
+tuft_runtime_import_test() {
+    # Usage: tuft_runtime_import_test <python-binary> <resolved-backend>
+    # Import torch before vLLM so torch can preload the matching CUDA runtime
+    # libraries shipped by its wheel. vLLM is Linux-only and is not required
+    # for the explicitly CPU-only installation mode.
+    "$1" - "${2:-default}" <<'TUFT_IMPORT_EOF'
+import platform
+import sys
+
+import torch
+import tuft
+
+backend = sys.argv[1]
+message = f"imports OK: tuft with torch {torch.__version__} (CUDA build: {torch.version.cuda})"
+if platform.system() == "Linux" and backend != "cpu":
+    import vllm
+
+    message += f", vllm {vllm.__version__}"
+print(message)
+TUFT_IMPORT_EOF
 }
 
 # --- End of shared torch backend helpers -------------------------------------
@@ -515,9 +538,9 @@ post_install_checks() {
         exit 1
     fi
 
-    print_step "Verifying core imports..."
-    if ! "$python_bin" -c 'import tuft, torch; print("imports OK: tuft with torch %s (CUDA build: %s)" % (torch.__version__, torch.version.cuda))'; then
-        print_error "The installed environment failed to import tuft/torch."
+    print_step "Verifying core runtime imports..."
+    if ! tuft_runtime_import_test "$python_bin" "$RESOLVED_TORCH_BACKEND"; then
+        print_error "The installed environment failed to import its required runtime packages."
         exit 1
     fi
 
@@ -539,7 +562,7 @@ post_install_checks() {
         print_success "CUDA smoke test passed"
     else
         print_error "CUDA smoke test failed: the installed torch build cannot use this machine's GPU."
-        print_error "Pick a backend matching your driver (--torch-backend auto|cpu|cu129|cu130),"
+        print_error "Pick a backend matching your driver (--torch-backend auto|cpu|cu130),"
         print_error "or re-run with --skip-gpu-checks to keep the installation anyway."
         exit 1
     fi
@@ -564,7 +587,8 @@ write_torch_backend_lib() {
             tuft_detect_driver_cuda_version \
             tuft_uv_supports_torch_backend \
             tuft_resolve_torch_backend \
-            tuft_cuda_smoke_test
+            tuft_cuda_smoke_test \
+            tuft_runtime_import_test
     } > "$lib_path"
 }
 
@@ -755,6 +779,16 @@ case "${1:-}" in
             echo "Error: installed packages have incompatible dependencies after upgrade (see above)."
             exit 1
         fi
+        echo "Verifying core runtime imports..."
+        if type tuft_runtime_import_test >/dev/null 2>&1; then
+            if ! tuft_runtime_import_test "$TUFT_PYTHON" "${RESOLVED_BACKEND:-default}"; then
+                echo "Error: required runtime imports failed after upgrade."
+                exit 1
+            fi
+        elif ! "$TUFT_PYTHON" -c 'import torch, tuft'; then
+            echo "Error: required runtime imports failed after upgrade."
+            exit 1
+        fi
         if [ "${TUFT_SKIP_GPU_CHECKS:-0}" != "1" ] && [ "$RESOLVED_BACKEND" != "cpu" ] \
             && type tuft_cuda_smoke_test >/dev/null 2>&1 \
             && type tuft_detect_driver_cuda_version >/dev/null 2>&1 \
@@ -762,7 +796,7 @@ case "${1:-}" in
             echo "Running CUDA smoke test..."
             if ! tuft_cuda_smoke_test "$TUFT_PYTHON"; then
                 echo "Error: CUDA smoke test failed after upgrade. Re-run with an explicit"
-                echo "       backend (tuft upgrade --torch-backend auto|cpu|cu129|cu130) or set"
+                echo "       backend (tuft upgrade --torch-backend auto|cpu|cu130) or set"
                 echo "       TUFT_SKIP_GPU_CHECKS=1 to skip this check."
                 exit 1
             fi

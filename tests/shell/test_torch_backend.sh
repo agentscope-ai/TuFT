@@ -24,13 +24,15 @@ FAILURES=0
 
 # make_stub_path <cuda-version|fail> [uname-output]
 # Creates a directory with a stubbed nvidia-smi (reporting the given CUDA
-# version, or failing when "fail") and optionally a stubbed uname, and prints
-# the directory path for use as a PATH prefix. The directory comes from
+# version, or failing when "fail") and a stubbed uname (Linux by default), and
+# prints the directory path for use as a PATH prefix. Stubbing uname by default
+# keeps the Linux backend tests deterministic when this suite runs on macOS.
+# The directory comes from
 # mktemp because this function runs in command substitution (a subshell), so
 # a counter variable would not persist across calls.
 make_stub_path() {
     local cuda="$1"
-    local uname_out="${2:-}"
+    local uname_out="${2:-Linux}"
     local dir
     dir="$(mktemp -d "$WORKDIR/stub-XXXXXX")"
 
@@ -53,10 +55,8 @@ STUB_EOF
     fi
     chmod +x "$dir/nvidia-smi"
 
-    if [ -n "$uname_out" ]; then
-        printf '#!/bin/sh\necho "%s"\n' "$uname_out" > "$dir/uname"
-        chmod +x "$dir/uname"
-    fi
+    printf '#!/bin/sh\necho "%s"\n' "$uname_out" > "$dir/uname"
+    chmod +x "$dir/uname"
 
     echo "$dir"
 }
@@ -123,6 +123,24 @@ expect_status "12.4 >= 12.9 fails" 1 tuft_version_ge "12.4" "12.9"
 expect_status "12.10 >= 12.9 (numeric, not lexicographic)" 0 tuft_version_ge "12.10" "12.9"
 expect_status "12.9 >= 13.0 fails" 1 tuft_version_ge "12.9" "13.0"
 
+echo "=== tuft_runtime_import_test ==="
+PYTHON_STUB="$WORKDIR/python-stub"
+cat > "$PYTHON_STUB" << 'PYTHON_STUB_EOF'
+#!/bin/sh
+cat > /dev/null
+printf '%s\n' "$2" > "$TUFT_IMPORT_BACKEND_FILE"
+exit "${TUFT_IMPORT_STUB_STATUS:-0}"
+PYTHON_STUB_EOF
+chmod +x "$PYTHON_STUB"
+BACKEND_FILE="$WORKDIR/import-backend"
+TUFT_IMPORT_BACKEND_FILE="$BACKEND_FILE" \
+    expect_status "runtime import helper returns success" 0 \
+    tuft_runtime_import_test "$PYTHON_STUB" cu130
+expect_equal "runtime import helper forwards backend" "$(cat "$BACKEND_FILE")" cu130
+TUFT_IMPORT_BACKEND_FILE="$BACKEND_FILE" TUFT_IMPORT_STUB_STATUS=7 \
+    expect_status "runtime import helper propagates import failure" 7 \
+    tuft_runtime_import_test "$PYTHON_STUB" cu130
+
 echo "=== tuft_detect_driver_cuda_version ==="
 STUB_130="$(make_stub_path "13.0")"
 STUB_129="$(make_stub_path "12.9")"
@@ -137,18 +155,19 @@ expect_status "fails when nvidia-smi fails" 1 \
 echo "=== tuft_resolve_torch_backend: auto ==="
 expect_resolve "auto picks cu130 for a CUDA 13.0 driver" "$STUB_130" auto 0 cu130
 expect_resolve "auto picks cu130 for a newer CUDA 13.2 driver" "$STUB_132" auto 0 cu130
-expect_resolve "auto picks cu129 for a CUDA 12.9 driver" "$STUB_129" auto 0 cu129
+expect_resolve "auto rejects an unvalidated CUDA 12.9 driver" "$STUB_129" auto 1 ""
 expect_resolve "auto fails for a too-old CUDA 12.4 driver" "$STUB_124" auto 1 ""
 expect_resolve "auto falls back to default without a driver" "$STUB_NONE" auto 0 default
 expect_resolve "auto + skip-gpu-checks degrades too-old driver to default" "$STUB_124" auto 0 default 1
+expect_resolve "auto + skip-gpu-checks degrades CUDA 12.9 to default" "$STUB_129" auto 0 default 1
 
 echo "=== tuft_resolve_torch_backend: explicit ==="
 expect_resolve "cpu resolves to cpu" "$STUB_NONE" cpu 0 cpu
 expect_resolve "explicit cu130 accepted with matching driver" "$STUB_130" cu130 0 cu130
-expect_resolve "explicit cu129 accepted with newer driver" "$STUB_130" cu129 0 cu129
+expect_resolve "unvalidated explicit cu129 accepted with newer driver" "$STUB_130" cu129 0 cu129
 expect_resolve "explicit cu130 rejected with older 12.9 driver" "$STUB_129" cu130 1 ""
 expect_resolve "explicit cu130 + skip-gpu-checks accepted with older driver" "$STUB_129" cu130 0 cu130 1
-expect_resolve "explicit cu129 accepted without a driver (image builds)" "$STUB_NONE" cu129 0 cu129
+expect_resolve "unvalidated explicit cu129 accepted without a driver" "$STUB_NONE" cu129 0 cu129
 expect_resolve "unvalidated cu126 accepted with warning" "$STUB_130" cu126 0 cu126
 
 echo "=== tuft_resolve_torch_backend: invalid values ==="

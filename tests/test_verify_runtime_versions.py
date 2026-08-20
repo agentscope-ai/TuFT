@@ -2,7 +2,7 @@
 
 The script lives outside the package, so it is loaded by file path. These
 tests cover the PEP 440-aware pin comparison (local build suffixes such as
-``+cu129`` must satisfy public pins), backend extraction from local version
+``+cu130`` must satisfy public pins), backend extraction from local version
 segments, and the backend consistency checks.
 """
 
@@ -84,6 +84,19 @@ def test_backend_from_local(local: str | None, expected: str | None):
 
 
 @pytest.mark.parametrize(
+    ("package", "version", "expected"),
+    [
+        ("torch", "2.11.0", None),
+        ("torch", "2.11.0+cu130", "cu130"),
+        ("vllm", "0.24.0", "cu130"),
+        ("vllm", "0.24.0+cu128", "cu128"),
+    ],
+)
+def test_package_backend(package: str, version: str, expected: str | None):
+    assert vrv.package_backend(package, version) == expected
+
+
+@pytest.mark.parametrize(
     ("backend", "expected"),
     [("cu129", "12"), ("cu130", "13"), ("cu118", "11"), ("cpu", None), ("rocm6.2", None)],
 )
@@ -118,8 +131,15 @@ class TestBackendConsistency:
         assert vrv.check_backend_consistency(installed, "default") == []
 
     def test_expected_cuda_backend_matches(self):
+        installed = {"torch": "2.11.0+cu130", "vllm": "0.24.0"}
+        assert vrv.check_backend_consistency(installed, "cu130") == []
+
+    def test_untagged_vllm_cuda13_build_rejects_cuda12_stack(self):
         installed = {"torch": "2.11.0+cu129", "vllm": "0.24.0"}
-        assert vrv.check_backend_consistency(installed, "cu129") == []
+        problems = vrv.check_backend_consistency(installed, "cu129")
+        assert len(problems) == 1
+        assert "CUDA major version mismatch" in problems[0]
+        assert "vllm (+cu130)" in problems[0]
 
     def test_expected_cuda_backend_mismatch(self):
         installed = {"torch": "2.11.0+cu130", "vllm": "0.24.0"}

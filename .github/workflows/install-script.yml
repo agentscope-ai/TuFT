@@ -92,6 +92,10 @@ jobs:
         run: |
           test -f "${TUFT_HOME}/venv/bin/python"
           "${TUFT_HOME}/venv/bin/python" -c "import tuft; print('tuft imported successfully')"
+          if [ "$(uname -s)" = "Linux" ]; then
+            "${TUFT_HOME}/venv/bin/python" -c \
+              "import torch, vllm; print(f'vllm {vllm.__version__} imported with torch {torch.__version__}')"
+          fi
         env:
           TUFT_HOME: ${{ runner.temp }}/tuft
 

@@ -2,12 +2,12 @@
 """Verify that installed GPU runtime versions match TuFT's exact pins.
 
 Comparison is PEP 440-aware: a pin of ``2.11.0`` accepts official local build
-variants such as ``2.11.0+cu129`` or ``2.11.0+cpu`` (the behavior of a
+variants such as ``2.11.0+cu130`` or ``2.11.0+cpu`` (the behavior of a
 ``==2.11.0`` specifier), while a pin that itself carries a local segment
 requires an exact match. Backend consistency -- did we get the CUDA/CPU
 variant we asked for, and do the installed packages agree on a CUDA major
 version -- is validated separately, optionally against an expected backend
-(``--expected-backend cu130|cu129|cpu``, e.g. the value the installer records
+(``--expected-backend cu130|cpu``, e.g. the value the installer records
 in ``$TUFT_HOME/torch-backend``).
 """
 
@@ -35,6 +35,11 @@ except ImportError as exc:  # pragma: no cover - packaging ships with TuFT's dep
 
 
 PINNED_PACKAGES = ("torch", "vllm")
+# Upstream vLLM wheels do not encode their CUDA build in the PEP 440 local
+# version. Keep this explicit and version-specific so an untagged wheel is not
+# accidentally treated as backend-agnostic. vLLM 0.24.0's default Linux wheel
+# is the CUDA 13 build used by TuFT's validated cu130 stack.
+KNOWN_UNTAGGED_BACKENDS = {("vllm", "0.24.0"): "cu130"}
 
 
 class Pin(NamedTuple):
@@ -101,6 +106,18 @@ def backend_from_local(local: str | None) -> str | None:
     return normalized
 
 
+def package_backend(package: str, version: str) -> str | None:
+    """Return a package's explicit or known backend build."""
+    explicit = backend_from_local(local_segment(version))
+    if explicit is not None:
+        return explicit
+    try:
+        public_version = Version(version).public
+    except InvalidVersion:
+        public_version = version
+    return KNOWN_UNTAGGED_BACKENDS.get((package.lower(), public_version))
+
+
 def cuda_major(backend: str) -> str | None:
     """CUDA major version of a cuNNN backend tag: cu129 -> 12, cu130 -> 13."""
     match = re.fullmatch(r"cu(\d+)", backend)
@@ -120,7 +137,7 @@ def check_backend_consistency(
     """
     problems: list[str] = []
     backends = {
-        package: backend_from_local(local_segment(version))
+        package: package_backend(package, version)
         for package, version in installed_versions.items()
     }
     torch_backend = backends.get("torch")
