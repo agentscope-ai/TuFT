@@ -15,6 +15,19 @@ def _default_checkpoint_dir() -> Path | None:
     return None
 
 
+# Roles a configured model can serve. Only the backends required by the
+# declared capabilities are constructed, so a training-only deployment never
+# initializes vLLM and a sampling-only deployment never loads a training model.
+ModelCapability = Literal["training", "sampling"]
+TRAINING_CAPABILITY: ModelCapability = "training"
+SAMPLING_CAPABILITY: ModelCapability = "sampling"
+ALL_MODEL_CAPABILITIES: tuple[ModelCapability, ...] = (TRAINING_CAPABILITY, SAMPLING_CAPABILITY)
+
+
+def _default_capabilities() -> list[ModelCapability]:
+    return list(ALL_MODEL_CAPABILITIES)
+
+
 # Default multiplier from a LoRA adapter's rank to its ``lora_alpha``. The Tinker
 # ``LoraConfig`` carries only a rank, so the alpha has to come from server config;
 # 2 keeps the "hf" and "fsdp" training backends on the same update scaling.
@@ -53,6 +66,15 @@ class ModelConfig(BaseModel):
     model_name: str  # name used in APIs
     model_path: Path  # path to model checkpoint
     max_model_len: int  # maximum context length supported by the model
+    # Which sides of the service this model provides. The default keeps the
+    # historical behavior: every model both trains and samples. Declaring only
+    # one capability skips constructing the other side's backend entirely, so
+    # its GPU resources are never reserved; requests that need the missing
+    # capability fail with a deterministic capability-disabled error. Changing
+    # capabilities and restarting is supported: persisted runs and sessions of
+    # a disabled capability are preserved and become usable again once the
+    # capability is re-enabled.
+    capabilities: list[ModelCapability] = Field(default_factory=_default_capabilities)
     tensor_parallel_size: int = 1  # tensor parallel size
     # Data parallel size for inference: launch N independent vLLM instances (each with
     # tensor_parallel_size GPUs) and load-balance requests across them.  Ideal for small
@@ -147,12 +169,37 @@ class ModelConfig(BaseModel):
     tool_call_parser: str | None = None
     reasoning_parser: str | None = None
 
+    @property
+    def training_enabled(self) -> bool:
+        return TRAINING_CAPABILITY in self.capabilities
+
+    @property
+    def sampling_enabled(self) -> bool:
+        return SAMPLING_CAPABILITY in self.capabilities
+
+    @model_validator(mode="after")
+    def validate_capabilities(self) -> "ModelConfig":
+        if not self.capabilities:
+            raise ValueError(
+                f"Model {self.model_name} declares no capabilities; at least one of "
+                f"{list(ALL_MODEL_CAPABILITIES)} is required."
+            )
+        # Canonical order with duplicates removed, so equal capability sets
+        # always serialize identically in API responses.
+        self.capabilities = [c for c in ALL_MODEL_CAPABILITIES if c in self.capabilities]
+        return self
+
     @model_validator(mode="after")
     def validate_colocate(self) -> "ModelConfig":
         if self.colocate and self.tensor_parallel_size != 1:
             raise ValueError("Colocate option is only supported for tensor_parallel_size=1.")
         if self.colocate and self.data_parallel_size > 1:
             raise ValueError("Colocate option is not supported with data_parallel_size > 1.")
+        if self.colocate and not (self.training_enabled and self.sampling_enabled):
+            raise ValueError(
+                "Colocate places sampling and training on the same device, so it requires "
+                f"both capabilities; model {self.model_name} declares {self.capabilities}."
+            )
         return self
 
     @model_validator(mode="after")
@@ -296,6 +343,13 @@ class AppConfig(BaseModel):
             self.supported_models = updated
         return self
 
+    def get_model_config(self, model_name: str) -> ModelConfig | None:
+        """Return the configuration for a supported model, or None if unknown."""
+        return next(
+            (model for model in self.supported_models if model.model_name == model_name),
+            None,
+        )
+
     def get_config_for_persistence(self) -> dict[str, Any]:
         """Get config fields for persistence signature.
 
@@ -303,8 +357,21 @@ class AppConfig(BaseModel):
 
         Security: exclude any secret material (e.g., API keys) from being
         serialized into persistence backends.
+
+        Capabilities are excluded from the signature on purpose: switching a
+        model between training/sampling/both profiles and restarting is a
+        supported workflow, and must not be flagged as configuration drift.
+        Records belonging to a disabled capability are preserved and validated
+        against the rest of the model configuration instead.
         """
-        return self.model_dump(mode="json", exclude={"persistence", "authorized_users"})
+        return self.model_dump(
+            mode="json",
+            exclude={
+                "persistence": True,
+                "authorized_users": True,
+                "supported_models": {"__all__": {"capabilities"}},
+            },
+        )
 
 
 def load_yaml_config(config_path: Path) -> AppConfig:

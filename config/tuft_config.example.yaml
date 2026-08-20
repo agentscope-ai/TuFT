@@ -29,6 +29,23 @@ model_owner: local-user
 #   - max_model_len: Maximum context length supported by the model
 #
 # Optional model settings:
+#   - capabilities: Which sides of the service this model provides
+#       (default: [training, sampling]). Only the backends required by the
+#       declared capabilities are constructed, so only their GPU resources are
+#       reserved:
+#         - [training]: SFT / offline DPO profile. No vLLM sampling backend is
+#           created. Training, checkpoints, and sampler-compatible weight
+#           export all work; sampling and OpenAI inference requests return a
+#           deterministic capability-disabled error.
+#         - [sampling]: inference / rollout profile. No training backend,
+#           optimizer state, or training GPU reservation. Base-model sampling
+#           and existing sampler checkpoints work; training operations return
+#           a capability-disabled error.
+#         - [training, sampling]: current behavior, required for on-policy RL.
+#       Changing capabilities and restarting is supported: persisted training
+#       runs and sampling sessions of a disabled capability are preserved and
+#       become usable again once the capability is re-enabled. An empty list
+#       is rejected. colocate requires both capabilities.
 #   - tensor_parallel_size: Number of GPUs for tensor parallelism (default: 1)
 #   - temperature: Default sampling temperature (default: 1.0)
 #   - top_p: Default nucleus sampling probability (default: 1.0)
@@ -79,6 +96,9 @@ supported_models:
   - model_name: Qwen/Qwen3-4B
     model_path: Qwen/Qwen3-4B
     max_model_len: 32768
+    # Give this model's GPUs entirely to one side of the service by declaring a
+    # single capability. Omit for the default [training, sampling]:
+    # capabilities: [training]
     tensor_parallel_size: 1
     temperature: 0.7
     top_p: 1.0

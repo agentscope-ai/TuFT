@@ -15,8 +15,9 @@ from tinker import types
 
 from .backends import BaseSamplingBackend
 from .checkpoints import CheckpointRecord
-from .config import AppConfig, ModelConfig
+from .config import SAMPLING_CAPABILITY, AppConfig, ModelConfig
 from .exceptions import (
+    CapabilityDisabledException,
     CheckpointAccessDeniedException,
     CheckpointNotFoundException,
     MissingSequenceIDException,
@@ -116,8 +117,20 @@ class SamplingController:
             if record is None:
                 continue
             if record.base_model and record.base_model not in self._base_backends:
-                invalid_sessions.append(record.sampling_session_id)
-                continue
+                # Delete only sessions of unknown (removed) models. A known
+                # model with sampling currently disabled keeps its sessions so
+                # that re-enabling the capability and restarting revives them;
+                # until then sampling requests fail with a capability error.
+                if self._sampling_disabled_config(record.base_model) is None:
+                    invalid_sessions.append(record.sampling_session_id)
+                    continue
+                logger.info(
+                    "Sampling session %s uses model %s whose sampling capability is "
+                    "disabled; preserving the session for a future restart with "
+                    "sampling enabled.",
+                    record.sampling_session_id,
+                    record.base_model,
+                )
             record.executor = SequenceExecutor()
             self._rebuild_history_index(record)
             self.sampling_sessions[record.sampling_session_id] = record
@@ -158,11 +171,15 @@ class SamplingController:
         invalid_sessions = []
         for session_id, record in list(self.sampling_sessions.items()):
             if record.model_path and record.base_model:
-                adapter_path = Path(record.model_path)
-                if not adapter_path.exists():
+                if record.base_model not in self._base_backends:
+                    if self._sampling_disabled_config(record.base_model) is not None:
+                        # Capability disabled: keep the session, skip the
+                        # adapter rebuild until sampling is enabled again.
+                        continue
                     invalid_sessions.append(session_id)
                     continue
-                if record.base_model not in self._base_backends:
+                adapter_path = Path(record.model_path)
+                if not adapter_path.exists():
                     invalid_sessions.append(session_id)
                     continue
                 try:
@@ -181,11 +198,34 @@ class SamplingController:
 
     def _create_backends(self, model_configs: List[ModelConfig]) -> Dict[str, BaseSamplingBackend]:
         backends: Dict[str, BaseSamplingBackend] = {}
+        # Only sampling-capable models get a backend; a training-only model
+        # must not create vLLM/Ray actors or reserve sampling GPU resources.
         for config in model_configs:
+            if not config.sampling_enabled:
+                logger.info(
+                    "Sampling capability disabled for %s; no sampling backend created",
+                    config.model_name,
+                )
+                continue
             backends[config.model_name] = BaseSamplingBackend.create_backend(
                 config, worker_venv_path=self.config.worker_venv_path
             )
         return backends
+
+    def _sampling_disabled_config(self, base_model: str) -> ModelConfig | None:
+        """Return the model config if the model exists with sampling disabled."""
+        model_config = self.config.get_model_config(base_model)
+        if model_config is not None and not model_config.sampling_enabled:
+            return model_config
+        return None
+
+    def require_sampling_capability(self, base_model: str) -> None:
+        """Raise the typed capability error for a known, sampling-disabled model."""
+        model_config = self._sampling_disabled_config(base_model)
+        if model_config is not None:
+            raise CapabilityDisabledException(
+                base_model, SAMPLING_CAPABILITY, model_config.capabilities
+            )
 
     async def create_sampling_session(
         self,
@@ -231,6 +271,7 @@ class SamplingController:
                             checkpoint_id=parsed_checkpoint.checkpoint_id,
                         )
                     if base_model_ref not in self._base_backends:
+                        self.require_sampling_capability(base_model_ref)
                         raise UnknownModelException(model_name=base_model_ref)
                     adapter_path = parsed_checkpoint.adapter_path
                     sampling_backend = self._base_backends[base_model_ref]
@@ -241,6 +282,7 @@ class SamplingController:
                 elif base_model:
                     base_model_ref = base_model
                     if base_model_ref not in self._base_backends:
+                        self.require_sampling_capability(base_model_ref)
                         raise UnknownModelException(model_name=base_model_ref)
                 else:
                     raise UnknownModelException(model_name="None")
@@ -304,6 +346,15 @@ class SamplingController:
             if request.seq_id is None:
                 raise MissingSequenceIDException()
 
+            # Reject a disabled or unavailable backend before recording the
+            # sequence. A capability error is not a completed sampling
+            # operation, so it must not consume the request's sequence ID or
+            # mutate persisted history. This lets the client retry the same
+            # request after an operator re-enables sampling and restarts.
+            if record.base_model not in self._base_backends:
+                self.require_sampling_capability(record.base_model)
+                raise UnknownModelException(model_name=record.base_model)
+
             await record.executor.submit(
                 sequence_id=request.seq_id,
                 func=self._record_sequence,
@@ -311,8 +362,6 @@ class SamplingController:
                 seq_id=request.seq_id,
                 prompt=request.prompt,
             )
-            if record.base_model not in self._base_backends:
-                raise UnknownModelException(model_name=record.base_model)
             if record.model_path is None:
                 lora_id = None
             else:

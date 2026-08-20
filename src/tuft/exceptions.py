@@ -84,6 +84,34 @@ class UnknownModelException(ModelException):
         self.model_name = model_name
 
 
+class CapabilityDisabledException(ModelException):
+    """A known model was asked for a capability it does not declare.
+
+    This is the deterministic error for operations against a model whose
+    ``capabilities`` configuration excludes the required role (e.g. sampling
+    from a training-only model). It is deliberately NOT an HTTP 5xx: the tinker
+    SDK and OpenAI clients retry every >=500 response (and 408/409/429) with
+    exponential backoff, which would turn this stable configuration-level
+    rejection into a multi-minute client hang. 400 matches the sibling
+    configuration rejections (InvalidRequestException,
+    CheckpointIncompatibleException) and is surfaced immediately.
+    """
+
+    model_name: str
+    capability: str
+
+    def __init__(self, model_name: str, capability: str, enabled: Sequence[str]):
+        detail = (
+            f"Capability disabled: model {model_name} does not have the "
+            f"'{capability}' capability enabled on this server "
+            f"(enabled capabilities: {list(enabled)}). Update the model's "
+            "`capabilities` in supported_models and restart to enable it."
+        )
+        super().__init__(status_code=400, detail=detail)
+        self.model_name = model_name
+        self.capability = capability
+
+
 class CheckpointNotFoundException(CheckpointException):
     """Checkpoint not found."""
 
