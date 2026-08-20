@@ -27,6 +27,30 @@ This installs TuFT with full backend support (GPU dependencies, persistence, fla
 tuft
 ```
 
+### GPU wheel selection and installer options
+
+By default (`--torch-backend auto`) the installer inspects the NVIDIA driver **before downloading anything**, selects the validated CUDA 13.0 wheel variant (`cu130`) for the pinned torch/vLLM stack, and runs import and CUDA smoke tests after installing. If the driver does not support CUDA 13.0, it fails with guidance instead of installing a broken environment. Pass a backend explicitly to override, e.g. when building an image on a machine without a GPU or using custom wheels:
+
+```bash
+# Explicit CUDA 13.0 wheels
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install.sh)" -- --torch-backend cu130
+
+# CPU-only environment
+TUFT_TORCH_BACKEND=cpu /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install.sh)"
+```
+
+`tuft upgrade` reuses the backend recorded at install time (in `$TUFT_HOME/torch-backend`), so upgrades resolve packages the same way; override with `tuft upgrade --torch-backend ...`. Use `--skip-gpu-checks` (or `TUFT_SKIP_GPU_CHECKS=1`) to turn GPU preflight/smoke-test failures into warnings.
+
+The installer also honors these environment variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `TUFT_HOME` | Installation directory (default: `~/.tuft`) |
+| `TUFT_VENV` | Virtual environment location (default: `$TUFT_HOME/venv`), e.g. to place it on faster or larger storage |
+| `TUFT_TORCH_BACKEND` | Default value for `--torch-backend` (`auto`, `cpu`, or `cuNNN`) |
+| `TUFT_PYPI_REQUIREMENT` | Override the default PyPI requirement |
+| `UV_CACHE_DIR`, `UV_LINK_MODE`, `UV_SYSTEM_CERTS`, `UV_DEFAULT_INDEX`, `UV_INDEX` | Passed through to [uv](https://docs.astral.sh/uv/) for cache placement, link mode (e.g. `copy` across filesystems), system TLS trust stores, and package indexes/mirrors |
+
 ## Install from Source Code
 
 We recommend using [uv](https://github.com/astral-sh/uv) for dependency management.
