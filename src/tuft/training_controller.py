@@ -18,11 +18,13 @@ from .checkpoints import CheckpointMetadata, CheckpointRecord, compute_tree_size
 from .config import (
     DEFAULT_LORA_ALPHA_RATIO,
     FSDP_QV_TARGET_MODULES,
+    TRAINING_CAPABILITY,
     AppConfig,
     ModelConfig,
     compute_lora_alpha,
 )
 from .exceptions import (
+    CapabilityDisabledException,
     CheckpointAccessDeniedException,
     CheckpointIncompatibleException,
     CheckpointMetadataReadException,
@@ -161,11 +163,21 @@ class TrainingController:
 
     def _create_backends(self, model_configs: List[ModelConfig]) -> Dict[str, BaseTrainingBackend]:
         backends: Dict[str, BaseTrainingBackend] = {}
-        # FSDP port allocation: 29500, 29501, ... by order of FSDP models in supported_models
-        fsdp_model_names = [
-            c.model_name for c in model_configs if getattr(c, "training_backend", "hf") == "fsdp"
-        ]
+        # Only training-capable models get a backend; a sampling-only model
+        # must not load training weights or reserve training GPU resources.
+        trainable = [c for c in model_configs if c.training_enabled]
         for config in model_configs:
+            if not config.training_enabled:
+                logger.info(
+                    "Training capability disabled for %s; no training backend created",
+                    config.model_name,
+                )
+        # FSDP port allocation: 29500, 29501, ... by order of FSDP models among
+        # the training-capable entries of supported_models (only they bind ports)
+        fsdp_model_names = [
+            c.model_name for c in trainable if getattr(c, "training_backend", "hf") == "fsdp"
+        ]
+        for config in trainable:
             fsdp_index: Optional[int] = None
             if config.model_name in fsdp_model_names:
                 fsdp_index = fsdp_model_names.index(config.model_name)
@@ -234,6 +246,17 @@ class TrainingController:
             # Restore backend reference
             if record.base_model in self.training_backends:
                 record.backend = self.training_backends[record.base_model]
+            elif self._training_disabled_config(record.base_model) is not None:
+                # Known model whose training capability is currently disabled.
+                # Preserve the record un-corrupted (backend stays None) so that
+                # re-enabling the capability and restarting restores the run;
+                # until then training operations fail with a capability error.
+                logger.info(
+                    "Training run %s uses model %s whose training capability is disabled; "
+                    "preserving the run for a future restart with training enabled.",
+                    model_id,
+                    record.base_model,
+                )
             else:
                 record.corrupted = True
             if record.has_legacy_lora_state:
@@ -393,6 +416,7 @@ class TrainingController:
                 logger.info("Creating model %s", model_id)
 
                 if base_model not in self.training_backends:
+                    self._require_training_capability(base_model)
                     raise UnknownModelException(model_name=base_model)
                 backend = self.training_backends[base_model]
                 effective_targets = self._effective_lora_targets(base_model, lora_config)
@@ -446,11 +470,20 @@ class TrainingController:
                 "adapter/adapter_config.json."
             )
 
-    def build_supported_models(self) -> list[types.SupportedModel]:
-        return [
-            types.SupportedModel(model_name=model.model_name)
-            for model in self.config.supported_models
-        ]
+    def _training_disabled_config(self, base_model: str) -> ModelConfig | None:
+        """Return the model config if the model exists with training disabled."""
+        model_config = self._model_config_for(base_model)
+        if model_config is not None and not model_config.training_enabled:
+            return model_config
+        return None
+
+    def _require_training_capability(self, base_model: str) -> None:
+        """Raise the typed capability error for a known, training-disabled model."""
+        model_config = self._training_disabled_config(base_model)
+        if model_config is not None:
+            raise CapabilityDisabledException(
+                base_model, TRAINING_CAPABILITY, model_config.capabilities
+            )
 
     def update_activity(self, model_id: str, user_id: str) -> None:
         record = self.get_run_record(model_id, user_id)
@@ -469,6 +502,7 @@ class TrainingController:
         backward: bool,
     ) -> types.ForwardBackwardOutput:
         record = self.get_run_record(model_id, user_id)
+        self._require_training_capability(record.base_model)
         self._require_resumable_run(record)
         self.update_activity(model_id, user_id)
 
@@ -518,6 +552,7 @@ class TrainingController:
         self, model_id: str, user_id: str, params: types.AdamParams, seq_id: int | None
     ) -> types.OptimStepResponse:
         record = self.get_run_record(model_id, user_id)
+        self._require_training_capability(record.base_model)
         self._require_resumable_run(record)
         self.update_activity(model_id, user_id)
 
@@ -600,7 +635,15 @@ class TrainingController:
     ) -> CheckpointRecord:
         """Save a checkpoint for the given training run."""
         training_run = self.get_run_record(model_id=model_id, user_id=user_id)
+        # Without a live training backend a "checkpoint" would be metadata-only
+        # (no weights), so a training-disabled run cannot save one.
+        self._require_training_capability(training_run.base_model)
         self._require_resumable_run(training_run)
+        if training_run.corrupted:
+            raise InvalidRequestException(
+                f"Training run {model_id} is corrupted and cannot save checkpoints. "
+                "Create a new training run and load a compatible checkpoint instead."
+            )
 
         with _get_tracer().start_as_current_span("training_controller.save_checkpoint") as span:
             span.set_attribute("tuft.training_run_id", model_id)
@@ -741,7 +784,10 @@ class TrainingController:
         if not (metadata.public or metadata.owner_name == user_id):
             raise CheckpointAccessDeniedException(checkpoint_id=parsed_checkpoint.checkpoint_id)
 
+        # Only the destination needs a live training backend; checkpoints of a
+        # training-disabled source run remain loadable.
         destination_training_run = self.get_run_record(model_id, user_id)
+        self._require_training_capability(destination_training_run.base_model)
         self._require_resumable_run(destination_training_run)
         if destination_training_run.backend is None:
             raise UnknownModelException(model_name=model_id)
@@ -849,10 +895,7 @@ class TrainingController:
             )
 
     def _model_config_for(self, base_model: str) -> ModelConfig | None:
-        return next(
-            (model for model in self.config.supported_models if model.model_name == base_model),
-            None,
-        )
+        return self.config.get_model_config(base_model)
 
     def _effective_lora_targets(self, base_model: str, lora_config: types.LoraConfig):
         """Resolve the concrete geometry persisted for a newly created run."""

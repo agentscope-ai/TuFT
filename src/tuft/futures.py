@@ -229,6 +229,27 @@ class FutureStore:
                 count += 1
         return count
 
+    def mark_model_pending_futures_failed(
+        self,
+        model_id: str | None,
+        error_message: str,
+    ) -> int:
+        """Mark only the *pending* futures of one model as failed.
+
+        Unlike ``mark_futures_failed_after_checkpoint`` this never touches
+        completed futures, so already-retrievable results stay retrievable.
+        """
+        count = 0
+        for record in self._records.values():
+            if record.model_id != model_id or record.status != "pending":
+                continue
+            record.status = "failed"
+            record.error = FutureCancelledException(record.request_id, reason=error_message)
+            record.event.set()
+            self._save_future(record.request_id)
+            count += 1
+        return count
+
     def mark_pending_sample_futures_failed(
         self,
         error_message: str = "Server restarted while sample request was pending. Please retry.",

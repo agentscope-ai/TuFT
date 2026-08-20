@@ -109,8 +109,10 @@ def create_oai_router() -> APIRouter:
         """List models visible to the current user.
 
         Returns:
-        - All shared base models
+        - All shared sampling-capable base models
         - LoRA adapters belonging to this user (as tinker:// paths)
+
+        Training-only models are omitted: they cannot serve inference here.
         """
         state = _get_state(request)
         models_data: list[dict[str, Any]] = []
@@ -118,6 +120,8 @@ def create_oai_router() -> APIRouter:
 
         # Add base models (shared by all users)
         for model_cfg in state.config.supported_models:
+            if not model_cfg.sampling_enabled:
+                continue
             models_data.append(
                 {
                     "id": model_cfg.model_name,
@@ -133,6 +137,11 @@ def create_oai_router() -> APIRouter:
             if record.user_id != user.user_id:
                 continue
             if record.model_path is None:
+                continue
+            # A restored session may reference a model whose sampling
+            # capability is currently disabled; it cannot serve inference.
+            base_cfg = state.config.get_model_config(record.base_model)
+            if base_cfg is None or not base_cfg.sampling_enabled:
                 continue
             # Present as tinker:// path if available
             tinker_path = f"tinker://{record.session_id}/sampler_weights/{session_id}"
@@ -239,6 +248,10 @@ def create_oai_router() -> APIRouter:
                 span.set_attribute("oai.base_model", resolved.base_model)
                 if resolved.lora_id:
                     span.set_attribute("oai.lora_id", resolved.lora_id)
+
+                # A known model without the sampling capability gets the
+                # deterministic capability error, not a backend-lookup failure.
+                state.sampling.require_sampling_capability(resolved.base_model)
 
                 # Get backend OpenAI URL (DP-aware: round-robin across instances)
                 backend = state.sampling._base_backends.get(resolved.base_model)

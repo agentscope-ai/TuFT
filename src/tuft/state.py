@@ -12,7 +12,7 @@ from tinker import types
 
 from .auth import AuthenticationDB, User
 from .checkpoints import CheckpointRecord
-from .config import AppConfig
+from .config import AppConfig, ModelCapability
 from .exceptions import SessionNotFoundException, UserMismatchException
 from .futures import FutureStore
 from .persistence import get_redis_store, is_persistence_enabled, load_record, save_record
@@ -112,6 +112,23 @@ class SessionManager:
         return [k for k, v in self._sessions.items() if v.user_id == user_id]
 
 
+class SupportedModelInfo(types.SupportedModel):
+    """``SupportedModel`` extended with TuFT's per-model capability roles.
+
+    tinker's ``SupportedModel`` ignores unknown JSON keys, so existing SDK
+    clients parse this response unchanged while capability-aware clients (and
+    plain HTTP callers) can read ``capabilities`` to avoid unsupported calls.
+    """
+
+    capabilities: list[ModelCapability]
+
+
+class ServerCapabilitiesResponse(types.GetServerCapabilitiesResponse):
+    """Server capabilities response carrying per-model capability roles."""
+
+    supported_models: list[SupportedModelInfo]  # type: ignore[assignment]
+
+
 class ServerState:
     """Application-wide container that wires controllers together
     and exposes a simple façade to FastAPI.
@@ -156,7 +173,31 @@ class ServerState:
 
         # Restore training runs (adapter + checkpoint)
         for model_id, record in self.training.training_runs.items():
-            if record.backend is None or record.corrupted:
+            if record.corrupted:
+                # A corrupted run cannot restore an adapter, so none of its
+                # pending operations can ever complete. Fail them explicitly
+                # instead of leaving clients polling TryAgainResponse forever.
+                self.future_store.mark_model_pending_futures_failed(
+                    model_id=model_id,
+                    error_message=(
+                        f"Training run {model_id} is corrupted and could not be restored; "
+                        "the pending operation cannot complete."
+                    ),
+                )
+                continue
+            if record.backend is None:
+                # Known model restored with its training capability disabled:
+                # its pending operations can never complete on this server, so
+                # fail them deterministically instead of leaving clients
+                # polling forever. The run itself stays.
+                self.future_store.mark_model_pending_futures_failed(
+                    model_id=model_id,
+                    error_message=(
+                        f"Training capability for model {record.base_model} is "
+                        "disabled on this server; the pending operation cannot "
+                        "complete. Re-enable the capability and retry."
+                    ),
+                )
                 continue
             latest_ckpt = await self.training.restore_from_checkpoint(model_id)
 
@@ -199,8 +240,21 @@ class ServerState:
             user_metadata=user_metadata,
         )
 
-    def build_supported_models(self) -> list[types.SupportedModel]:
-        return self.training.build_supported_models()
+    def build_supported_models(self) -> list[SupportedModelInfo]:
+        """Common supported-model metadata, built from configuration.
+
+        Deliberately not routed through a controller: either side may be
+        disabled for a model, but the model itself is still part of the
+        service's advertised surface.
+        """
+        return [
+            SupportedModelInfo(
+                model_name=model.model_name,
+                max_context_length=model.max_model_len,
+                capabilities=model.capabilities,
+            )
+            for model in self.config.supported_models
+        ]
 
     def get_user(self, api_key: str) -> User | None:
         return self.auth_db.authenticate(api_key)
