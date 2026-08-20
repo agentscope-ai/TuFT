@@ -6,6 +6,9 @@ on:
     paths:
       - 'scripts/install.sh'
       - 'scripts/verify_runtime_versions.py'
+      - 'tests/shell/test_torch_backend.sh'
+      - 'tests/test_verify_runtime_versions.py'
+      - 'tests/test_install_backend_selection.py'
       - '.github/workflows/install-script.yml'
       - 'pyproject.toml'
   pull_request:
@@ -13,6 +16,9 @@ on:
     paths:
       - 'scripts/install.sh'
       - 'scripts/verify_runtime_versions.py'
+      - 'tests/shell/test_torch_backend.sh'
+      - 'tests/test_verify_runtime_versions.py'
+      - 'tests/test_install_backend_selection.py'
       - '.github/workflows/install-script.yml'
       - 'pyproject.toml'
 
@@ -20,6 +26,26 @@ permissions:
   contents: read
 
 jobs:
+  # Fast unit-level coverage: torch backend selection (shell) and PEP 440
+  # runtime version verification (python). No TuFT installation needed, so
+  # this finishes in seconds and pinpoints logic regressions.
+  test-backend-selection:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Shell tests for torch backend selection
+        run: bash tests/shell/test_torch_backend.sh
+
+      - name: Unit tests for runtime version verification
+        # --noconftest: tests/conftest.py needs an installed tuft package;
+        # these unit tests only need pytest + packaging.
+        run: |
+          python3 -m pip install --quiet pytest packaging
+          python3 -m pytest tests/test_verify_runtime_versions.py --noconftest -p no:cacheprovider
+
   test-install-script:
     strategy:
       fail-fast: false
@@ -66,6 +92,17 @@ jobs:
         run: |
           test -f "${TUFT_HOME}/venv/bin/python"
           "${TUFT_HOME}/venv/bin/python" -c "import tuft; print('tuft imported successfully')"
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+      - name: Verify recorded torch backend
+        run: |
+          # Runners have no NVIDIA driver, so 'auto' must resolve to the
+          # default PyPI wheels, record that choice, and install the shared
+          # backend helpers used by `tuft upgrade`.
+          test "$(cat "${TUFT_HOME}/torch-backend")" = "default"
+          test -f "${TUFT_HOME}/scripts/torch_backend.sh"
+          bash -n "${TUFT_HOME}/scripts/torch_backend.sh"
         env:
           TUFT_HOME: ${{ runner.temp }}/tuft
 
@@ -192,6 +229,16 @@ jobs:
         run: |
           export PATH="${TUFT_HOME}/bin:$PATH"
           tuft version
+        env:
+          TUFT_HOME: ${{ runner.temp }}/tuft
+
+      - name: Test upgrade rejects invalid torch backend
+        run: |
+          export PATH="${TUFT_HOME}/bin:$PATH"
+          if tuft upgrade --torch-backend not-a-backend; then
+            echo "Expected 'tuft upgrade --torch-backend not-a-backend' to fail"
+            exit 1
+          fi
         env:
           TUFT_HOME: ${{ runner.temp }}/tuft
 
