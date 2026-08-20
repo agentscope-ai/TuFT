@@ -18,27 +18,6 @@ use), three of every four text layers use Gated DeltaNet instead of full
 attention, so `train_attn` additionally covers `linear_attn.in_proj_qkv`,
 `linear_attn.in_proj_z`, and `linear_attn.out_proj`.
 
-## Breaking change in 0.2.0: Qwen3.5-based models
-
-Release 0.2.0 (the fix for issue #149) added the Tinker-compatible
-`linear_attn.in_proj_qkv`, `linear_attn.in_proj_z`, and `linear_attn.out_proj`
-modules to the LoRA target list for Qwen3.5-based models. Checkpoints and
-training runs from before 0.2.0 use the old, shorter list, and the two lists
-must match exactly. After upgrading to 0.2.0:
-
-- Old checkpoints for these models cannot be loaded.
-- Old FSDP training runs are marked corrupted when the server restarts.
-- A server config that sets `fsdp_target_modules` to the old list stops the
-  server at startup. The error says how to fix the config.
-- With persistence enabled, the new `qwen_gated_deltanet_full_lora` model
-  field changes the stored configuration signature, so startup fails with a
-  configuration-mismatch error until you switch to a new namespace or clear
-  the old one (see
-  [Changing config safely](persistence.md#changing-config-safely)).
-
-Each error message names this change as the cause. To continue training,
-create a new training run.
-
 ## Full Gated DeltaNet coverage (opt-in)
 
 Set `qwen_gated_deltanet_full_lora: true` on a model to additionally target

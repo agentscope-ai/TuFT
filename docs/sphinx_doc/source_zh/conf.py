@@ -29,6 +29,8 @@ myst_enable_extensions = [
     "colon_fence",
     "linkify",
     "strikethrough",
+    "amsmath",
+    "dollarmath",
 ]
 myst_heading_anchors = 5
 

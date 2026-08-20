@@ -23,8 +23,6 @@ TuFT (**T**enant-**u**nified **F**ine**T**uning) is a multi-tenant platform that
 > [!TIP]
 > **🚀 No GPU? No problem!** You can deploy TuFT to a pay-as-you-go cloud provider — **Modal** (serverless, scale-to-zero) or **Lambda Cloud** — and fine-tune from your laptop with no local GPU. See [Deployment](#deployment).
 
-Check out our [roadmap](#roadmap) to see what we're building next.
-
 We're open source and welcome contributions! Join the community:
 - [DingTalk Group](https://qr.dingtalk.com/action/joingroup?code=v1,k1,UWvzO6HHSeuvRQ5WXCOMJEijadQV+hDjhMIpiVr8qCs=&_dt_no_comment=1&origin=11?)
 - [Discord](https://discord.gg/BCNCaQGxBH)
@@ -38,7 +36,6 @@ We're open source and welcome contributions! Join the community:
 - [Deployment](#deployment)
 - [User Guide](#user-guide)
 - [Architecture](#architecture)
-- [Roadmap](#roadmap)
 - [Development](#development)
 
 ## Quick Install
@@ -403,43 +400,6 @@ graph TB
 - **Sampling Backend**: Generates tokens from trained models
 - **Checkpoint Storage**: Manages model checkpoints and LoRA weights
 
-
-
-## Roadmap
-
-### Core Focus: Post-Training for Agent Scenarios
-
-We focus on post-training for agentic models. The rollout phase in RL training involves reasoning, multi-turn conversations, and tool use, which tends to be asynchronous relative to the training phase. We aim to improve the throughput and resource efficiency of the overall system, building tools that are easy to use and integrate into existing workflows.
-
-### Architecture & Positioning
-
-- **Horizontal platform**: Not a vertically integrated fine-tuning solution, but a flexible platform that plugs into different training frameworks and compute infrastructures
-- **Code-first API**: Connects agentic training workflows with compute infrastructure through programmatic interfaces
-- **Layer in AI stack**: Sits above the infrastructure layer (Kubernetes, cloud platforms, GPU clusters), integrating with training frameworks (PeFT, FSDP, vLLM, DeepSpeed) as implementation dependencies
-- **Integration approach**: Works with existing ecosystems rather than replacing them
-
-### Near-Term (3 months)
-
-- **Multi-machine, multi-GPU training**: Support distributed architectures using PeFT, FSDP, vLLM, DeepSpeed, etc.
-- **Cloud-native deployment**: Integration with AWS, Alibaba Cloud, GCP, Azure and Kubernetes orchestration
-- **Observability**: Monitoring system with real-time logs, GPU metrics, training progress, and debugging tools
-- **Serverless GPU**: Lightweight runtime for diverse deployment scenarios, with multi-user and multi-tenant GPU resource sharing to improve utilization efficiency
-
-### Long-Term (6 months)
-
-- **Environment-driven learning loop**: Standardized interfaces with WebShop, MiniWob++, BrowserEnv, Voyager and other agent training environments
-- **Automated pipeline**: Task execution → feedback collection → data generation → model updates
-- **Advanced RL paradigms**: RLAIF, Error Replay, and environment feedback mechanisms
-- **Simulation sandboxes**: Lightweight local environments for rapid experimentation
-
-### Open Collaboration: We are Looking for Collaborators
-
-This roadmap is not fixed, but rather a starting point for our journey with the open source community. Every feature design will be implemented through GitHub Issue discussions, PRs, and prototype validation. We sincerely welcome you to propose real-world use cases, performance bottlenecks, or innovative ideas—it is these voices that will collectively define the future of Agent post-training.
-
-We welcome suggestions and contributions from the community! Join us on:
-- [DingTalk Group](https://qr.dingtalk.com/action/joingroup?code=v1,k1,UWvzO6HHSeuvRQ5WXCOMJEijadQV+hDjhMIpiVr8qCs=&_dt_no_comment=1&origin=11?)
-- [Discord](https://discord.gg/BCNCaQGxBH) (on AgentScope's Server)
-
 ## Development
 
 ### Setup Development Environment
@@ -516,3 +476,7 @@ uv run detect-secrets audit .secrets.baseline
 ### Contributing
 
 Please ensure all tests pass and pre-commit hooks succeed before creating new PRs.
+
+We welcome suggestions and contributions from the community! Join us on:
+- [DingTalk Group](https://qr.dingtalk.com/action/joingroup?code=v1,k1,UWvzO6HHSeuvRQ5WXCOMJEijadQV+hDjhMIpiVr8qCs=&_dt_no_comment=1&origin=11?)
+- [Discord](https://discord.gg/BCNCaQGxBH) (on AgentScope's Server)

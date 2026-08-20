@@ -42,7 +42,7 @@ Client-defined objectives (e.g. composite DPO + NLL) via `forward_backward_custo
 :link-type: doc
 :shadow: none
 
-How LoRA flags resolve to module names, and the Qwen3.5 breaking change.
+How LoRA flags resolve to module names, and the rules enforced around them.
 :::
 
 :::{grid-item-card} Persistence
