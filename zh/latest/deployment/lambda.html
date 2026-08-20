@@ -27,7 +27,7 @@
 <link href="../_static/pygments.css?v=03e43079" rel="stylesheet" type="text/css"/>
 <link href="../_static/theme.css?v=d6d7c91b" rel="stylesheet" type="text/css"/>
 <link href="../_static/sphinx-design.min.css?v=95c83b7e" rel="stylesheet" type="text/css"/>
-<link href="../_static/custom.css?v=6dfd5dbd" rel="stylesheet" type="text/css"/>
+<link href="../_static/custom.css?v=ad1d39bd" rel="stylesheet" type="text/css"/>
 <link href="../_static/awesome-sphinx-design.css?v=a81faafa" rel="stylesheet" type="text/css"/>
 <link href="../_static/logo_wo_text.svg" rel="icon"/>
 <link href="../search.html" rel="search" title="搜索"/>
@@ -106,6 +106,8 @@
 <li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="../user-guide/index.html">用户指南<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
 <li class="toctree-l2"><a class="reference internal" href="../user-guide/chat-sft.html">Chat 监督微调（SFT）</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../user-guide/countdown-rl.html">Countdown 强化学习（RL）</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user-guide/on-policy-distillation.html">在策略蒸馏（OPD）</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../user-guide/custom-losses.html">自定义损失</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../user-guide/lora-target-modules.html">LoRA 目标模块</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../user-guide/persistence.html">持久化</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../user-guide/telemetry.html">可观测性（OpenTelemetry）</a></li>
@@ -116,7 +118,6 @@
 <li class="toctree-l2"><a class="reference internal" href="../development/testing.html">测试指南</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../roadmap.html">发展路线图</a></li>
 </ul>
 </nav>
 </div>
@@ -140,7 +141,7 @@
 <div class="mr-1">/</div><span aria-current="page" class="font-medium text-foreground overflow-hidden text-ellipsis whitespace-nowrap">在 Lambda Cloud 上部署</span>
 </nav>
 <div id="content" role="main">
-<section id="lambda-cloud">
+<section class="tex2jax_ignore mathjax_ignore" id="lambda-cloud">
 <h1>在 Lambda Cloud 上部署<a class="headerlink" href="#lambda-cloud" title="Link to this heading">¶</a></h1>
 <p><a class="reference external" href="https://lambda.ai">Lambda Cloud</a> 提供普通的按需 GPU 虚拟机，按分钟计费，直到你终止它们——没有编排层，也没有抢占。本指南将带你完成端到端的流程——配置一个 TuFT 服务器，在 Lambda GPU 上启动它，在本地（笔记本）上基于 <code class="docutils literal notranslate"><span class="pre">Qwen/Qwen3-0.6B</span></code> 训练一个"像 Yoda 一样说话"的 LoRA，并下载该适配器——<strong>无需本地 GPU</strong>。</p>
 <div class="note admonition">

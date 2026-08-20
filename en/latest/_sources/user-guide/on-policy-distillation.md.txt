@@ -246,8 +246,10 @@ of the bare model's rambling. The whole run costs roughly **$1 of A100-40GB time
 Here is a held-out problem the bare student got **wrong** and the trained student got **right** — same
 bare prompt, greedy decode:
 
-> *Susan earns $5 every 10 minutes for an online task she does. If she works between 8 a.m. and 11 a.m. and
-> pauses in between for half an hour, how much money does she earn?*  (answer: $75)
+```text
+Susan earns $5 every 10 minutes for an online task she does. If she works between 8 a.m. and 11 a.m. and
+pauses in between for half an hour, how much money does she earn?  (answer: $75)
+```
 
 **Before OPD** — the bare student *lists* the half-hour pause, then forgets to subtract it, and confidently
 boxes the wrong total:
@@ -281,9 +283,11 @@ commit to the teacher's short, complete arithmetic.
 The same tightening happens **even on problems the bare model already gets right** — it just stops rambling.
 Same bare prompt, same answer (142), before and after:
 
-> *Ricardo grows tomatoes and eggplants in his garden. Each tomato plant yields 22 tomatoes while each plant
-> of eggplant yields 4 eggplants. He planted 5 tomato plants and 8 plants of eggplant. How many fruits can
-> Ricardo get from his plants?*  (answer: 142)
+```text
+Ricardo grows tomatoes and eggplants in his garden. Each tomato plant yields 22 tomatoes while each plant
+of eggplant yields 4 eggplants. He planted 5 tomato plants and 8 plants of eggplant. How many fruits can
+Ricardo get from his plants?  (answer: 142)
+```
 
 **Before OPD** — opens with markdown headers and boilerplate; 256 tokens in, it is still *setting up*:
 

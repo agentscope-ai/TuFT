@@ -27,13 +27,13 @@
 <link href="../_static/pygments.css?v=03e43079" rel="stylesheet" type="text/css"/>
 <link href="../_static/theme.css?v=d6d7c91b" rel="stylesheet" type="text/css"/>
 <link href="../_static/sphinx-design.min.css?v=95c83b7e" rel="stylesheet" type="text/css"/>
-<link href="../_static/custom.css?v=6dfd5dbd" rel="stylesheet" type="text/css"/>
+<link href="../_static/custom.css?v=ad1d39bd" rel="stylesheet" type="text/css"/>
 <link href="../_static/awesome-sphinx-design.css?v=a81faafa" rel="stylesheet" type="text/css"/>
 <link href="../_static/logo_wo_text.svg" rel="icon"/>
 <link href="../search.html" rel="search" title="搜索"/>
 <link href="../genindex.html" rel="index" title="索引"/>
 <link href="persistence.html" rel="next" title="持久化"/>
-<link href="countdown-rl.html" rel="prev" title="Countdown 强化学习（RL）"/>
+<link href="custom-losses.html" rel="prev" title="自定义损失"/>
 </head>
 <body :class="{ 'overflow-hidden': showSidebar }" class="min-h-screen font-sans antialiased bg-background text-foreground" x-data="{ showSidebar: false, showScrollTop: false }">
 <div @click.self="showSidebar = false" class="fixed inset-0 z-50 overflow-hidden bg-background/80 backdrop-blur-sm md:hidden" x-cloak="" x-show="showSidebar"></div><div class="relative flex flex-col min-h-screen" id="page"><a class="absolute top-0 left-0 z-[100] block bg-background p-4 text-xl transition -translate-x-full opacity-0 focus:translate-x-0 focus:opacity-100" href="#content">
@@ -106,6 +106,8 @@
 <li class="toctree-l1 current" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="index.html">用户指南<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul class="current" x-show="expanded">
 <li class="toctree-l2"><a class="reference internal" href="chat-sft.html">Chat 监督微调（SFT）</a></li>
 <li class="toctree-l2"><a class="reference internal" href="countdown-rl.html">Countdown 强化学习（RL）</a></li>
+<li class="toctree-l2"><a class="reference internal" href="on-policy-distillation.html">在策略蒸馏（OPD）</a></li>
+<li class="toctree-l2"><a class="reference internal" href="custom-losses.html">自定义损失</a></li>
 <li class="toctree-l2 current"><a class="current reference internal" href="#">LoRA 目标模块</a></li>
 <li class="toctree-l2"><a class="reference internal" href="persistence.html">持久化</a></li>
 <li class="toctree-l2"><a class="reference internal" href="telemetry.html">可观测性（OpenTelemetry）</a></li>
@@ -116,7 +118,6 @@
 <li class="toctree-l2"><a class="reference internal" href="../development/testing.html">测试指南</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../roadmap.html">发展路线图</a></li>
 </ul>
 </nav>
 </div>
@@ -140,7 +141,7 @@
 <div class="mr-1">/</div><span aria-current="page" class="font-medium text-foreground overflow-hidden text-ellipsis whitespace-nowrap">LoRA 目标模块</span>
 </nav>
 <div id="content" role="main">
-<section id="lora">
+<section class="tex2jax_ignore mathjax_ignore" id="lora">
 <h1>LoRA 目标模块<a class="headerlink" href="#lora" title="Link to this heading">¶</a></h1>
 <p>本页说明 TuFT 如何把客户端 LoRA 标志（<code class="docutils literal notranslate"><span class="pre">train_attn</span></code>、<code class="docutils literal notranslate"><span class="pre">train_mlp</span></code>、
 <code class="docutils literal notranslate"><span class="pre">train_unembed</span></code>）解析为具体的模块名，以及围绕它们的规则。</p>
@@ -155,23 +156,6 @@ Hugging Face 模型 ID）时，由模型名决定。</p>
 每四个文本层中有三个使用 Gated DeltaNet 而不是完整注意力，因此 <code class="docutils literal notranslate"><span class="pre">train_attn</span></code>
 额外覆盖 <code class="docutils literal notranslate"><span class="pre">linear_attn.in_proj_qkv</span></code>、<code class="docutils literal notranslate"><span class="pre">linear_attn.in_proj_z</span></code> 和
 <code class="docutils literal notranslate"><span class="pre">linear_attn.out_proj</span></code>。</p>
-</section>
-<section id="qwen3-5">
-<h2>0.2.0 中的破坏性变更：Qwen3.5 系列模型<a class="headerlink" href="#qwen3-5" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#qwen3-5'">¶</a></h2>
-<p>0.2.0 版本（issue #149 的修复）为 Qwen3.5 系列模型的 LoRA 目标模块列表新增了
-与 Tinker 兼容的 <code class="docutils literal notranslate"><span class="pre">linear_attn.in_proj_qkv</span></code>、<code class="docutils literal notranslate"><span class="pre">linear_attn.in_proj_z</span></code> 和
-<code class="docutils literal notranslate"><span class="pre">linear_attn.out_proj</span></code> 模块。0.2.0 之前保存的检查点和训练运行使用旧的、更短的
-列表，而两份列表必须完全一致。升级到 0.2.0 后：</p>
-<ul class="simple">
-<li><p>这些模型的旧检查点无法加载。</p></li>
-<li><p>服务器重启时，旧的 FSDP 训练运行会被标记为损坏（corrupted）。</p></li>
-<li><p>如果服务器配置中的 <code class="docutils literal notranslate"><span class="pre">fsdp_target_modules</span></code> 仍是旧列表，服务器会在启动时报错
-退出，错误信息会说明如何修改配置。</p></li>
-<li><p>启用持久化时，新增的 <code class="docutils literal notranslate"><span class="pre">qwen_gated_deltanet_full_lora</span></code> 模型字段会改变已存储的
-配置签名，启动会因“配置不匹配”而失败；请切换到新命名空间或清除旧命名空间
-（参见<a class="reference internal" href="persistence.html#id15"><span class="std std-ref">安全更改配置</span></a>）。</p></li>
-</ul>
-<p>每条错误信息都会指出原因是这项变更。要继续训练，请创建新的训练运行。</p>
 </section>
 <section id="gated-deltanet">
 <h2>完整 Gated DeltaNet 覆盖（可选项）<a class="headerlink" href="#gated-deltanet" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#gated-deltanet'">¶</a></h2>
@@ -215,7 +199,6 @@ embedding 模块支持的 vLLM 正式发布版。</p>
 <div class="sticky top-16 -mt-10 max-h-[calc(100vh-5rem)] h-full overflow-y-auto pt-6 space-y-2"><p class="font-medium">On this page</p>
 <ul>
 <li><a :data-current="activeSection === '#id1'" class="reference internal" href="#id1">解析方式</a></li>
-<li><a :data-current="activeSection === '#qwen3-5'" class="reference internal" href="#qwen3-5">0.2.0 中的破坏性变更：Qwen3.5 系列模型</a></li>
 <li><a :data-current="activeSection === '#gated-deltanet'" class="reference internal" href="#gated-deltanet">完整 Gated DeltaNet 覆盖（可选项）</a></li>
 <li><a :data-current="activeSection === '#moe'" class="reference internal" href="#moe">MoE 模型</a></li>
 <li><a :data-current="activeSection === '#id2'" class="reference internal" href="#id2">每个目标都必须匹配真实模块</a></li>

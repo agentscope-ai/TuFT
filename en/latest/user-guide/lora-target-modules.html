@@ -27,7 +27,7 @@
 <link href="../_static/pygments.css?v=03e43079" rel="stylesheet" type="text/css"/>
 <link href="../_static/theme.css?v=d6d7c91b" rel="stylesheet" type="text/css"/>
 <link href="../_static/sphinx-design.min.css?v=95c83b7e" rel="stylesheet" type="text/css"/>
-<link href="../_static/custom.css?v=6dfd5dbd" rel="stylesheet" type="text/css"/>
+<link href="../_static/custom.css?v=ad1d39bd" rel="stylesheet" type="text/css"/>
 <link href="../_static/awesome-sphinx-design.css?v=a81faafa" rel="stylesheet" type="text/css"/>
 <link href="../_static/logo_wo_text.svg" rel="icon"/>
 <link href="../search.html" rel="search" title="Search"/>
@@ -118,7 +118,6 @@
 <li class="toctree-l2"><a class="reference internal" href="../development/testing.html">Testing Guide</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../roadmap.html">Roadmap</a></li>
 </ul>
 </nav>
 </div>
@@ -159,27 +158,6 @@ been downloaded), the model name decides.</p>
 use), three of every four text layers use Gated DeltaNet instead of full
 attention, so <code class="docutils literal notranslate"><span class="pre">train_attn</span></code> additionally covers <code class="docutils literal notranslate"><span class="pre">linear_attn.in_proj_qkv</span></code>,
 <code class="docutils literal notranslate"><span class="pre">linear_attn.in_proj_z</span></code>, and <code class="docutils literal notranslate"><span class="pre">linear_attn.out_proj</span></code>.</p>
-</section>
-<section id="breaking-change-in-0-2-0-qwen3-5-based-models">
-<h2>Breaking change in 0.2.0: Qwen3.5-based models<a class="headerlink" href="#breaking-change-in-0-2-0-qwen3-5-based-models" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#breaking-change-in-0-2-0-qwen3-5-based-models'">¶</a></h2>
-<p>Release 0.2.0 (the fix for issue #149) added the Tinker-compatible
-<code class="docutils literal notranslate"><span class="pre">linear_attn.in_proj_qkv</span></code>, <code class="docutils literal notranslate"><span class="pre">linear_attn.in_proj_z</span></code>, and <code class="docutils literal notranslate"><span class="pre">linear_attn.out_proj</span></code>
-modules to the LoRA target list for Qwen3.5-based models. Checkpoints and
-training runs from before 0.2.0 use the old, shorter list, and the two lists
-must match exactly. After upgrading to 0.2.0:</p>
-<ul class="simple">
-<li><p>Old checkpoints for these models cannot be loaded.</p></li>
-<li><p>Old FSDP training runs are marked corrupted when the server restarts.</p></li>
-<li><p>A server config that sets <code class="docutils literal notranslate"><span class="pre">fsdp_target_modules</span></code> to the old list stops the
-server at startup. The error says how to fix the config.</p></li>
-<li><p>With persistence enabled, the new <code class="docutils literal notranslate"><span class="pre">qwen_gated_deltanet_full_lora</span></code> model
-field changes the stored configuration signature, so startup fails with a
-configuration-mismatch error until you switch to a new namespace or clear
-the old one (see
-<a class="reference internal" href="persistence.html#changing-config-safely"><span class="std std-ref">Changing config safely</span></a>).</p></li>
-</ul>
-<p>Each error message names this change as the cause. To continue training,
-create a new training run.</p>
 </section>
 <section id="full-gated-deltanet-coverage-opt-in">
 <h2>Full Gated DeltaNet coverage (opt-in)<a class="headerlink" href="#full-gated-deltanet-coverage-opt-in" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#full-gated-deltanet-coverage-opt-in'">¶</a></h2>
@@ -229,7 +207,6 @@ a released vLLM version containing its Qwen3.5 embedding-module support.</p>
 <div class="sticky top-16 -mt-10 max-h-[calc(100vh-5rem)] h-full overflow-y-auto pt-6 space-y-2"><p class="font-medium">On this page</p>
 <ul>
 <li><a :data-current="activeSection === '#how-resolution-works'" class="reference internal" href="#how-resolution-works">How resolution works</a></li>
-<li><a :data-current="activeSection === '#breaking-change-in-0-2-0-qwen3-5-based-models'" class="reference internal" href="#breaking-change-in-0-2-0-qwen3-5-based-models">Breaking change in 0.2.0: Qwen3.5-based models</a></li>
 <li><a :data-current="activeSection === '#full-gated-deltanet-coverage-opt-in'" class="reference internal" href="#full-gated-deltanet-coverage-opt-in">Full Gated DeltaNet coverage (opt-in)</a></li>
 <li><a :data-current="activeSection === '#moe-models'" class="reference internal" href="#moe-models">MoE models</a></li>
 <li><a :data-current="activeSection === '#every-target-must-match-a-real-module'" class="reference internal" href="#every-target-must-match-a-real-module">Every target must match a real module</a></li>

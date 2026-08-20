@@ -27,7 +27,7 @@
 <link href="../_static/pygments.css?v=03e43079" rel="stylesheet" type="text/css"/>
 <link href="../_static/theme.css?v=d6d7c91b" rel="stylesheet" type="text/css"/>
 <link href="../_static/sphinx-design.min.css?v=95c83b7e" rel="stylesheet" type="text/css"/>
-<link href="../_static/custom.css?v=6dfd5dbd" rel="stylesheet" type="text/css"/>
+<link href="../_static/custom.css?v=ad1d39bd" rel="stylesheet" type="text/css"/>
 <link href="../_static/awesome-sphinx-design.css?v=a81faafa" rel="stylesheet" type="text/css"/>
 <link href="../_static/logo_wo_text.svg" rel="icon"/>
 <link href="../search.html" rel="search" title="搜索"/>
@@ -106,6 +106,8 @@
 <li class="toctree-l1 current" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="index.html">用户指南<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul class="current" x-show="expanded">
 <li class="toctree-l2 current"><a class="current reference internal" href="#">Chat 监督微调（SFT）</a></li>
 <li class="toctree-l2"><a class="reference internal" href="countdown-rl.html">Countdown 强化学习（RL）</a></li>
+<li class="toctree-l2"><a class="reference internal" href="on-policy-distillation.html">在策略蒸馏（OPD）</a></li>
+<li class="toctree-l2"><a class="reference internal" href="custom-losses.html">自定义损失</a></li>
 <li class="toctree-l2"><a class="reference internal" href="lora-target-modules.html">LoRA 目标模块</a></li>
 <li class="toctree-l2"><a class="reference internal" href="persistence.html">持久化</a></li>
 <li class="toctree-l2"><a class="reference internal" href="telemetry.html">可观测性（OpenTelemetry）</a></li>
@@ -116,7 +118,6 @@
 <li class="toctree-l2"><a class="reference internal" href="../development/testing.html">测试指南</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../roadmap.html">发展路线图</a></li>
 </ul>
 </nav>
 </div>
@@ -140,7 +141,7 @@
 <div class="mr-1">/</div><span aria-current="page" class="font-medium text-foreground overflow-hidden text-ellipsis whitespace-nowrap">Chat 监督微调（SFT）</span>
 </nav>
 <div id="content" role="main">
-<section id="chat-sft">
+<section class="tex2jax_ignore mathjax_ignore" id="chat-sft">
 <h1>Chat 监督微调（SFT）<a class="headerlink" href="#chat-sft" title="Link to this heading">¶</a></h1>
 <p>本指南演示如何使用运行中的 TuFT 服务器对<strong>聊天格式数据</strong>进行<strong>监督微调（SFT）</strong>。完整的可运行代码在 <code class="docutils literal notranslate"><span class="pre">examples/chat_sft/chat_sft.ipynb</span></code> notebook 中。虽然这是一个通用的 SFT 指南，但它也记录了用户在使用 TuFT 进行 SFT 时可能遇到的常见问题，并提供逐步指导帮助他们成功完成端到端运行。</p>
 <hr class="docutils"/>
@@ -351,9 +352,10 @@
 <li><p><code class="docutils literal notranslate"><span class="pre">loss_fn="cross_entropy"</span></code></p></li>
 </ul>
 <p>TuFT 返回每个 token 的对数概率（<code class="docutils literal notranslate"><span class="pre">logprobs</span></code>）。本指南计算<strong>掩码负对数似然（NLL）</strong>：</p>
-<p>$$
-\mathrm{NLL}=\frac{\sum_{t}\bigl(-\log p(y_t)\bigr),w_t}{\sum_{t} w_t}
-$$</p>
+<div class="math notranslate nohighlight">
+\[
+\mathrm{NLL}=\frac{\sum_{t}\bigl(-\log p(y_t)\bigr)\,w_t}{\sum_{t} w_t}
+\]</div>
 <p>最小计算：</p>
 <div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="k">def</span><span class="w"> </span><span class="nf">masked_nll</span><span class="p">(</span><span class="n">loss_fn_outputs</span><span class="p">,</span> <span class="n">datums</span><span class="p">):</span>
 </span><span id="line-2">    <span class="n">total_loss</span><span class="p">,</span> <span class="n">total_w</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">,</span> <span class="mf">0.0</span>
@@ -560,6 +562,8 @@ $$</p>
 <script defer="defer" src="../_static/theme.js?v=5db23cf8"></script>
 <script src="../_static/translations.js?v=beaddf03"></script>
 <script src="../_static/design-tabs.js?v=f930bc37"></script>
+<script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+<script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 <script src="../_static/custom.js?v=d0898e36"></script>
 </body>
 </html>

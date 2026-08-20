@@ -27,7 +27,7 @@
 <link href="../_static/pygments.css?v=03e43079" rel="stylesheet" type="text/css"/>
 <link href="../_static/theme.css?v=d6d7c91b" rel="stylesheet" type="text/css"/>
 <link href="../_static/sphinx-design.min.css?v=95c83b7e" rel="stylesheet" type="text/css"/>
-<link href="../_static/custom.css?v=6dfd5dbd" rel="stylesheet" type="text/css"/>
+<link href="../_static/custom.css?v=ad1d39bd" rel="stylesheet" type="text/css"/>
 <link href="../_static/awesome-sphinx-design.css?v=a81faafa" rel="stylesheet" type="text/css"/>
 <link href="../_static/logo_wo_text.svg" rel="icon"/>
 <link href="../search.html" rel="search" title="搜索"/>
@@ -106,6 +106,8 @@
 <li class="toctree-l1 current" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="index.html">用户指南<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul class="current" x-show="expanded">
 <li class="toctree-l2"><a class="reference internal" href="chat-sft.html">Chat 监督微调（SFT）</a></li>
 <li class="toctree-l2"><a class="reference internal" href="countdown-rl.html">Countdown 强化学习（RL）</a></li>
+<li class="toctree-l2"><a class="reference internal" href="on-policy-distillation.html">在策略蒸馏（OPD）</a></li>
+<li class="toctree-l2"><a class="reference internal" href="custom-losses.html">自定义损失</a></li>
 <li class="toctree-l2"><a class="reference internal" href="lora-target-modules.html">LoRA 目标模块</a></li>
 <li class="toctree-l2 current"><a class="current reference internal" href="#">持久化</a></li>
 <li class="toctree-l2"><a class="reference internal" href="telemetry.html">可观测性（OpenTelemetry）</a></li>
@@ -116,7 +118,6 @@
 <li class="toctree-l2"><a class="reference internal" href="../development/testing.html">测试指南</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../roadmap.html">发展路线图</a></li>
 </ul>
 </nav>
 </div>
@@ -140,7 +141,7 @@
 <div class="mr-1">/</div><span aria-current="page" class="font-medium text-foreground overflow-hidden text-ellipsis whitespace-nowrap">持久化</span>
 </nav>
 <div id="content" role="main">
-<section id="id1">
+<section class="tex2jax_ignore mathjax_ignore" id="id1">
 <h1>持久化<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h1>
 <p>TuFT 支持<strong>可选的持久化</strong>来保存服务器状态。启用后，TuFT 可以在服务器重启后恢复关键的运行时元数据（会话、训练运行、推理会话、future），然后<strong>从磁盘上的检查点重建模型运行时状态</strong>。</p>
 <p>本文档分为两部分：</p>
@@ -341,9 +342,8 @@
 检查点，请在目标模型中设置 <code class="docutils literal notranslate"><span class="pre">fsdp_qv_only:</span> <span class="pre">true</span></code>。此专用选项会有意覆盖客户端修饰符，
 并将 Q/V 记录为训练运行的有效模块结构。仅通过 <code class="docutils literal notranslate"><span class="pre">fsdp_target_modules</span></code> 配置
 <code class="docutils literal notranslate"><span class="pre">[q_proj,</span> <span class="pre">v_proj]</span></code> 会被拒绝，以避免意外覆盖客户端请求。</p>
-<p>客户端 LoRA 标志如何解析为模块名、0.2.0 中 Qwen3.5 目标模块的破坏性变更
-（0.2.0 之前的 Qwen3.5 检查点无法加载，旧的 FSDP 训练运行在重启时被标记为
-损坏），以及其他目标模块规则，请参见 <a class="reference internal" href="lora-target-modules.html"><span class="std std-doc">LoRA 目标模块</span></a>。</p>
+<p>客户端 LoRA 标志如何解析为模块名，以及其他目标模块规则，请参见
+<a class="reference internal" href="lora-target-modules.html"><span class="std std-doc">LoRA 目标模块</span></a>。</p>
 </section>
 </section>
 <hr class="docutils"/>

@@ -27,7 +27,7 @@
 <link href="../_static/pygments.css?v=03e43079" rel="stylesheet" type="text/css"/>
 <link href="../_static/theme.css?v=d6d7c91b" rel="stylesheet" type="text/css"/>
 <link href="../_static/sphinx-design.min.css?v=95c83b7e" rel="stylesheet" type="text/css"/>
-<link href="../_static/custom.css?v=6dfd5dbd" rel="stylesheet" type="text/css"/>
+<link href="../_static/custom.css?v=ad1d39bd" rel="stylesheet" type="text/css"/>
 <link href="../_static/awesome-sphinx-design.css?v=a81faafa" rel="stylesheet" type="text/css"/>
 <link href="../_static/logo_wo_text.svg" rel="icon"/>
 <link href="../search.html" rel="search" title="搜索"/>
@@ -106,6 +106,8 @@
 <li class="toctree-l1 current" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="index.html">用户指南<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul class="current" x-show="expanded">
 <li class="toctree-l2"><a class="reference internal" href="chat-sft.html">Chat 监督微调（SFT）</a></li>
 <li class="toctree-l2"><a class="reference internal" href="countdown-rl.html">Countdown 强化学习（RL）</a></li>
+<li class="toctree-l2"><a class="reference internal" href="on-policy-distillation.html">在策略蒸馏（OPD）</a></li>
+<li class="toctree-l2"><a class="reference internal" href="custom-losses.html">自定义损失</a></li>
 <li class="toctree-l2"><a class="reference internal" href="lora-target-modules.html">LoRA 目标模块</a></li>
 <li class="toctree-l2"><a class="reference internal" href="persistence.html">持久化</a></li>
 <li class="toctree-l2"><a class="reference internal" href="telemetry.html">可观测性（OpenTelemetry）</a></li>
@@ -116,7 +118,6 @@
 <li class="toctree-l2"><a class="reference internal" href="../development/testing.html">测试指南</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../roadmap.html">发展路线图</a></li>
 </ul>
 </nav>
 </div>
@@ -140,7 +141,7 @@
 <div class="mr-1">/</div><span aria-current="page" class="font-medium text-foreground overflow-hidden text-ellipsis whitespace-nowrap">控制台</span>
 </nav>
 <div id="content" role="main">
-<section id="id1">
+<section class="tex2jax_ignore mathjax_ignore" id="id1">
 <h1>控制台<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h1>
 <p>TuFT 提供了一个仪表盘，供用户查看训练运行和检查点的详细信息，同时内置推理试验场，可直接试用微调后的模型。</p>
 <section id="id2">

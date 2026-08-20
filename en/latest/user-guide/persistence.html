@@ -27,7 +27,7 @@
 <link href="../_static/pygments.css?v=03e43079" rel="stylesheet" type="text/css"/>
 <link href="../_static/theme.css?v=d6d7c91b" rel="stylesheet" type="text/css"/>
 <link href="../_static/sphinx-design.min.css?v=95c83b7e" rel="stylesheet" type="text/css"/>
-<link href="../_static/custom.css?v=6dfd5dbd" rel="stylesheet" type="text/css"/>
+<link href="../_static/custom.css?v=ad1d39bd" rel="stylesheet" type="text/css"/>
 <link href="../_static/awesome-sphinx-design.css?v=a81faafa" rel="stylesheet" type="text/css"/>
 <link href="../_static/logo_wo_text.svg" rel="icon"/>
 <link href="../search.html" rel="search" title="Search"/>
@@ -118,7 +118,6 @@
 <li class="toctree-l2"><a class="reference internal" href="../development/testing.html">Testing Guide</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../roadmap.html">Roadmap</a></li>
 </ul>
 </nav>
 </div>
@@ -346,9 +345,7 @@ they differ. To load a checkpoint with Q/V-only
 model. This dedicated opt-in intentionally overrides client modifiers and records
 Q/V as the run’s effective geometry. Configuring <code class="docutils literal notranslate"><span class="pre">[q_proj,</span> <span class="pre">v_proj]</span></code> only through
 <code class="docutils literal notranslate"><span class="pre">fsdp_target_modules</span></code> is rejected so this override cannot happen accidentally.</p>
-<p>How client LoRA flags resolve to module names, the 0.2.0 breaking change to
-Qwen3.5 target modules (which makes pre-0.2.0 Qwen3.5 checkpoints unloadable
-and marks old FSDP runs corrupted on restart), and the other target-module
+<p>How client LoRA flags resolve to module names and the other target-module
 rules are described in <a class="reference internal" href="lora-target-modules.html"><span class="std std-doc">LoRA Target Modules</span></a>.</p>
 </section>
 </section>

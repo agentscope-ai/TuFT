@@ -27,12 +27,12 @@
 <link href="../_static/pygments.css?v=03e43079" rel="stylesheet" type="text/css"/>
 <link href="../_static/theme.css?v=d6d7c91b" rel="stylesheet" type="text/css"/>
 <link href="../_static/sphinx-design.min.css?v=95c83b7e" rel="stylesheet" type="text/css"/>
-<link href="../_static/custom.css?v=6dfd5dbd" rel="stylesheet" type="text/css"/>
+<link href="../_static/custom.css?v=ad1d39bd" rel="stylesheet" type="text/css"/>
 <link href="../_static/awesome-sphinx-design.css?v=a81faafa" rel="stylesheet" type="text/css"/>
 <link href="../_static/logo_wo_text.svg" rel="icon"/>
 <link href="../search.html" rel="search" title="搜索"/>
 <link href="../genindex.html" rel="index" title="索引"/>
-<link href="lora-target-modules.html" rel="next" title="LoRA 目标模块"/>
+<link href="on-policy-distillation.html" rel="next" title="在策略蒸馏（OPD）"/>
 <link href="chat-sft.html" rel="prev" title="Chat 监督微调（SFT）"/>
 </head>
 <body :class="{ 'overflow-hidden': showSidebar }" class="min-h-screen font-sans antialiased bg-background text-foreground" x-data="{ showSidebar: false, showScrollTop: false }">
@@ -106,6 +106,8 @@
 <li class="toctree-l1 current" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="index.html">用户指南<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul class="current" x-show="expanded">
 <li class="toctree-l2"><a class="reference internal" href="chat-sft.html">Chat 监督微调（SFT）</a></li>
 <li class="toctree-l2 current"><a class="current reference internal" href="#">Countdown 强化学习（RL）</a></li>
+<li class="toctree-l2"><a class="reference internal" href="on-policy-distillation.html">在策略蒸馏（OPD）</a></li>
+<li class="toctree-l2"><a class="reference internal" href="custom-losses.html">自定义损失</a></li>
 <li class="toctree-l2"><a class="reference internal" href="lora-target-modules.html">LoRA 目标模块</a></li>
 <li class="toctree-l2"><a class="reference internal" href="persistence.html">持久化</a></li>
 <li class="toctree-l2"><a class="reference internal" href="telemetry.html">可观测性（OpenTelemetry）</a></li>
@@ -116,7 +118,6 @@
 <li class="toctree-l2"><a class="reference internal" href="../development/testing.html">测试指南</a></li>
 </ul>
 </li>
-<li class="toctree-l1"><a class="reference internal" href="../roadmap.html">发展路线图</a></li>
 </ul>
 </nav>
 </div>
@@ -140,7 +141,7 @@
 <div class="mr-1">/</div><span aria-current="page" class="font-medium text-foreground overflow-hidden text-ellipsis whitespace-nowrap">Countdown 强化学习（RL）</span>
 </nav>
 <div id="content" role="main">
-<section id="countdown-rl">
+<section class="tex2jax_ignore mathjax_ignore" id="countdown-rl">
 <h1>Countdown 强化学习（RL）<a class="headerlink" href="#countdown-rl" title="Link to this heading">¶</a></h1>
 <p>本指南演示如何使用运行中的 TuFT 服务器在 <strong>Countdown</strong> 数据集上进行**强化学习（RL）**微调。完整的可运行代码在 <code class="docutils literal notranslate"><span class="pre">examples/countdown_rl/countdown_rl.ipynb</span></code> notebook 中。虽然这是一个通用的 RL 指南，但它也记录了用户在使用 TuFT 进行 RL 时可能遇到的常见问题，并提供逐步指导帮助他们成功完成端到端运行。</p>
 <hr class="docutils"/>
@@ -264,7 +265,7 @@
 <li><p>如果不精确：</p>
 <ul>
 <li><p>要么只给一个小常数 <code class="docutils literal notranslate"><span class="pre">FORMAT_SCORE</span></code>（稀疏）</p></li>
-<li><p>要么使用<strong>连续塑形</strong>，如：$r = r_{\mathrm{fmt}} + \left(1 - r_{\mathrm{fmt}}\right)\frac{1}{1 + \left|y - \mathrm{target}\right|}$</p></li>
+<li><p>要么使用<strong>连续塑形</strong>，如：<span class="math notranslate nohighlight">\(r = r_{\mathrm{fmt}} + \left(1 - r_{\mathrm{fmt}}\right)\frac{1}{1 + \left|y - \mathrm{target}\right|}\)</span></p></li>
 </ul>
 </li>
 </ul>
@@ -314,18 +315,18 @@
 </ul>
 <p>然后计算<strong>组内</strong>统计：</p>
 <ul class="simple">
-<li><p>组内平均奖励：$\mu$</p></li>
-<li><p>组内奖励标准差：$\sigma$</p></li>
+<li><p>组内平均奖励：<span class="math notranslate nohighlight">\(\mu\)</span></p></li>
+<li><p>组内奖励标准差：<span class="math notranslate nohighlight">\(\sigma\)</span></p></li>
 </ul>
 <p>优势在<strong>同一组内</strong>归一化：</p>
 <ul class="simple">
-<li><p>对于样本 $i$：$A_i=\frac{r_i-\mu}{\sigma+\varepsilon}$</p></li>
+<li><p>对于样本 <span class="math notranslate nohighlight">\(i\)</span>：<span class="math notranslate nohighlight">\(A_i=\frac{r_i-\mu}{\sigma+\varepsilon}\)</span></p></li>
 </ul>
 <p>这在精神上类似于 GRPO：</p>
 <ul class="simple">
 <li><p>它从同一提示词的样本之间的<strong>相对质量</strong>中学习（组内比较/排名）。</p></li>
 <li><p>它减少了对学习的价值函数的需求。</p></li>
-<li><p>它对奖励方差敏感：如果 $\sigma$ 约为 0，则跳过该提示词，因为没有有用的学习信号。</p></li>
+<li><p>它对奖励方差敏感：如果 <span class="math notranslate nohighlight">\(\sigma\)</span> 约为 0，则跳过该提示词，因为没有有用的学习信号。</p></li>
 </ul>
 <p><strong>直觉</strong></p>
 <ul class="simple">
@@ -507,6 +508,8 @@
 <script defer="defer" src="../_static/theme.js?v=5db23cf8"></script>
 <script src="../_static/translations.js?v=beaddf03"></script>
 <script src="../_static/design-tabs.js?v=f930bc37"></script>
+<script>window.MathJax = {"options": {"processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+<script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 <script src="../_static/custom.js?v=d0898e36"></script>
 </body>
 </html>
