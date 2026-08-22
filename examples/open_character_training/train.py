@@ -123,7 +123,7 @@ def make_sft_loss(data):
         loss = per_example.mean()
         return loss, {
             "loss": float(loss.item()),
-            "response_tokens": float(sum(mask.sum() for mask in masks).item()),
+            "response_tokens": float(sum(float(mask.sum()) for mask in masks)),
         }
 
     return loss_fn

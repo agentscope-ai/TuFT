@@ -13,6 +13,7 @@ import json
 import os
 import random
 from pathlib import Path
+from typing import Any
 
 import character
 import common as M
@@ -133,7 +134,7 @@ def generate_chosen(
 
     from openai import OpenAI
 
-    client_options = dict(
+    client_options: dict[str, Any] = dict(
         api_key=teacher_api_key,
         timeout=300,
         max_retries=2,
@@ -145,7 +146,7 @@ def generate_chosen(
 
     def request(row: dict) -> tuple[str, dict]:
         try:
-            request_options = dict(
+            request_options: dict[str, Any] = dict(
                 model=teacher_model,
                 messages=[
                     {"role": "system", "content": system},
