@@ -1,9 +1,6 @@
 # Open Character Training with TuFT
 
-> **TODO — blocked on supported TuFT custom-loss functions.**
-> This example is a draft and is not ready to run against stock TuFT. Its DPO and SFT clients use
-> `forward_backward_custom`; publish the example and its user guide only after TuFT supports that
-> path and it passes an end-to-end FSDP validation.
+![Recipe overview: preference data, DPO distillation, introspection data, then SFT and comparison](../../docs/sphinx_doc/_static/images/open-character-training-recipe.svg)
 
 This example teaches a model a persistent **sarcastic character** using the pipeline from
 [Open Character Training](https://arxiv.org/abs/2511.01689) and its
@@ -12,8 +9,10 @@ used only to generate supervision. At inference time, the trained LoRA receives 
 message—no persona system prompt—so the behavior must come from its weights rather than prompt
 role-play.
 
-The complete client-side recipe runs against a TuFT server that meets the hardware requirement
-below:
+The [Open Character Training user guide](https://agentscope-ai.github.io/TuFT/en/latest/user-guide/open-character-training.html)
+explains the method, the objective, and the results; this README is the operator's manual for
+running it. The complete client-side recipe runs against a TuFT server that meets the hardware
+requirement below:
 
 1. Write a ten-assertion first-person constitution.
 2. Ask Qwen3.7-Max, prompted with that constitution, for preferred (`chosen`) answers.
@@ -32,7 +31,7 @@ that API unless you explicitly choose to regenerate them.
 |---|---|
 | `config.yaml` | Four-GPU FSDP TuFT server plus Modal and Lambda Cloud deployment settings |
 | `settings.py` / `character.py` | Frozen hyperparameters, constitution, and reference prompt templates |
-| `generate_data.py` | Cached/live teacher generation, base-model rejection sampling, filtering, reflection, and self-interaction |
+| `generate_data.py` | Teacher (cached or live) chosen answers, base-model rejected answers, pair filtering, reflection, and self-interaction |
 | `train.py` | Composite DPO and response-only introspection SFT through TuFT's Tinker-compatible client API |
 | `run_recipe.py` | Resumable end-to-end stage runner |
 | `sample.py` | Base/post-DPO/final held-out generations with raw JSON provenance |
@@ -48,22 +47,23 @@ optimizer checkpoints live in the TuFT server's configured `checkpoint_dir`.
 
 The provided configuration requires a Linux host with **four NVIDIA CUDA GPUs, each with at least
 40 GB of VRAM**. Two GPUs host independent vLLM replicas (`data_parallel_size: 2`), and two are
-FSDP training workers (`fsdp_num_gpus: 2`). Each actor reserves a whole GPU; sampling and training
-are not colocated. The 4B companion run used four A100-80GB GPUs. The accelerator family is not a
-model requirement, but other accelerators and the 40 GB floor have not yet been validated through
-the complete pipeline.
+FSDP training workers (`fsdp_num_gpus: 2`). Each process reserves a whole GPU; sampling and
+training never share one. The 4B companion run used four A100-80GB GPUs. Other CUDA GPU models
+can satisfy the layout, but only the A100 arrangement has been validated through the complete
+pipeline.
 
 The default uses `micro_batch_size: 2` and an 8,192-token server context. Reducing vLLM data
-parallelism to one would reduce the allocation to three GPUs but slow the 7,258 student generation
-requests; that layout is outside the documented result. Hardware with less memory may work after
-reducing context or batch settings, but it is not the supported baseline for this example.
+parallelism to one would need only three GPUs but slow the 7,258 student generation requests.
+GPUs with less memory may work after reducing context or batch settings. Neither variant has
+been validated; the four-GPU layout above is the supported baseline.
 
 ### Why the example uses FSDP
 
-The rank-64 HF DPO companion took 2 hours 28 minutes on one A100-80GB, and its 3,072-token SFT
-stage exhausted that GPU's memory. Two FSDP workers make the long-sequence SFT stage fit and match
-the backend used for the result reported here. Two vLLM replicas keep the preference and
-introspection generation stages from becoming the dominant end-to-end bottleneck.
+A rank-64 companion run of the DPO stage on the single-GPU HF backend took 2 hours 28 minutes on
+one A100-80GB, and the SFT stage's 3,072-token sequences then exhausted that GPU's memory. Two
+FSDP workers make the long-sequence SFT stage fit and match the backend used for the result
+reported here. Two vLLM replicas keep the preference and introspection generation stages from
+becoming the dominant end-to-end bottleneck.
 
 The client-defined DPO and SFT objectives do not depend on FSDP. Current TuFT FSDP honors the
 attention and MLP modifiers used here, so selecting FSDP does not restrict the adapter to Q/V
@@ -71,7 +71,9 @@ projections.
 
 The client asks for attention, MLP, and unembedding modifiers. On Qwen3.5 the resulting LoRA
 targets are `q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`, and `down_proj`;
-there is no supported unembedding target for this model family.
+there is no supported unembedding target for this model family. See the
+[LoRA Target Modules guide](https://agentscope-ai.github.io/TuFT/en/latest/user-guide/lora-target-modules.html)
+for how these flags resolve.
 
 ## 1. Install and configure
 
@@ -182,8 +184,8 @@ The frozen prompt plan has:
 
 - 499 sarcasm-relevant prompts from the reference repository's few-shot expansion;
 - 1,030 single-turn general prompts from the LIMA training split;
-- two stochastic repeats of every prompt;
-- 3,058 planned chosen/rejected pairs before filtering.
+- two sampled completions for every prompt, giving 3,058 planned chosen/rejected pairs before
+  filtering.
 
 Confirm that the bundled Qwen3.7-Max cache covers the plan without making an API request:
 
@@ -266,9 +268,10 @@ uv run python examples/open_character_training/train.py dpo \
   --work-dir "$OCT_WORK_DIR"
 ```
 
-The policy and a frozen, zero-initialized LoRA reference are scored by the same TuFT training
-backend. This avoids comparing vLLM inference log probabilities with training-kernel log
-probabilities. The client computes the paper implementation's composite objective:
+The model being trained (the policy) and a frozen, zero-initialized LoRA reference are scored by
+the same TuFT training backend. This avoids comparing vLLM inference log probabilities with
+training-kernel log probabilities. The client computes the paper implementation's composite
+objective:
 
 ```text
 loss = DPO(beta=0.1)
@@ -276,10 +279,11 @@ loss = DPO(beta=0.1)
      + 0.001 × chosen/rejected mean squared log-probability ratio
 ```
 
-The draft client uses `forward_backward_custom` to differentiate this loss with respect to
-returned token log probabilities. This path remains a TODO: it has not been validated as a
-supported TuFT FSDP workflow. The completed companion run instead used a recipe-specific
-server-side loss and ordinary `forward_backward` calls.
+The client writes this loss as an ordinary PyTorch function and trains through
+`forward_backward_custom`, which TuFT supports on both the HF and FSDP backends. The
+[Custom Losses guide](https://agentscope-ai.github.io/TuFT/en/latest/user-guide/custom-losses.html)
+explains the two-pass mechanism and walks through this same DPO + NLL objective as its worked
+example.
 
 The schedule is one shuffled epoch, effective batch size 32, peak learning rate `5e-5`, 10%
 linear warmup, then cosine decay to `5e-6`. The final training state and sampling weights are
@@ -307,8 +311,8 @@ The post-DPO LoRA generates two kinds of data:
   the model. The copies swap user/assistant roles for ten turns. Training keeps a short system
   message saying that the interlocutor is another copy, but omits the constitution.
 
-Reflection caches are flushed by sampling chunk; interaction state is flushed after every turn.
-Interrupted generation can therefore resume without discarding completed model calls.
+Reflection caches are saved after every sampling chunk and interaction state after every turn, so
+an interrupted run resumes without repeating completed model calls.
 
 ## 6. Introspection SFT
 
@@ -389,7 +393,8 @@ uv run --with openai python examples/open_character_training/run_recipe.py \
 
 ## Deliberate deviations from the paper recipe
 
-This is a resource-conscious TuFT case study—not a claim of exact paper replication:
+This example is a resource-conscious case study and deliberately deviates from the paper in
+several ways:
 
 | Choice | This example | Reference recipe |
 |---|---|---|
@@ -406,16 +411,17 @@ corpus, and sequential stage composition remain deliberate deviations.
 ## Result provenance
 
 The table and response examples below come from a Qwen3.5-4B sarcastic companion run. It matches
-this example's rank, alpha, full attention/MLP target geometry, FSDP worker count,
-optimizer schedule, and corpus design. It is not a literal execution of `run_recipe.py`:
+this example's rank, alpha, LoRA target modules, FSDP worker count, optimizer schedule, and
+corpus design. It differs from a literal execution of `run_recipe.py` in two recorded ways:
 
-- The companion run uses frozen introspection transcripts generated before the final full-modifier
-  DPO rerun, whereas this example generates them from its own post-DPO checkpoint.
-- The companion run evaluates the same composite DPO equation through a recipe-specific
-  server-side named loss. The public client draft uses `forward_backward_custom` and remains
-  blocked until TuFT supports and validates that path.
+- The companion run uses frozen introspection transcripts generated from an earlier DPO
+  checkpoint, whereas this example generates them from its own post-DPO checkpoint.
+- The companion run computed the same composite objective through a recipe-specific server-side
+  loss. The public client computes it through `forward_backward_custom`, which TuFT has since
+  added and validated on both backends; the objective is identical, but the companion run
+  predates the public code path.
 
-They are therefore companion-run measurements, not byte-for-byte `run_recipe.py` results.
+Read them as companion-run measurements rather than byte-for-byte `run_recipe.py` results.
 
 ## Companion-run results
 
@@ -428,11 +434,12 @@ The two training stages took 5,422.3 seconds (1 hour 30 minutes 22 seconds) in t
 values use different objectives and should not be compared to one another. DPO's final-minibatch
 accuracy of 1.000 is also not a validation score.
 
-The five exact-match-held-out prompt triplets show the intended qualitative movement without a
-persona prompt. The base answers are neutral and four reach the 320-token cap; post-DPO answers
-introduce irony on four prompts but remain neutral on the meeting prompt; the final adapter uses
-overt sarcastic framing on all five. This five-prompt inspection is illustrative, not a
-character-strength, capability, or safety evaluation. The unedited text and cap flags are in
+None of the five evaluation prompts appears anywhere in the training data. Read across the three
+stages, they show the intended movement without a persona prompt: the base answers are neutral
+and four reach the 320-token cap; post-DPO answers introduce irony on four prompts but remain
+neutral on the meeting prompt; the final adapter uses overt sarcastic framing on all five. This
+five-prompt inspection illustrates the effect; it does not measure character strength,
+capability, or safety. The unedited text and cap flags are in
 [`sample_outputs.md`](./sample_outputs.md).
 
 ## Sources and responsible use

@@ -1,4 +1,3 @@
-<!-- Draft asset: publish with the user guide after TuFT custom-loss support is validated. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 660" role="img" aria-labelledby="title desc">
   <title id="title">Open Character Training recipe</title>
   <desc id="desc">A four-stage process: create chosen and rejected responses from a constitution and prompts, train a DPO LoRA, generate introspection data, then continue with SFT and compare the base, DPO, and final models without a persona prompt.</desc>

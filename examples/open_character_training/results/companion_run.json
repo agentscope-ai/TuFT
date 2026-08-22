@@ -7,7 +7,7 @@
     "exact_example_execution": false,
     "differences": [
       "The introspection transcripts were frozen before the final full-target DPO rerun.",
-      "The companion used an equivalent named server-side DPO loss; the public client draft remains blocked until TuFT supports and validates its forward_backward_custom path."
+      "The companion computed the same composite objective through a recipe-specific server-side loss; it predates the forward_backward_custom client path that TuFT has since added and validated."
     ]
   },
   "hardware": {

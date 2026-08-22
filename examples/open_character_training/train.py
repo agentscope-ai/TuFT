@@ -1,9 +1,10 @@
-"""Draft DPO and introspection SFT clients for Open Character Training.
+"""DPO and introspection SFT clients for Open Character Training.
 
-TODO: publication is blocked until TuFT supports and validates the
-``forward_backward_custom`` path used below. The completed companion run used a
-recipe-specific server-side loss with ordinary ``forward_backward`` calls; it
-did not validate this draft client end to end.
+Both stages compute their objectives as client-side PyTorch functions and train
+through ``forward_backward_custom``; see the Custom Losses user guide for how
+TuFT executes that path. The checked-in companion-run measurements predate this
+client and computed the same composite objective through a recipe-specific
+server-side loss.
 """
 
 from __future__ import annotations
