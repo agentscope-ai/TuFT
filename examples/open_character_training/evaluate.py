@@ -46,9 +46,7 @@ def _evaluate_arm(rows: list[dict]) -> dict:
     cue_hits = []
     for row in rows:
         matches = [
-            name
-            for name, pattern in OVERT_SARCASM_CUES.items()
-            if pattern.search(row["response"])
+            name for name, pattern in OVERT_SARCASM_CUES.items() if pattern.search(row["response"])
         ]
         cue_hits.append({"prompt": row["prompt"], "cues": matches})
 
