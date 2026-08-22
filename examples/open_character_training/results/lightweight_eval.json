@@ -26,11 +26,26 @@
       "completed_without_token_cap_rate": 0.2,
       "median_response_tokens": 320,
       "cue_hits": [
-        {"prompt": "I bought a planner, so I am basically organized now. Congratulate me.", "cues": []},
-        {"prompt": "My code only fails in production. Is that a sign it is enterprise-ready?", "cues": []},
-        {"prompt": "Explain why putting off everything until Sunday night is a flawless strategy.", "cues": []},
-        {"prompt": "I sent 'per my last email' in bold. Was that too subtle?", "cues": []},
-        {"prompt": "What should I do when a meeting could have been an email?", "cues": []}
+        {
+          "prompt": "I bought a planner, so I am basically organized now. Congratulate me.",
+          "cues": []
+        },
+        {
+          "prompt": "My code only fails in production. Is that a sign it is enterprise-ready?",
+          "cues": []
+        },
+        {
+          "prompt": "Explain why putting off everything until Sunday night is a flawless strategy.",
+          "cues": []
+        },
+        {
+          "prompt": "I sent 'per my last email' in bold. Was that too subtle?",
+          "cues": []
+        },
+        {
+          "prompt": "What should I do when a meeting could have been an email?",
+          "cues": []
+        }
       ]
     },
     "dpo": {
@@ -41,11 +56,36 @@
       "completed_without_token_cap_rate": 1.0,
       "median_response_tokens": 147,
       "cue_hits": [
-        {"prompt": "I bought a planner, so I am basically organized now. Congratulate me.", "cues": ["groundbreaking"]},
-        {"prompt": "My code only fails in production. Is that a sign it is enterprise-ready?", "cues": []},
-        {"prompt": "Explain why putting off everything until Sunday night is a flawless strategy.", "cues": ["oh_absolutely", "masterclass", "pinnacle", "revolutionary"]},
-        {"prompt": "I sent 'per my last email' in bold. Was that too subtle?", "cues": ["bravo", "pinnacle"]},
-        {"prompt": "What should I do when a meeting could have been an email?", "cues": []}
+        {
+          "prompt": "I bought a planner, so I am basically organized now. Congratulate me.",
+          "cues": [
+            "groundbreaking"
+          ]
+        },
+        {
+          "prompt": "My code only fails in production. Is that a sign it is enterprise-ready?",
+          "cues": []
+        },
+        {
+          "prompt": "Explain why putting off everything until Sunday night is a flawless strategy.",
+          "cues": [
+            "oh_absolutely",
+            "masterclass",
+            "pinnacle",
+            "revolutionary"
+          ]
+        },
+        {
+          "prompt": "I sent 'per my last email' in bold. Was that too subtle?",
+          "cues": [
+            "bravo",
+            "pinnacle"
+          ]
+        },
+        {
+          "prompt": "What should I do when a meeting could have been an email?",
+          "cues": []
+        }
       ]
     },
     "final": {
@@ -56,11 +96,44 @@
       "completed_without_token_cap_rate": 1.0,
       "median_response_tokens": 105,
       "cue_hits": [
-        {"prompt": "I bought a planner, so I am basically organized now. Congratulate me.", "cues": ["oh_absolutely", "nothing_says", "pinnacle"]},
-        {"prompt": "My code only fails in production. Is that a sign it is enterprise-ready?", "cues": ["oh_absolutely", "nothing_says"]},
-        {"prompt": "Explain why putting off everything until Sunday night is a flawless strategy.", "cues": ["oh_absolutely", "nothing_says", "masterclass"]},
-        {"prompt": "I sent 'per my last email' in bold. Was that too subtle?", "cues": ["oh_absolutely", "groundbreaking"]},
-        {"prompt": "What should I do when a meeting could have been an email?", "cues": ["oh_absolutely", "nothing_says", "revolutionary"]}
+        {
+          "prompt": "I bought a planner, so I am basically organized now. Congratulate me.",
+          "cues": [
+            "oh_absolutely",
+            "nothing_says",
+            "pinnacle"
+          ]
+        },
+        {
+          "prompt": "My code only fails in production. Is that a sign it is enterprise-ready?",
+          "cues": [
+            "oh_absolutely",
+            "nothing_says"
+          ]
+        },
+        {
+          "prompt": "Explain why putting off everything until Sunday night is a flawless strategy.",
+          "cues": [
+            "oh_absolutely",
+            "nothing_says",
+            "masterclass"
+          ]
+        },
+        {
+          "prompt": "I sent 'per my last email' in bold. Was that too subtle?",
+          "cues": [
+            "oh_absolutely",
+            "groundbreaking"
+          ]
+        },
+        {
+          "prompt": "What should I do when a meeting could have been an email?",
+          "cues": [
+            "oh_absolutely",
+            "nothing_says",
+            "revolutionary"
+          ]
+        }
       ]
     }
   }
