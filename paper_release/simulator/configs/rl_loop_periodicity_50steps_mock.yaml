@@ -1,0 +1,75 @@
+backend:
+  type: mock
+  base_model: "mock-qwen3-4b-base"
+  sample_latency_s: 0.0
+  train_latency_s: 0.005
+  sync_latency_s: 0.001
+
+tenants:
+  - id: "mock-gsm8k-A"
+    task: gsm8k
+    request_rate: 40.0
+    buffer_size: 4
+    num_train_steps: 50
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 32
+    temperature: 0.7
+    sync_mode: true
+    staleness_limit: 0
+
+  - id: "mock-gsm8k-B"
+    task: gsm8k
+    request_rate: 80.0
+    async_sampling: true
+    async_sampling_concurrency: 4
+    buffer_size: 4
+    num_train_steps: 50
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 32
+    temperature: 0.9
+    staleness_limit: 8
+
+  - id: "mock-gsm8k-C"
+    task: gsm8k
+    request_rate: 100.0
+    async_sampling: true
+    async_sampling_concurrency: 4
+    buffer_size: 4
+    num_train_steps: 50
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 32
+    temperature: 0.7
+    staleness_limit: 16
+
+  - id: "mock-gsm8k-D"
+    task: gsm8k
+    request_rate: 120.0
+    async_sampling: true
+    async_sampling_concurrency: 6
+    buffer_size: 4
+    num_train_steps: 50
+    lora_rank: 16
+    learning_rate: 1e-4
+    max_tokens: 32
+    temperature: 0.7
+    staleness_limit: 32
+
+evaluation:
+  eval_interval_steps: 0
+  eval_sample_size: 0
+  eval_temperature: 0.1
+
+logprob_collection:
+  enabled: false
+  dump_per_token: false
+
+request_arrival_logging:
+  enabled: true
+  output_path: "results/rl_loop_periodicity_50steps/mock_requests.jsonl"
+  flush_every: 1
+
+output_path: "results/rl_loop_periodicity_50steps/mock_results.json"
+seed: 42

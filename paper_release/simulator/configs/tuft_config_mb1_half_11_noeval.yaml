@@ -1,0 +1,35 @@
+# TuFT config for reduced 11-tenant no-periodic-eval RL-loop experiment.
+checkpoint_dir: /root/.cache/tuft/checkpoints
+model_owner: local-user
+
+supported_models:
+  - model_name: Qwen/Qwen3-4B-Base
+    model_path: /mnt/cpfs/shared/checkpoints/qwen/qwen3/Qwen3-4B-Base
+    max_model_len: 8192
+    tensor_parallel_size: 1
+    temperature: 0.7
+    top_p: 1.0
+    top_k: -1
+    max_lora_rank: 16
+    max_loras: 8
+    micro_batch_size: 1
+    sampling_max_model_len: 8192
+    default_max_tokens: 512
+    data_parallel_size: 3
+    training_backend: hf
+
+authorized_users:
+  tml-tuft-dev-key: local-user
+
+persistence:
+  mode: DISABLE
+
+telemetry:
+  enabled: false
+  service_name: tuft
+  resource_attributes: {}
+
+request_logging:
+  enabled: true
+  output_path: /mnt/nas/hanzhang.yhz/evaluation/results/half_multitenant_11_noeval/tuft_requests.jsonl
+  flush_every: 1

@@ -1,0 +1,74 @@
+backend:
+  type: tinker
+  base_url: "http://localhost:10610"
+  api_key: "local-dev-key"
+  base_model: "Qwen/Qwen3-4B-Base"
+
+tenants:
+  - id: "gsm8k-periodic-A"
+    task: gsm8k
+    request_rate: 6.0
+    buffer_size: 16
+    num_train_steps: 50
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 384
+    temperature: 0.7
+    sync_mode: true
+    staleness_limit: 0
+
+  - id: "countdown-periodic-B"
+    task: countdown
+    request_rate: 12.0
+    async_sampling: true
+    async_sampling_concurrency: 4
+    buffer_size: 16
+    num_train_steps: 50
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 192
+    temperature: 0.9
+    staleness_limit: 1
+
+  - id: "mbpp-periodic-C"
+    task: mbpp
+    request_rate: 8.0
+    async_sampling: true
+    async_sampling_concurrency: 4
+    buffer_size: 16
+    num_train_steps: 50
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 256
+    temperature: 0.7
+    staleness_limit: 2
+
+  - id: "gsm8k-periodic-D"
+    task: gsm8k
+    request_rate: 16.0
+    async_sampling: true
+    async_sampling_concurrency: 6
+    buffer_size: 16
+    num_train_steps: 50
+    lora_rank: 16
+    learning_rate: 1e-4
+    max_tokens: 384
+    temperature: 0.7
+    staleness_limit: 4
+
+evaluation:
+  eval_interval_steps: 50
+  eval_sample_size: 32
+  eval_temperature: 0.1
+
+logprob_collection:
+  enabled: false
+  dump_per_token: false
+
+request_arrival_logging:
+  enabled: true
+  output_path: "results/rl_loop_periodicity_50steps/requests.jsonl"
+  flush_every: 1
+
+output_path: "results/rl_loop_periodicity_50steps/results.json"
+seed: 42

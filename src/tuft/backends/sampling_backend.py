@@ -24,6 +24,34 @@ _get_tracer = lambda: get_tracer("tuft.sampling_backend")  # noqa: E731
 logger = getLogger(__name__)
 
 
+# Colocate DP pairing: Ray first-fit would happily pack two fractional-GPU
+# colocated vLLM actors onto one GPU (e.g. two 0.45 replicas) before any
+# training rank exists, which starves the KV cache. A placement group with one
+# full-GPU bundle per replica forces one sampler per GPU, and the FSDP backend
+# schedules its rank actors onto the same bundles (see fsdp_training_backend).
+_COLOCATE_DP_PLACEMENT_GROUPS: dict[str, Any] = {}
+
+
+def get_colocate_dp_placement_group(model_name: str, dp_size: int):
+    """Create (and cache) a per-GPU placement group for colocate DP replicas."""
+    import ray
+
+    pg = _COLOCATE_DP_PLACEMENT_GROUPS.get(model_name)
+    if pg is None:
+        # Include CPU resources: actors scheduled into a bundle must fit ALL
+        # their resource requests (default num_cpus=1) into it.
+        bundles = [{"GPU": 1.0, "CPU": 4.0} for _ in range(dp_size)]
+        pg = ray.util.placement_group(bundles, strategy="PACK")
+        ray.get(pg.ready(), timeout=180)
+        _COLOCATE_DP_PLACEMENT_GROUPS[model_name] = pg
+    return pg
+
+
+def lookup_colocate_dp_placement_group(model_name: str):
+    """Return the cached colocate DP placement group for a model, or None."""
+    return _COLOCATE_DP_PLACEMENT_GROUPS.get(model_name)
+
+
 def _build_sample_response(
     req_output: Any,
     include_prompt_logprobs: bool = False,
@@ -205,8 +233,25 @@ class VLLMSamplingBackend(BaseSamplingBackend):
 
     def _build_inference_model_config(self, config: ModelConfig, **extra_kwargs):
         from trinity.common.config import InferenceModelConfig
+        import inspect
 
-        return InferenceModelConfig(
+        extra_engine_args: dict[str, Any] = dict(extra_kwargs.pop("extra_engine_args", {}) or {})
+        if getattr(config, "sampling_backend_enable_sleep_mode", False):
+            extra_engine_args["enable_sleep_mode"] = True
+        # Propagate the custom-all-reduce knob to Ray-managed vLLM replicas. Required
+        # for tensor_parallel_size > 1 (e.g. Qwen3-32B tp2): on this node the
+        # custom all-reduce kernel aborts with "custom_all_reduce.cuh invalid
+        # argument" during engine init, killing the whole sampling replica. The
+        # NCCL fallback (disable_custom_all_reduce=True) is correct and is a no-op
+        # for tp1. The flex in-process engine already honors this same knob.
+        if getattr(config, "sampling_disable_custom_all_reduce", True):
+            extra_engine_args["disable_custom_all_reduce"] = True
+
+        # Check if the trinity version supports extra_engine_args
+        _imc_params = inspect.signature(InferenceModelConfig.__init__).parameters
+        _supports_extra_engine_args = "extra_engine_args" in _imc_params
+
+        kwargs = dict(
             model_path=str(config.model_path),
             tensor_parallel_size=extra_kwargs.pop("tensor_parallel_size"),
             max_model_len=(
@@ -234,8 +279,14 @@ class VLLMSamplingBackend(BaseSamplingBackend):
             gpu_memory_utilization=extra_kwargs.pop(
                 "gpu_memory_utilization", config.sampling_memory_fraction
             ),
-            **extra_kwargs,
         )
+        if _supports_extra_engine_args:
+            kwargs["extra_engine_args"] = extra_engine_args
+        # Only pass extra_kwargs that InferenceModelConfig actually accepts
+        for k, v in extra_kwargs.items():
+            if k in _imc_params:
+                kwargs[k] = v
+        return InferenceModelConfig(**kwargs)
 
     def _create_colocated_engine(self, config: ModelConfig):
         import ray
@@ -253,13 +304,28 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                     "PATH": f"{self._worker_venv_path}/bin:{_path}",
                 },
             }
+        # Suffix DP replicas so each colocated vLLM actor gets a unique Ray name
+        # (mirrors the standalone path); fractional num_gpus lets Ray pack one
+        # sampler next to one training rank on each GPU.
+        actor_name = "sampling_model_" + self.base_model
+        if self._instance_index > 0:
+            actor_name = f"{actor_name}_dp{self._instance_index}"
+        options: dict[str, Any] = {
+            "name": actor_name,
+            "num_gpus": config.sampling_memory_fraction,
+            "runtime_env": _runtime_env,
+        }
+        pg = _COLOCATE_DP_PLACEMENT_GROUPS.get(config.model_name)
+        if pg is not None:
+            from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
+
+            options["scheduling_strategy"] = PlacementGroupSchedulingStrategy(
+                placement_group=pg,
+                placement_group_bundle_index=self._instance_index,
+            )
         return (
             ray.remote(vLLMRolloutModel)
-            .options(
-                name="sampling_model_" + self.base_model,
-                num_gpus=config.sampling_memory_fraction,
-                runtime_env=_runtime_env,
-            )
+            .options(**options)
             .remote(
                 config=self._build_inference_model_config(
                     config,
@@ -294,14 +360,20 @@ class VLLMSamplingBackend(BaseSamplingBackend):
             }
 
         # Use instance_index to differentiate Ray actor names for DP replicas
-        actor_name = f"sampling_model_{self.base_model}"
+        actor_name_prefix = getattr(self, "_actor_name_prefix", "sampling_model")
+        actor_name = f"{actor_name_prefix}_{self.base_model}"
         if self._instance_index > 0:
             actor_name = f"{actor_name}_dp{self._instance_index}"
 
         # In standalone/DP mode, each vLLM instance has a dedicated GPU.
         # Use 0.9 (vLLM default) for max KV cache, not sampling_memory_fraction
         # which is designed for colocate mode (shared GPU with training).
-        standalone_gpu_memory_utilization = 0.9
+        # Configurable so an instance that may share a GPU with another runtime
+        # (e.g. optimal's fixed-sampling group coexisting with the flex backend)
+        # can lower its footprint to still fit.
+        standalone_gpu_memory_utilization = getattr(
+            config, "sampling_standalone_gpu_memory_utilization", 0.9
+        )
 
         return (
             ray.remote(vLLMRolloutModel)
@@ -489,6 +561,59 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                     await self.engine.remove_lora_adapter.remote(lora_id)  # type: ignore[attr-defined]
                     del self.lora_adapters[lora_id]
 
+    async def sleep(self, level: int = 1) -> None:
+        """Put the underlying vLLM engine to sleep (requires enable_sleep_mode).
+
+        Level 1 offloads weights to CPU (kept for correct wake_up restore) and
+        discards the KV cache; level 2 discards everything on GPU with no CPU
+        backup. Requires ``sampling_backend_enable_sleep_mode=True`` at engine
+        construction time, otherwise the underlying vLLM cumem allocator is not
+        configured and this call will fail.
+        """
+        await self.engine.sleep.remote(level=level)  # type: ignore[attr-defined]
+
+    async def wake_up(self) -> None:
+        """Wake the underlying vLLM engine from sleep, restoring weights and KV cache."""
+        await self.engine.wake_up.remote()  # type: ignore[attr-defined]
+
+
+class FixedSamplingBackend(VLLMSamplingBackend):
+    """Independent fixed vLLM sampling backend, optionally quantized.
+
+    Unlike FlexBackend sampling, this backend loads its own base model in vLLM
+    and never aliases training weights through CUDA IPC. Therefore vLLM base
+    quantization is safe here: it changes only this fixed sampling runtime, not
+    the training model or Flex zero-copy sampling runtime.
+    """
+
+    def __init__(
+        self,
+        config: ModelConfig,
+        worker_venv_path: Optional[str] = None,
+        *,
+        quantization: str | None = None,
+        instance_index: int = 0,
+    ) -> None:
+        self._actor_name_prefix = "fixed_sampling_model"
+        effective_quantization = quantization
+        if effective_quantization is None:
+            effective_quantization = getattr(config, "fixed_sampling_quantization", None)
+        if effective_quantization is None:
+            effective_quantization = config.quantization
+        fixed_config = config.model_copy(
+            update={
+                "colocate": False,
+                "quantization": effective_quantization,
+                "sampling_backend": "fixed",
+                "sampling_backend_enable_sleep_mode": True,
+            }
+        )
+        super().__init__(
+            fixed_config,
+            worker_venv_path=worker_venv_path,
+            instance_index=instance_index,
+        )
+
 
 class DPSamplingBackend(BaseSamplingBackend):
     """Data-Parallel sampling backend: N independent vLLM instances with round-robin LB.
@@ -505,6 +630,10 @@ class DPSamplingBackend(BaseSamplingBackend):
     ) -> None:
         super().__init__(config)
         self._dp_size = config.data_parallel_size
+        if config.colocate and self._dp_size > 1:
+            # Reserve one GPU bundle per replica up front so Ray cannot pack two
+            # colocated samplers onto the same GPU (see module-level registry).
+            get_colocate_dp_placement_group(config.model_name, self._dp_size)
         self._instances: list[VLLMSamplingBackend] = []
         for i in range(self._dp_size):
             instance = VLLMSamplingBackend(

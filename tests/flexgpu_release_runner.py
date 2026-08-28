@@ -4,39 +4,46 @@ from __future__ import annotations
 
 import argparse
 import os
+import pickle
 import sys
+import tempfile
 import time
 from typing import Any
 
 
-BENCH_ROOT = os.environ.get("TUFT_FLEX_BENCH_ROOT", "/mnt/nas/hanzhang.yhz/lora_rl_bench")
 TUFT_ROOT = os.environ.get("TUFT_FLEX_TUFT_ROOT", "/mnt/nas/hanzhang.yhz/flex_backend/TuFT")
 sys.path.insert(0, str(os.path.join(TUFT_ROOT, "src")))
-sys.path.insert(0, BENCH_ROOT)
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 os.environ.setdefault("VLLM_ALLOW_INSECURE_SERIALIZATION", "1")
 os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
 os.environ.setdefault("CUDA_HOME", "/usr/local/cuda-12.9")
 os.environ["PATH"] = "/usr/local/cuda-12.9/bin:" + os.environ.get("PATH", "")
 
+import socket
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
-from benchmarks.s2_truezero_coordinator import _free_port, _make_ipc_desc_dict
-from common.config import load_bench_config, load_model_spec
-from common.fused_torchtp_utils import (
+from tuft.backends.flex.torchtp_training import (
     apply_fused_torchtp_lora,
-    create_fused_vllm_state_dict,
     fused_torchtp_train_step,
     load_fused_torchtp_model,
+    load_tokenizer_for_spec,
+    make_synthetic_rl_batch,
+    resolve_flex_model_spec,
 )
-from common.model_utils import load_tokenizer
-from common.training_utils import make_synthetic_rl_batch
 from tuft.backends.flex.torchtp_zero_copy import (
+    capture_cuda_graph_after_alias,
     collect_cuda_memory_snapshot,
+    create_fused_vllm_state_dict,
+    flex_partial_sleep_vllm_worker,
+    flex_partial_wake_vllm_worker,
+    flex_sleep_vllm_worker,
+    flex_wake_vllm_worker,
+    get_pre_capture_alias_result,
     inject_cuda_ipc_alias,
     prepare_cuda_ipc_alias_cache,
+    tensor_to_cuda_ipc_descriptor,
 )
 
 
@@ -50,6 +57,33 @@ def _print_memory_snapshots(title: str, snapshots: list[dict[str, Any]]) -> None
             f"objects={item['object_storage_count']}",
             flush=True,
         )
+
+
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("", 0))
+        return int(sock.getsockname()[1])
+
+
+def _make_ipc_desc_dict(
+    vllm_sd: dict[str, torch.Tensor],
+    rank: int,
+    world_size: int,
+    vocab_size: int,
+) -> tuple[dict[str, Any], list[torch.Tensor]]:
+    desc: dict[str, Any] = {}
+    keepalive: list[torch.Tensor] = []
+    for key, tensor in vllm_sd.items():
+        tensor = _prepare_ipc_tensor(key, tensor, rank, world_size, vocab_size)
+        if not tensor.is_cuda:
+            raise RuntimeError(f"{key} is not a CUDA tensor")
+        keepalive.append(tensor)
+        desc[key] = {
+            "shape": tuple(tensor.shape),
+            "dtype": str(tensor.dtype),
+            "ipc": tensor_to_cuda_ipc_descriptor(tensor),
+        }
+    return desc, keepalive
 
 
 def _prepare_ipc_tensor(
@@ -118,19 +152,18 @@ def _training_worker_release_runtime(
     keepalive: list[torch.Tensor] = []
     try:
         dist.init_process_group("nccl", rank=rank, world_size=world_size)
-        spec = load_model_spec(model_name)
-        bench = load_bench_config()
-        tokenizer = load_tokenizer(spec)
+        spec = resolve_flex_model_spec(model_name)
+        tokenizer = load_tokenizer_for_spec(spec)
 
         model, tp_group, _mesh = load_fused_torchtp_model(spec, rank, world_size)
-        lora_params = apply_fused_torchtp_lora(model, bench, tp_group)
+        lora_params = apply_fused_torchtp_lora(model, lora_rank=8, lora_alpha=16, tp_group=tp_group)
         optimizer = torch.optim.AdamW(lora_params, lr=1e-4)
         batch = make_synthetic_rl_batch(
             tokenizer,
             train_batch,
             train_seq_len,
             device=torch.device(f"cuda:{rank}"),
-            seed=bench.seed,
+            seed=42,
         )
 
         descriptor_reused = descriptor_mode == "reuse"
@@ -247,6 +280,17 @@ def _run_vllm_flex(
     sample_rounds: int,
     num_prompts: int,
     inject_rounds: int,
+    enforce_eager: bool,
+    disable_custom_all_reduce: bool,
+    disable_cudagraph: bool,
+    enable_sleep_mode: bool,
+    pre_capture_alias: bool,
+    post_alias_cudagraph_capture: bool,
+    sleep_probe: bool,
+    sleep_level: int,
+    wake_tags: str,
+    flex_kv_cache_only_sleep: bool,
+    flex_partial_kv_cache_gb: float,
     verify_inject: bool,
     memory_breakdown: bool,
 ) -> dict[str, Any]:
@@ -268,17 +312,47 @@ def _run_vllm_flex(
 
     from vllm import LLM, SamplingParams
 
+    descriptor_file_path: str | None = None
+    if pre_capture_alias:
+        descriptor_file = tempfile.NamedTemporaryFile(
+            prefix="tuft_flex_ipc_",
+            suffix=".pkl",
+            delete=False,
+        )
+        descriptor_file_path = descriptor_file.name
+        with descriptor_file:
+            pickle.dump(all_rank_descs, descriptor_file)
+        os.environ["TUFT_FLEX_PRECAPTURE_IPC_PATH"] = descriptor_file_path
+        os.environ["TUFT_FLEX_PRECAPTURE_VERIFY"] = "1" if verify_inject else "0"
+        os.environ["TUFT_FLEX_PRECAPTURE_LOG_PATH"] = descriptor_file_path + ".log"
+        print(
+            f"      pre_capture_descriptor_file: {descriptor_file_path}",
+            flush=True,
+        )
+
     print("[3/5] Creating vLLM dummy workers...", flush=True)
     dummy_start = time.perf_counter()
+    llm_kwargs: dict[str, Any] = {}
+    if disable_cudagraph:
+        llm_kwargs["compilation_config"] = {"cudagraph_mode": 0}
+    if enable_sleep_mode:
+        llm_kwargs["enable_sleep_mode"] = True
+    if pre_capture_alias:
+        llm_kwargs["worker_cls"] = "tuft.backends.flex.vllm_worker.TuftFlexGPUWorker"
+    effective_enforce_eager = False if pre_capture_alias else enforce_eager
+    if post_alias_cudagraph_capture:
+        effective_enforce_eager = True
     llm = LLM(
         model=model_path,
         dtype="bfloat16",
         tensor_parallel_size=tp_size,
         gpu_memory_utilization=gpu_memory_utilization,
         trust_remote_code=True,
-        enforce_eager=True,
+        enforce_eager=effective_enforce_eager,
+        disable_custom_all_reduce=disable_custom_all_reduce,
         max_model_len=max_model_len,
         load_format="dummy",
+        **llm_kwargs,
     )
     dummy_ms = (time.perf_counter() - dummy_start) * 1000
     print(f"      dummy_load: {dummy_ms:.0f}ms (one-time)", flush=True)
@@ -291,49 +365,80 @@ def _run_vllm_flex(
         memory_snapshots["after_dummy_load"] = snapshots
         _print_memory_snapshots("memory after dummy load", snapshots)
 
-    cache_start = time.perf_counter()
-    cache_results = llm.collective_rpc(prepare_cuda_ipc_alias_cache)
-    cache_ms = (time.perf_counter() - cache_start) * 1000
-    print(f"      alias_cache_prepare: {cache_ms:.2f}ms results={cache_results}", flush=True)
-    if memory_breakdown:
-        snapshots = llm.collective_rpc(
-            collect_cuda_memory_snapshot,
-            args=("after_alias_cache",),
-        )
-        memory_snapshots["after_alias_cache"] = snapshots
-        _print_memory_snapshots("memory after alias cache", snapshots)
+    if pre_capture_alias:
+        cache_ms = 0.0
+        print("[4/5] Reading pre-capture IPC alias results...", flush=True)
+        inject_results = llm.collective_rpc(get_pre_capture_alias_result)
+        inject_ms = 0.0
+        inject_ms_list = [inject_ms]
+        for item in inject_results:
+            print(
+                f"      rank {item['rank']}: injected={item['injected']} "
+                f"verified={item['verified']} mismatch={item['mismatched']} "
+                f"max_diff={item['max_diff']:.1e} skipped={item['skipped']} "
+                f"retagged={item.get('retagged_gb', 0.0):.2f}GB",
+                flush=True,
+            )
+            if item["examples"]:
+                print(f"        examples={item['examples']}", flush=True)
+    else:
+        cache_start = time.perf_counter()
+        cache_results = llm.collective_rpc(prepare_cuda_ipc_alias_cache)
+        cache_ms = (time.perf_counter() - cache_start) * 1000
+        print(f"      alias_cache_prepare: {cache_ms:.2f}ms results={cache_results}", flush=True)
+        if memory_breakdown:
+            snapshots = llm.collective_rpc(
+                collect_cuda_memory_snapshot,
+                args=("after_alias_cache",),
+            )
+            memory_snapshots["after_alias_cache"] = snapshots
+            _print_memory_snapshots("memory after alias cache", snapshots)
 
-    print("[4/5] Injecting CUDA IPC tensors via storage alias...", flush=True)
-    inject_start = time.perf_counter()
-    inject_results = llm.collective_rpc(
-        inject_cuda_ipc_alias,
-        args=(all_rank_descs, verify_inject),
-    )
-    inject_ms = (time.perf_counter() - inject_start) * 1000
-    inject_ms_list = [inject_ms]
-    for item in inject_results:
-        print(
-            f"      rank {item['rank']}: injected={item['injected']} "
-            f"verified={item['verified']} mismatch={item['mismatched']} "
-            f"max_diff={item['max_diff']:.1e} skipped={item['skipped']}",
-            flush=True,
-        )
-        if item["examples"]:
-            print(f"        examples={item['examples']}", flush=True)
-    print(f"      inject_alias: {inject_ms:.2f}ms", flush=True)
-    for round_idx in range(1, inject_rounds):
-        repeat_start = time.perf_counter()
-        repeat_results = llm.collective_rpc(
+        print("[4/5] Injecting CUDA IPC tensors via storage alias...", flush=True)
+        inject_start = time.perf_counter()
+        inject_results = llm.collective_rpc(
             inject_cuda_ipc_alias,
             args=(all_rank_descs, verify_inject),
         )
-        repeat_ms = (time.perf_counter() - repeat_start) * 1000
-        inject_ms_list.append(repeat_ms)
-        repeat_ok = all(item["mismatched"] == 0 for item in repeat_results)
-        print(
-            f"      inject_alias_repeat_{round_idx + 1}: {repeat_ms:.2f}ms ok={repeat_ok}",
-            flush=True,
-        )
+        inject_ms = (time.perf_counter() - inject_start) * 1000
+        inject_ms_list = [inject_ms]
+        for item in inject_results:
+            print(
+                f"      rank {item['rank']}: injected={item['injected']} "
+                f"verified={item['verified']} mismatch={item['mismatched']} "
+                f"max_diff={item['max_diff']:.1e} skipped={item['skipped']} "
+                f"retagged={item.get('retagged_gb', 0.0):.2f}GB",
+                flush=True,
+            )
+            if item["examples"]:
+                print(f"        examples={item['examples']}", flush=True)
+        print(f"      inject_alias: {inject_ms:.2f}ms", flush=True)
+        for round_idx in range(1, inject_rounds):
+            repeat_start = time.perf_counter()
+            repeat_results = llm.collective_rpc(
+                inject_cuda_ipc_alias,
+                args=(all_rank_descs, verify_inject),
+            )
+            repeat_ms = (time.perf_counter() - repeat_start) * 1000
+            inject_ms_list.append(repeat_ms)
+            repeat_ok = all(item["mismatched"] == 0 for item in repeat_results)
+            print(
+                f"      inject_alias_repeat_{round_idx + 1}: {repeat_ms:.2f}ms ok={repeat_ok}",
+                flush=True,
+            )
+    capture_results: list[dict[str, Any]] = []
+    capture_ms = 0.0
+    if post_alias_cudagraph_capture:
+        print("[4.5/5] Capturing CUDA Graph after alias...", flush=True)
+        capture_start = time.perf_counter()
+        capture_results = llm.collective_rpc(capture_cuda_graph_after_alias)
+        capture_ms = (time.perf_counter() - capture_start) * 1000
+        for item in capture_results:
+            print(f"      capture_result: {item}", flush=True)
+        if not all(item.get("captured") for item in capture_results):
+            raise RuntimeError(f"post-alias CUDA Graph capture failed: {capture_results}")
+        print(f"      post_alias_cudagraph_capture_ms: {capture_ms:.2f}", flush=True)
+
     if memory_breakdown:
         snapshots = llm.collective_rpc(
             collect_cuda_memory_snapshot,
@@ -391,13 +496,106 @@ def _run_vllm_flex(
             flush=True,
         )
 
+    sleep_probe_result: dict[str, Any] | None = None
+    if sleep_probe:
+        parsed_wake_tags = [tag.strip() for tag in wake_tags.split(",") if tag.strip()]
+        wake_tags_arg = parsed_wake_tags or None
+        print(f"[sleep-probe] Calling llm.sleep(level={sleep_level})...", flush=True)
+        if flex_kv_cache_only_sleep:
+            print("[sleep-probe] Using Flex KV-cache-only sleep/wake RPC", flush=True)
+        sleep_probe_result = {
+            "sleep_level": sleep_level,
+            "wake_tags": parsed_wake_tags if parsed_wake_tags else None,
+        }
+        try:
+            sleep_probe_result["before_sleep"] = llm.collective_rpc(
+                collect_cuda_memory_snapshot,
+                args=("before_sleep",),
+            )
+        except Exception as exc:
+            sleep_probe_result["before_sleep_error"] = repr(exc)
+        sleep_start = time.perf_counter()
+        try:
+            if flex_kv_cache_only_sleep:
+                if flex_partial_kv_cache_gb > 0:
+                    sleep_results = llm.collective_rpc(
+                        flex_partial_sleep_vllm_worker,
+                        args=(flex_partial_kv_cache_gb,),
+                    )
+                else:
+                    sleep_results = llm.collective_rpc(flex_sleep_vllm_worker)
+                sleep_probe_result["sleep_results"] = sleep_results
+                sleep_probe_result["sleep_ms"] = max(
+                    float(item["sleep_ms"]) for item in sleep_results
+                )
+            else:
+                llm.sleep(level=sleep_level)
+                sleep_probe_result["sleep_ms"] = (time.perf_counter() - sleep_start) * 1000
+            print(
+                f"      sleep_level{sleep_level}_ms: {sleep_probe_result['sleep_ms']:.2f}",
+                flush=True,
+            )
+            if flex_kv_cache_only_sleep and sleep_probe_result.get("sleep_results"):
+                sleep_summary = sleep_probe_result["sleep_results"][0].get("cumem_before", {})
+                print(f"      sleep_cumem_before_rank0: {sleep_summary}", flush=True)
+            try:
+                sleep_probe_result["after_sleep"] = llm.collective_rpc(
+                    collect_cuda_memory_snapshot,
+                    args=("after_sleep",),
+                )
+                _print_memory_snapshots("memory after sleep", sleep_probe_result["after_sleep"])
+            except Exception as exc:
+                sleep_probe_result["after_sleep_error"] = repr(exc)
+                print(f"      after_sleep_snapshot_error: {exc!r}", flush=True)
+        except Exception as exc:
+            sleep_probe_result["sleep_error"] = repr(exc)
+            print(f"      sleep_error: {exc!r}", flush=True)
+        wake_start = time.perf_counter()
+        try:
+            if flex_kv_cache_only_sleep:
+                if flex_partial_kv_cache_gb > 0:
+                    wake_results = llm.collective_rpc(flex_partial_wake_vllm_worker)
+                else:
+                    wake_results = llm.collective_rpc(
+                        flex_wake_vllm_worker,
+                        args=(wake_tags_arg,),
+                    )
+                sleep_probe_result["wake_results"] = wake_results
+                sleep_probe_result["wake_ms"] = max(
+                    float(item["wake_ms"]) for item in wake_results
+                )
+            else:
+                llm.wake_up(tags=wake_tags_arg)
+                sleep_probe_result["wake_ms"] = (time.perf_counter() - wake_start) * 1000
+            wake_label = ",".join(parsed_wake_tags) if parsed_wake_tags else "all"
+            print(
+                f"      wake_{wake_label}_ms: {sleep_probe_result['wake_ms']:.2f}",
+                flush=True,
+            )
+            if flex_kv_cache_only_sleep and sleep_probe_result.get("wake_results"):
+                wake_summary = sleep_probe_result["wake_results"][0].get("cumem_after", {})
+                print(f"      wake_cumem_after_rank0: {wake_summary}", flush=True)
+            sleep_probe_result["after_wake"] = llm.collective_rpc(
+                collect_cuda_memory_snapshot,
+                args=("after_wake",),
+            )
+            _print_memory_snapshots("memory after wake", sleep_probe_result["after_wake"])
+            _ = llm.generate(prompts[:1], params)
+            sleep_probe_result["post_wake_generate_ok"] = True
+        except Exception as exc:
+            sleep_probe_result["wake_error"] = repr(exc)
+            print(f"      wake_or_generate_error: {exc!r}", flush=True)
+
     return {
         "dummy_ms": dummy_ms,
         "alias_cache_ms": cache_ms,
         "inject_ms": inject_ms,
         "inject_ms_list": inject_ms_list,
         "inject_results": inject_results,
+        "capture_results": capture_results,
+        "post_alias_cudagraph_capture_ms": capture_ms,
         "memory_snapshots": memory_snapshots,
+        "sleep_probe": sleep_probe_result,
         "throughputs": throughputs,
         "latencies": latencies,
     }
@@ -419,13 +617,24 @@ def main() -> None:
     parser.add_argument("--sample-rounds", type=int, default=3)
     parser.add_argument("--num-prompts", type=int, default=2)
     parser.add_argument("--inject-rounds", type=int, default=1)
+    parser.add_argument("--enforce-eager", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--disable-custom-all-reduce", action="store_true")
+    parser.add_argument("--disable-cudagraph", action="store_true")
+    parser.add_argument("--enable-sleep-mode", action="store_true")
+    parser.add_argument("--pre-capture-alias", action="store_true")
+    parser.add_argument("--post-alias-cudagraph-capture", action="store_true")
+    parser.add_argument("--sleep-probe", action="store_true")
+    parser.add_argument("--sleep-level", type=int, default=1, choices=[1, 2])
+    parser.add_argument("--wake-tags", default="")
+    parser.add_argument("--flex-kv-cache-only-sleep", action="store_true")
+    parser.add_argument("--flex-partial-kv-cache-gb", type=float, default=0.0)
     parser.add_argument("--release-mode", choices=["strict", "fast"], default="fast")
     parser.add_argument("--descriptor-mode", choices=["fresh", "reuse"], default="fresh")
     parser.add_argument("--memory-breakdown", action="store_true")
     parser.add_argument("--verify-inject", action="store_true")
     args = parser.parse_args()
 
-    spec = load_model_spec(args.model)
+    spec = resolve_flex_model_spec(args.model)
     ctx = mp.get_context("spawn")
     master_port = _free_port()
 
@@ -433,7 +642,17 @@ def main() -> None:
     print(
         f"  model={spec.name}, tp={args.tp_size}, train_batch={args.train_batch}, "
         f"seq={args.train_seq_len}, max_tokens={args.max_tokens}, "
-        f"num_prompts={args.num_prompts}, verify={args.verify_inject}",
+        f"num_prompts={args.num_prompts}, verify={args.verify_inject}, "
+        f"enforce_eager={args.enforce_eager}, "
+        f"disable_custom_all_reduce={args.disable_custom_all_reduce}, "
+        f"disable_cudagraph={args.disable_cudagraph}, "
+        f"enable_sleep_mode={args.enable_sleep_mode}, "
+        f"pre_capture_alias={args.pre_capture_alias}, "
+        f"post_alias_cudagraph_capture={args.post_alias_cudagraph_capture}, "
+        f"sleep_probe={args.sleep_probe}, sleep_level={args.sleep_level}, "
+        f"wake_tags={args.wake_tags!r}, "
+        f"flex_kv_cache_only_sleep={args.flex_kv_cache_only_sleep}, "
+        f"flex_partial_kv_cache_gb={args.flex_partial_kv_cache_gb}",
         flush=True,
     )
 
@@ -509,6 +728,17 @@ def main() -> None:
             sample_rounds=args.sample_rounds,
             num_prompts=args.num_prompts,
             inject_rounds=args.inject_rounds,
+            enforce_eager=args.enforce_eager,
+            disable_custom_all_reduce=args.disable_custom_all_reduce,
+            disable_cudagraph=args.disable_cudagraph,
+            enable_sleep_mode=args.enable_sleep_mode,
+            pre_capture_alias=args.pre_capture_alias,
+            post_alias_cudagraph_capture=args.post_alias_cudagraph_capture,
+            sleep_probe=args.sleep_probe,
+            sleep_level=args.sleep_level,
+            wake_tags=args.wake_tags,
+            flex_kv_cache_only_sleep=args.flex_kv_cache_only_sleep,
+            flex_partial_kv_cache_gb=args.flex_partial_kv_cache_gb,
             verify_inject=args.verify_inject,
             memory_breakdown=args.memory_breakdown,
         )
@@ -545,6 +775,12 @@ def main() -> None:
     print(f"  mean_runtime_release_ms: {mean_release:.2f}", flush=True)
     print(f"  alias_cache_ms(one-time): {vllm_result['alias_cache_ms']:.2f}", flush=True)
     print(f"  inject_alias_ms: {vllm_result['inject_ms']:.2f}", flush=True)
+    if vllm_result["post_alias_cudagraph_capture_ms"]:
+        print(
+            "  post_alias_cudagraph_capture_ms: "
+            f"{vllm_result['post_alias_cudagraph_capture_ms']:.2f}",
+            flush=True,
+        )
     if len(vllm_result["inject_ms_list"]) > 1:
         repeats = ", ".join(f"{item:.2f}" for item in vllm_result["inject_ms_list"][1:])
         print(f"  inject_alias_repeat_ms: {repeats}", flush=True)

@@ -1,17 +1,16 @@
 # pyright: reportUnsupportedDunderAll=false
-from .fsdp_training_backend import FSDPTrainingBackend
-from .sampling_backend import BaseSamplingBackend, DPSamplingBackend, VLLMSamplingBackend
-from .training_backend import BaseTrainingBackend, HFTrainingBackend
-
 
 __all__ = [
     "BaseSamplingBackend",
     "DPSamplingBackend",
     "VLLMSamplingBackend",
+    "FixedSamplingBackend",
+    "SamplingRuntimeRouter",
     "BaseTrainingBackend",
     "HFTrainingBackend",
     "FSDPTrainingBackend",
-    # Lazy-loaded (heavy transitive dependencies):
+    "TorchTPTrainingBackend",
+    "TorchTPSamplingBackend",
     "FlexBackend",
     "FlexBackendMode",
     "TransformDirection",
@@ -20,6 +19,16 @@ __all__ = [
 ]
 
 _LAZY_IMPORTS = {
+    "BaseSamplingBackend": (".base_backend", "BaseSamplingBackend"),
+    "BaseTrainingBackend": (".base_backend", "BaseTrainingBackend"),
+    "DPSamplingBackend": (".sampling_backend", "DPSamplingBackend"),
+    "VLLMSamplingBackend": (".sampling_backend", "VLLMSamplingBackend"),
+    "FixedSamplingBackend": (".sampling_backend", "FixedSamplingBackend"),
+    "SamplingRuntimeRouter": (".sampling_router", "SamplingRuntimeRouter"),
+    "HFTrainingBackend": (".training_backend", "HFTrainingBackend"),
+    "FSDPTrainingBackend": (".fsdp_training_backend", "FSDPTrainingBackend"),
+    "TorchTPTrainingBackend": (".torchtp_backend", "TorchTPTrainingBackend"),
+    "TorchTPSamplingBackend": (".torchtp_backend", "TorchTPSamplingBackend"),
     "FlexBackend": (".flex", "FlexBackend"),
     "FlexBackendMode": (".flex", "FlexBackendMode"),
     "TransformDirection": (".flex", "TransformDirection"),

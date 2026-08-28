@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from pathlib import Path
 
 import typer
@@ -225,8 +226,15 @@ def launch(
     # Validate persistence configuration before starting
     _validate_persistence_config(app_config)
 
+    # Set environment variables required by the FlexBackend optimal path.
+    # These are safe defaults; users can still override them explicitly.
+    os.environ.setdefault("VLLM_ALLOW_INSECURE_SERIALIZATION", "1")
+    os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
     # Initialize telemetry before starting the server
     _init_telemetry(app_config, log_level)
+
     logging.getLogger("tuft").info("Server starting on %s:%s", host, port)
 
     # Write address file so embedded mode / other processes can discover this server

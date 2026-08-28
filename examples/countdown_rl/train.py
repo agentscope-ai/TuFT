@@ -523,7 +523,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     p.add_argument("--api-key", default=os.getenv("TINKER_API_KEY"))
 
     p.add_argument("--dataset", default="Jiayi-Pan/Countdown-Tasks-3to4")
-    p.add_argument("--base-model", default="Qwen/Qwen3-0.6B")
+    p.add_argument("--base-model", default="qwen3-4b")
     p.add_argument("--lora-rank", type=int, default=8)
 
     p.add_argument("--num-steps", type=int, default=1000)

@@ -108,8 +108,13 @@ class TrainingController:
 
     REDIS_KEY_PREFIX = "training_run"
 
-    def __init__(self, config: AppConfig) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        shared_backends: Dict[str, BaseTrainingBackend] | None = None,
+    ) -> None:
         self.config = config
+        self._shared_backends = shared_backends or {}
         self.training_backends = self._create_backends(config.supported_models)
         # TODO: add a mechanism to manage training_runs
         self.training_runs: Dict[str, TrainingRunRecord] = {}
@@ -122,6 +127,9 @@ class TrainingController:
             c.model_name for c in model_configs if getattr(c, "training_backend", "hf") == "fsdp"
         ]
         for config in model_configs:
+            if config.model_name in self._shared_backends:
+                backends[config.model_name] = self._shared_backends[config.model_name]
+                continue
             fsdp_index: Optional[int] = None
             if config.model_name in fsdp_model_names:
                 fsdp_index = fsdp_model_names.index(config.model_name)
@@ -284,8 +292,21 @@ class TrainingController:
         async with record._execution_lock:
             if seq_id is not None:
                 expected = record.next_seq_id
-                if seq_id != expected:
+                if seq_id < expected:
+                    # A replay/duplicate of an already-applied op: reject.
                     raise SequenceConflictException(expected=expected, got=seq_id)
+                if seq_id > expected:
+                    # The client's sequence counter ran ahead of the server's (it
+                    # counts requests the server does not sequence-guard, e.g.
+                    # samples/weight-sync). Treat it as an offset and fast-forward
+                    # rather than deadlocking the tenant in a retry loop.
+                    logger.warning(
+                        "Sequence gap for %s: expected %s, got %s; fast-forwarding.",
+                        record.training_run_id,
+                        expected,
+                        seq_id,
+                    )
+                    record.next_seq_id = seq_id
 
             result = await operation()
 
@@ -326,12 +347,14 @@ class TrainingController:
                     backend=backend,
                 )
                 await backend.create_adapter(model_id, lora_config)
+                logger.info("[DBG] create_model create_adapter returned %s", model_id)
                 self.training_runs[model_id] = record
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, self._save_training_run, model_id)
 
                 # Update metrics
                 get_metrics().training_models_active.add(1, {"base_model": base_model})
+                logger.info("[DBG] create_model returning %s", model_id)
                 return record
             except Exception as e:
                 span.record_exception(e)
@@ -479,10 +502,15 @@ class TrainingController:
 
     def get_model_info(self, model_id: str, user_id: str) -> types.GetInfoResponse:
         record = self.get_run_record(model_id=model_id, user_id=user_id)
+        # Use the actual model path as tokenizer_id so clients can load the
+        # tokenizer from the local checkpoint directory instead of HuggingFace.
+        tokenizer_id = record.base_model
+        if record.backend is not None and hasattr(record.backend, "config"):
+            tokenizer_id = str(record.backend.config.model_path)
         model_data = types.ModelData(
             arch="toy-transformer",
             model_name=record.base_model,
-            tokenizer_id=record.base_model,
+            tokenizer_id=tokenizer_id,
         )
         return types.GetInfoResponse(
             model_data=model_data,

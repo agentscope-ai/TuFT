@@ -62,10 +62,31 @@ class BaseSamplingBackend(BaseBackend):
             from ..backends.sampling_backend import DummySamplingBackend
 
             return DummySamplingBackend(config)
+        sampling_backend = getattr(config, "sampling_backend", "auto")
+        if sampling_backend == "auto" and getattr(config, "training_backend", "hf") == "torchtp":
+            sampling_backend = "torchtp"
+        if config.data_parallel_size > 1 and sampling_backend == "torchtp":
+            # Unified-engine DP (e.g. DP4 TP1 for 4B): N TorchTP replicas, one
+            # per GPU. Must precede the generic vLLM DPSamplingBackend branch.
+            from ..backends.torchtp_backend import DPTorchTPSamplingBackend
+
+            return DPTorchTPSamplingBackend(config)
         if config.data_parallel_size > 1:
             from ..backends.sampling_backend import DPSamplingBackend
 
             return DPSamplingBackend(config, worker_venv_path=worker_venv_path)
+        if sampling_backend == "torchtp":
+            from ..backends.torchtp_backend import TorchTPSamplingBackend
+
+            return TorchTPSamplingBackend(config)
+        if sampling_backend == "fixed":
+            from ..backends.sampling_backend import FixedSamplingBackend
+
+            return FixedSamplingBackend(config, worker_venv_path=worker_venv_path)
+        if sampling_backend == "router":
+            from ..backends.sampling_router import SamplingRuntimeRouter
+
+            return SamplingRuntimeRouter(config, initial_backend="fixed")
         from ..backends.sampling_backend import VLLMSamplingBackend
 
         return VLLMSamplingBackend(config, worker_venv_path=worker_venv_path)
@@ -138,6 +159,14 @@ class BaseTrainingBackend(BaseBackend):
             return FSDPTrainingBackend(
                 config, fsdp_index=fsdp_index, worker_venv_path=worker_venv_path
             )
+        if training_backend == "torchtp":
+            if config.data_parallel_size > 1:
+                from ..backends.torchtp_backend import DPTorchTPTrainingBackend
+
+                return DPTorchTPTrainingBackend(config)
+            from ..backends.torchtp_backend import TorchTPTrainingBackend
+
+            return TorchTPTrainingBackend(config)
         from ..backends.training_backend import HFTrainingBackend
 
         return HFTrainingBackend(config)

@@ -1,0 +1,153 @@
+backend:
+  type: tinker
+  base_url: "http://localhost:10610"
+  api_key: "tml-tuft-dev-key"
+  base_model: "Qwen/Qwen3-4B-Base"
+
+tenants:
+  # 11-tenant reduced run to lower shared-backend queueing interference.
+  # Keep broad workload coverage while removing the worst burst/backlog tenants
+  # observed in results/full_multitenant_22.
+
+  # ── Math Reasoning ──────────────────────────────────────
+  - id: "gsm8k-A"
+    task: gsm8k
+    request_rate: 1.0
+    buffer_size: 64
+    num_train_steps: 50
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 768
+    temperature: 0.7
+    sync_mode: true
+    staleness_limit: 0
+  - id: "gsm8k-shared"
+    task: gsm8k
+    request_rate: 10.0
+    buffer_size: 64
+    num_train_steps: 50
+    lora_rank: 16
+    learning_rate: 1e-4
+    max_tokens: 768
+    temperature: 0.7
+    staleness_limit: 1
+  - id: "countdown-A"
+    task: countdown
+    request_rate: 1.0
+    buffer_size: 64
+    num_train_steps: 50
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 256
+    temperature: 0.9
+    sync_mode: true
+    staleness_limit: 0
+  - id: "math-A"
+    task: math
+    request_rate: 1.0
+    buffer_size: 64
+    num_train_steps: 50
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 1024
+    temperature: 0.7
+    sync_mode: true
+    staleness_limit: 0
+
+  # ── Code Generation ────────────────────────────────────
+  - id: "mbpp-A"
+    task: mbpp
+    request_rate: 1.0
+    buffer_size: 64
+    num_train_steps: 50
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 512
+    temperature: 0.7
+    sync_mode: true
+    staleness_limit: 0
+  - id: "mbpp-shared"
+    task: mbpp
+    request_rate: 10.0
+    buffer_size: 64
+    num_train_steps: 50
+    lora_rank: 16
+    learning_rate: 1e-4
+    max_tokens: 512
+    temperature: 0.7
+    staleness_limit: 1
+  - id: "humaneval-A"
+    task: humaneval
+    request_rate: 1.0
+    buffer_size: 64
+    num_train_steps: 50
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 512
+    temperature: 0.7
+    sync_mode: true
+    staleness_limit: 0
+  - id: "humaneval-shared"
+    task: humaneval
+    request_rate: 10.0
+    buffer_size: 64
+    num_train_steps: 50
+    lora_rank: 16
+    learning_rate: 1e-4
+    max_tokens: 512
+    temperature: 0.7
+    staleness_limit: 2
+
+  # ── Instruction Following ──────────────────────────────
+  - id: "ifeval-A"
+    task: ifeval
+    request_rate: 1.0
+    buffer_size: 64
+    num_train_steps: 50
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 1024
+    temperature: 0.7
+    sync_mode: true
+    staleness_limit: 0
+
+  # ── Agent / Tool Use ───────────────────────────────────
+  - id: "apibank-shared"
+    task: apibank
+    request_rate: 5.0
+    buffer_size: 64
+    num_train_steps: 50
+    lora_rank: 16
+    learning_rate: 1e-4
+    max_tokens: 256
+    temperature: 0.7
+    staleness_limit: 1
+    max_turns: 6
+  - id: "toolbench-shared"
+    task: toolbench
+    request_rate: 5.0
+    buffer_size: 64
+    num_train_steps: 50
+    lora_rank: 16
+    learning_rate: 1e-4
+    max_tokens: 256
+    temperature: 0.7
+    staleness_limit: 2
+    max_turns: 6
+
+evaluation:
+  eval_interval_steps: 5
+  eval_sample_size: 200
+  eval_temperature: 0.1
+
+logprob_collection:
+  enabled: false
+  dump_per_token: false
+
+request_arrival_logging:
+  enabled: true
+  output_path: "results/half_multitenant_11/requests.jsonl"
+  flush_every: 1
+
+output_path: "results/half_multitenant_11/results.json"
+seed: 42

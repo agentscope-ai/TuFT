@@ -553,6 +553,12 @@ class MultiAdapterVerlWorker:
         per-adapter optimizers."""
         if self._initialized:
             return
+        # torch's current CUDA device is per-thread: initialize() may run on an
+        # asyncio.to_thread pool worker whose default device is 0. Re-pin here
+        # so the FSDP model lands on the LAST visible GPU (in NO_RAY
+        # coexistence GPU 0 is reserved for the standalone vLLM actor).
+        if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+            torch.cuda.set_device(torch.cuda.device_count() - 1)
         base_model = self.engine._build_module()
 
         # Materialize: meta model has no storage; load pretrained weights before .cuda()
@@ -1103,6 +1109,12 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         self._lora_id_to_adapter_name: Dict[str, str] = {}
         self._adapter_name_to_lora_id: Dict[str, str] = {}
         self._lock = asyncio.Lock()
+        # Serializes all in-process worker execution. The NO_RAY worker shares one
+        # engine/optimizer/GPU context across tenants and is not thread-safe, so
+        # concurrent multi-tenant forwards/optims (asyncio.to_thread) corrupt its
+        # state. This is also exactly static_disagg's "training serialized through
+        # a global FIFO" semantics.
+        self._exec_lock = asyncio.Lock()
         rank_slots = _get_rank_slots_from_config(config)
         self._slot_config = SlotPoolConfig(
             rank_slots=rank_slots,
@@ -1125,6 +1137,13 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             # Local single-process: no Ray actors; for standalone tests (train/save logic)
             import torch.distributed as dist
 
+            # When multiple GPUs are visible, pin the in-process FSDP worker to
+            # the LAST device: the standalone vLLM sampling actor is scheduled
+            # by Ray on the first GPU, so this avoids both engines fighting for
+            # the same card's memory.
+            if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+                torch.cuda.set_device(torch.cuda.device_count() - 1)
+
             if not dist.is_available() or not dist.is_initialized():
                 import socket
 
@@ -1140,6 +1159,11 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                     rank=0,
                     world_size=1,
                 )
+            # Re-pin after init_process_group: NCCL init may reset the current
+            # device back to 0 (the vLLM-occupied GPU); the FSDP worker must
+            # stay on the last device.
+            if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+                torch.cuda.set_device(torch.cuda.device_count() - 1)
             training_config, _slot = _worker_dict_to_training_config(self._config_dict)
             engine = FSDPEngineWithLMHead(
                 model_config=training_config.model_config,  # pyright: ignore[reportCallIssue]
@@ -1155,7 +1179,14 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                 slot_config=self._slot_config,
             )
             self._worker.engine = engine
-            await asyncio.to_thread(self._worker.initialize)
+            try:
+                await asyncio.to_thread(self._worker.initialize)
+            except Exception:
+                # Roll back partial state so a later create_adapter retries a
+                # full async_init instead of skipping it with a half-built
+                # worker (which would fail later on engine.module access).
+                self._worker = None
+                raise
             self._world_size = 1
             return
         import ray
@@ -1181,14 +1212,42 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                 },
             }
 
+        actor_num_gpus = 1.0
+        if self.config.colocate:
+            actor_num_gpus = 1.0 - float(self.config.sampling_memory_fraction)
+            if actor_num_gpus <= 0.0:
+                raise ValueError(
+                    "FSDP colocate requires sampling_memory_fraction < 1 so training "
+                    "keeps a positive GPU fraction."
+                )
+
+        # Colocate DP: the sampling backend reserved one full-GPU placement-group
+        # bundle per replica; schedule rank r onto bundle r so each training rank
+        # pairs with exactly one colocated vLLM replica on the same GPU.
+        _colocate_pg = None
+        if self.config.colocate:
+            from .sampling_backend import lookup_colocate_dp_placement_group
+
+            _colocate_pg = lookup_colocate_dp_placement_group(self.config.model_name)
+
         actors = []
         for r in range(n_gpus):
+            actor_options: dict = {
+                "num_gpus": actor_num_gpus,
+                "runtime_env": _runtime_env,
+            }
+            if _colocate_pg is not None:
+                from ray.util.scheduling_strategies import (
+                    PlacementGroupSchedulingStrategy,
+                )
+
+                actor_options["scheduling_strategy"] = PlacementGroupSchedulingStrategy(
+                    placement_group=_colocate_pg,
+                    placement_group_bundle_index=r,
+                )
             actor = (
                 ray.remote(VerlWorkerActor)
-                .options(
-                    num_gpus=1,
-                    runtime_env=_runtime_env,
-                )
+                .options(**actor_options)
                 .remote(r, n_gpus, config_dict)
             )
             actors.append(actor)
@@ -1234,12 +1293,16 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         return self._lora_id_to_adapter_name[lora_id]
 
     async def create_adapter(self, lora_id: str, lora_config: types.LoraConfig) -> None:
+        self.logger.info("[DBG] create_adapter enter lora_id=%s", lora_id)
         async with self._lock:
+            self.logger.info("[DBG] create_adapter lock acquired")
             if self._world_size == 0 and self._worker is None and not self._actors:
                 await self.async_init()
             rank = getattr(lora_config, "rank", 8)
             if self._worker is not None:
+                self.logger.info("[DBG] allocate_slot via worker rank=%s", rank)
                 adapter_name = await asyncio.to_thread(self._worker.allocate_slot, rank)
+                self.logger.info("[DBG] allocate_slot done name=%s", adapter_name)
             elif self._actors:
                 import ray
 
@@ -1254,13 +1317,17 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             self._adapter_name_to_lora_id[adapter_name] = lora_id
 
     async def remove_adapter(self, lora_id: str) -> None:
+        self.logger.info("[DBG] remove_adapter enter lora_id=%s", lora_id)
         async with self._lock:
+            self.logger.info("[DBG] remove_adapter lock acquired lora_id=%s", lora_id)
             adapter_name = self._lora_id_to_adapter_name.pop(lora_id, None)
             if adapter_name:
                 self._adapter_name_to_lora_id.pop(adapter_name, None)
                 if self._worker is not None:
                     self._worker.release_slot(adapter_name)
+                    self.logger.info("[DBG] remove_adapter release_slot done, leave_train_mode...")
                     self._worker.leave_train_mode()
+                    self.logger.info("[DBG] remove_adapter leave_train_mode done")
                 elif self._actors:
                     import ray
 
@@ -1270,6 +1337,30 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                     await asyncio.to_thread(
                         ray.get, [a.leave_train_mode.remote() for a in self._actors]
                     )
+        self.logger.info("[DBG] remove_adapter done lora_id=%s", lora_id)
+
+    async def shutdown_backend(self) -> None:
+        """Destroy the Ray actors and release their GPU resources.
+
+        Used by the Serial-Async deployment mode when a tenant's time slice
+        ends and the training run is evicted: without killing the actors the
+        GPUs stay reserved forever and the next tenant can never be scheduled.
+        """
+        async with self._lock:
+            actors, self._actors = self._actors, []
+            self._world_size = 0
+            self._worker = None
+            self._lora_id_to_adapter_name.clear()
+            self._adapter_name_to_lora_id.clear()
+        if actors:
+            import ray
+
+            for actor in actors:
+                try:
+                    ray.kill(actor)
+                except Exception:
+                    pass
+            self.logger.info("FSDP backend actors killed, GPU resources released")
 
     async def forward(
         self,
@@ -1317,16 +1408,23 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             else:
                 eff_mb = max(len(data), 1)
             n_micro = max(len(data) // eff_mb, 1) if data else 0
+            # The NO_RAY worker is pinned to the last visible device; build the
+            # batch and run the worker on that exact device, not the calling
+            # thread's default (cuda:0 for most pool threads), otherwise inputs
+            # land on cuda:0 while the model sits on cuda:1.
+            dev_idx = max(torch.cuda.device_count() - 1, 0)
             td = await asyncio.to_thread(
-                _datum_list_to_tensordict, data, adapter_name, "cuda", eff_mb
+                _datum_list_to_tensordict, data, adapter_name, f"cuda:{dev_idx}", eff_mb
             )
-            out = await asyncio.to_thread(
-                self._worker.forward_backward,
-                adapter_name,
-                td,
-                verl_loss_fn,
-                not backward,
-            )
+
+            def _run_forward_backward() -> Dict[str, Any]:
+                torch.cuda.set_device(dev_idx)
+                return self._worker.forward_backward(
+                    adapter_name, td, verl_loss_fn, not backward
+                )
+
+            async with self._exec_lock:
+                out = await asyncio.to_thread(_run_forward_backward)
             metrics = {k: _to_scalar(v) for k, v in (out.get("metrics") or {}).items()}
             metrics["actor/num_micro_batches"] = float(n_micro)
             loss_fn_outputs = _fsdp_logprobs_to_loss_fn_outputs(out, data)
@@ -1399,13 +1497,19 @@ class FSDPTrainingBackend(BaseTrainingBackend):
     ) -> types.OptimStepResponse:
         adapter_name = self._get_adapter_name(lora_id)
         if self._worker is not None:
-            result = await asyncio.to_thread(
-                self._worker.optim_step,
-                adapter_name,
-                adam_params.learning_rate,
-                adam_params.weight_decay,
-                adam_params.grad_clip_norm,
-            )
+            dev_idx = max(torch.cuda.device_count() - 1, 0)
+
+            def _run_optim() -> Dict[str, Any]:
+                torch.cuda.set_device(dev_idx)
+                return self._worker.optim_step(
+                    adapter_name,
+                    adam_params.learning_rate,
+                    adam_params.weight_decay,
+                    adam_params.grad_clip_norm,
+                )
+
+            async with self._exec_lock:
+                result = await asyncio.to_thread(_run_optim)
         else:
             import ray
 
@@ -1432,7 +1536,14 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         adapter_name = self._get_adapter_name(lora_id)
         path = checkpoint_record.adapter_path
         if self._worker is not None:
-            await asyncio.to_thread(self._worker.save_checkpoint, adapter_name, path, optimizer)
+            dev_idx = max(torch.cuda.device_count() - 1, 0)
+
+            def _run_save() -> None:
+                torch.cuda.set_device(dev_idx)
+                self._worker.save_checkpoint(adapter_name, path, optimizer)
+
+            async with self._exec_lock:
+                await asyncio.to_thread(_run_save)
         else:
             import ray
 
@@ -1450,7 +1561,14 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         adapter_name = self._get_adapter_name(lora_id)
         path = checkpoint_record.adapter_path
         if self._worker is not None:
-            await asyncio.to_thread(self._worker.load_checkpoint, adapter_name, path, optimizer)
+            dev_idx = max(torch.cuda.device_count() - 1, 0)
+
+            def _run_load() -> None:
+                torch.cuda.set_device(dev_idx)
+                self._worker.load_checkpoint(adapter_name, path, optimizer)
+
+            async with self._exec_lock:
+                await asyncio.to_thread(_run_load)
         else:
             import ray
 

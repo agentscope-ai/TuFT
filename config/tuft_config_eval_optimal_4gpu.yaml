@@ -1,0 +1,49 @@
+# 4-GPU paper config: TuFT (1 flex + 3 fixed sampling replicas).
+checkpoint_dir: /root/tuft_local/checkpoints
+model_owner: local-user
+supported_models:
+- model_name: qwen3-4b
+  model_path: /mnt/cpfs/shared/checkpoints/qwen/qwen3/Qwen3-4B-Base
+  max_model_len: 8192
+  sampling_max_model_len: 8192
+  tensor_parallel_size: 1
+  micro_batch_size: 2
+  max_lora_rank: 16
+  max_loras: 56
+  temperature: 1.0
+  top_p: 1.0
+  top_k: -1
+  seed: 42
+  training_backend: flex
+  fixed_sampling_data_parallel_size: 3
+  sampling_standalone_gpu_memory_utilization: 0.9
+  sampling_memory_fraction: 0.35
+  sampling_warmup_at_init: true
+  sampling_partial_kv_cache_gb: 12.0
+  evaluation:
+    deployment_mode: optimal
+    l2_coalesce_max_hold_s: 0.05
+    rl_scheduler_enabled: true
+    rl_scheduler_replan_every_s: 30.0
+    rl_fast_loop_holds_enabled: true
+    sampling_pipeline_enabled: true
+    mock_corrector_enabled: false
+    slow_loop_enabled: true
+    slow_loop_conversion_mode: identity_tag
+    slow_loop_low_pressure_threshold: 0.35
+    slow_loop_high_pressure_threshold: 0.75
+    slow_loop_min_dwell_s: 60.0
+    flex_duty_cycle_enabled: false
+    flex_sampling_min_window_s: 2.0
+    flex_switch_backlog_threshold: 1
+    flex_duty_cycle_tick_s: 0.25
+    flex_duty_cycle_min_dwell_s: 1.0
+    flex_block_quiet_s: 1.5
+    flex_gap_gain_factor: 1.0
+authorized_users:
+  tml-tuft-dev-key: local-user
+persistence:
+  mode: DISABLE
+telemetry:
+  enabled: false
+  service_name: tuft

@@ -1,0 +1,32 @@
+# 4-GPU paper config: static disaggregation (1 training + 3 sampling).
+checkpoint_dir: /root/tuft_local/checkpoints
+model_owner: local-user
+supported_models:
+- model_name: qwen3-4b
+  model_path: /mnt/cpfs/shared/checkpoints/qwen/qwen3/Qwen3-4B-Base
+  max_model_len: 8192
+  sampling_max_model_len: 8192
+  tensor_parallel_size: 1
+  micro_batch_size: 2
+  max_lora_rank: 16
+  max_loras: 56
+  temperature: 1.0
+  top_p: 1.0
+  top_k: -1
+  seed: 42
+  data_parallel_size: 3
+  training_backend: fsdp
+  fsdp_num_gpus: 1
+  fsdp_rank_slots:
+    8: 16
+    16: 16
+  evaluation:
+    deployment_mode: static_disagg
+    mock_corrector_enabled: false
+authorized_users:
+  tml-tuft-dev-key: local-user
+persistence:
+  mode: DISABLE
+telemetry:
+  enabled: false
+  service_name: tuft

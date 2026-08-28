@@ -1,0 +1,52 @@
+backend:
+  type: switch_tinker
+  base_url: "http://127.0.0.1:10624"
+  api_key: "tml-tuft-dev-key"
+  base_model: "qwen3-0.6b-fsdp-vllm-colocate-smoke"
+  switch_scheduler:
+    policy: adaptive
+    sampling_min_window_s: 1.0
+    max_switch_overhead_fraction: 0.10
+    adaptive_growth_factor: 1.5
+    adaptive_window_s: 30.0
+    switch_to_training_latency_s: 0.05
+    switch_to_sampling_latency_s: 0.05
+
+tenants:
+  - id: "countdown-smoke-A"
+    task: countdown
+    request_rate: 3.0
+    buffer_size: 2
+    num_train_steps: 2
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 16
+    temperature: 0.9
+    async_sampling: false
+  - id: "countdown-smoke-B"
+    task: countdown
+    request_rate: 3.0
+    buffer_size: 2
+    num_train_steps: 2
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 16
+    temperature: 0.9
+    async_sampling: false
+
+evaluation:
+  eval_interval_steps: 0
+  eval_sample_size: 0
+  eval_temperature: 0.1
+
+logprob_collection:
+  enabled: false
+  dump_per_token: false
+
+request_arrival_logging:
+  enabled: true
+  output_path: "results/switch_tinker_gpu_smoke_requests.jsonl"
+  flush_every: 1
+
+output_path: "results/switch_tinker_gpu_smoke_results.json"
+seed: 42

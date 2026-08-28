@@ -10,10 +10,8 @@ import time
 from types import MethodType
 from typing import Any
 
-BENCH_ROOT = os.environ.get("TUFT_FLEX_BENCH_ROOT", "/mnt/nas/hanzhang.yhz/lora_rl_bench")
 TUFT_ROOT = os.environ.get("TUFT_FLEX_TUFT_ROOT", "/mnt/nas/hanzhang.yhz/flex_backend/TuFT")
 sys.path.insert(0, str(os.path.join(TUFT_ROOT, "src")))
-sys.path.insert(0, BENCH_ROOT)
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 os.environ.setdefault("VLLM_ALLOW_INSECURE_SERIALIZATION", "1")
 os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
@@ -27,8 +25,8 @@ from torch import nn
 from accelerate import init_empty_weights
 from transformers import AutoConfig, AutoModelForCausalLM
 
-from common.config import load_bench_config, load_model_spec
-from common.fused_torchtp_utils import (
+from flexgpu_release_runner import _run_vllm_flex
+from tuft.backends.flex.torchtp_training import (
     FusedGateUpLinear,
     FusedQKVLinear,
     FusedQKVLoRA,
@@ -38,14 +36,22 @@ from common.fused_torchtp_utils import (
     fused_mlp_forward,
     fused_torchtp_train_step,
     load_fused_torchtp_model,
+    load_tokenizer_for_spec,
+    make_synthetic_rl_batch,
+    resolve_flex_model_spec,
 )
-from common.model_utils import load_tokenizer
-from common.training_utils import make_synthetic_rl_batch
-from flexgpu_release_runner import _free_port, _run_vllm_flex  # pyright: ignore[reportAttributeAccessIssue]
 from tuft.backends.flex.torchtp_zero_copy import (
     create_fused_vllm_state_dict,
     tensor_to_cuda_ipc_descriptor,
 )
+
+
+def _free_port() -> int:
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("", 0))
+        return int(sock.getsockname()[1])
 
 
 def _cuda_snapshot() -> dict[str, float]:
@@ -303,14 +309,20 @@ def _materialize_remaining_meta_tensors(model: Any) -> dict[str, Any]:
     return {"materialized_meta_tensors": materialized, "examples": examples}
 
 
-def _apply_local_fused_lora(model: Any, bench: Any, tp_group: Any) -> list[Any]:
+def _apply_local_fused_lora(
+    model: Any,
+    *,
+    lora_rank: int = 8,
+    lora_alpha: int = 16,
+    tp_group: Any = None,
+) -> list[Any]:
     params = []
     for layer in model.model.layers:
         attn = layer.self_attn
         attn.qkv_proj = FusedQKVLoRA(
             attn.qkv_proj,
-            rank=bench.lora_rank,
-            alpha=bench.lora_alpha,
+            rank=lora_rank,
+            alpha=lora_alpha,
             q_out=attn.q_size,
             k_out=attn.kv_size,
             v_out=attn.kv_size,
@@ -320,14 +332,14 @@ def _apply_local_fused_lora(model: Any, bench: Any, tp_group: Any) -> list[Any]:
         o_out = attn.o_proj.weight.shape[0]
         attn.o_proj = RowwiseLoRALinear(
             attn.o_proj,
-            rank=bench.lora_rank,
-            alpha=bench.lora_alpha,
+            rank=lora_rank,
+            alpha=lora_alpha,
             local_in_features=o_local_in,
             out_features=o_out,
             tp_group=tp_group,
         )
         params.extend([param for param in attn.qkv_proj.parameters() if param.requires_grad])
-        params.extend([attn.o_proj.lora_A, attn.o_proj.lora_B])
+        params.extend([param for param in attn.o_proj.parameters() if param.requires_grad])
     return params
 
 
@@ -339,9 +351,8 @@ def _build_training_runtime(
     train_seq_len: int,
     keepalive_by_key: dict[str, torch.Tensor] | None,
 ) -> tuple[Any, Any, Any, Any, Any, Any, Any, Any, dict[str, Any]]:
-    spec = load_model_spec(model_name)
-    bench = load_bench_config()
-    tokenizer = load_tokenizer(spec)
+    spec = resolve_flex_model_spec(model_name)
+    tokenizer = load_tokenizer_for_spec(spec)
     load_start = time.perf_counter()
     if keepalive_by_key is None:
         model, tp_group, mesh = load_fused_torchtp_model(spec, rank, world_size)
@@ -367,16 +378,21 @@ def _build_training_runtime(
         alias_ms = (time.perf_counter() - alias_start) * 1000
         for param in model.parameters():
             param.requires_grad_(False)
-        lora_params = _apply_local_fused_lora(model, bench, tp_group)
+        lora_params = _apply_local_fused_lora(model, lora_rank=8, lora_alpha=16, tp_group=tp_group)
     else:
-        lora_params = apply_fused_torchtp_lora(model, bench, tp_group)
+        lora_params = apply_fused_torchtp_lora(
+            model,
+            lora_rank=8,
+            lora_alpha=16,
+            tp_group=tp_group,
+        )
     optimizer = torch.optim.AdamW(lora_params, lr=1e-4)
     batch = make_synthetic_rl_batch(
         tokenizer,
         train_batch,
         train_seq_len,
         device=torch.device(f"cuda:{rank}"),
-        seed=bench.seed,
+        seed=42,
     )
     metrics = {
         "load_ms": load_ms,
@@ -558,11 +574,21 @@ def _print_round_training(round_index: int, ready: list[dict[str, Any]]) -> dict
         "max_build_alloc_gb": max(
             float(msg["build_metrics"]["memory_after_build"]["allocated_gb"]) for msg in ready
         ),
+        "mean_build_load_ms": sum(
+            float(msg["build_metrics"].get("load_ms", 0.0)) for msg in ready
+        ) / max(len(ready), 1),
+        "mean_build_alias_ms": sum(
+            float(msg["build_metrics"].get("alias_ms", 0.0)) for msg in ready
+        ) / max(len(ready), 1),
     }
+    metrics["mean_s2t_ms"] = metrics["mean_build_load_ms"] + metrics["mean_build_alias_ms"]
     print(
         f"[round {round_index + 1}] training released: "
         f"train={metrics['mean_train_ms']:.1f}ms ipc={metrics['mean_ipc_desc_ms']:.2f}ms "
         f"release={metrics['mean_runtime_release_ms']:.2f}ms "
+        f"s2t={metrics['mean_s2t_ms']:.2f}ms "
+        f"build_load={metrics['mean_build_load_ms']:.2f}ms "
+        f"alias={metrics['mean_build_alias_ms']:.2f}ms "
         f"alloc_after_release_max={metrics['max_alloc_after_release_gb']:.2f}GB "
         f"free_after_release_min={metrics['min_free_after_release_gb']:.2f}GB "
         f"storage_stable={metrics['storage_stable']}",
@@ -593,13 +619,16 @@ def main() -> None:
     parser.add_argument("--max-tokens", type=int, default=128)
     parser.add_argument("--num-prompts", type=int, default=16)
     parser.add_argument("--sample-rounds", type=int, default=1)
+    parser.add_argument("--enforce-eager", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--disable-custom-all-reduce", action="store_true")
+    parser.add_argument("--disable-cudagraph", action="store_true")
     parser.add_argument("--release-mode", choices=["strict", "fast"], default="fast")
     parser.add_argument("--descriptor-mode", choices=["fresh", "reuse"], default="reuse")
     parser.add_argument("--verify-inject", action="store_true")
     parser.add_argument("--memory-breakdown", action="store_true")
     args = parser.parse_args()
 
-    spec = load_model_spec(args.model)
+    spec = resolve_flex_model_spec(args.model)
     ctx = mp.get_context("spawn")
     master_port = _free_port()
     print("=== FlexGPU Round-Trip True-Zero Benchmark ===", flush=True)
@@ -607,7 +636,9 @@ def main() -> None:
         f"  model={spec.name}, tp={args.tp_size}, rounds={args.rounds}, "
         f"train_batch={args.train_batch}, seq={args.train_seq_len}, "
         f"num_prompts={args.num_prompts}, max_tokens={args.max_tokens}, "
-        f"verify={args.verify_inject}",
+        f"verify={args.verify_inject}, enforce_eager={args.enforce_eager}, "
+        f"disable_custom_all_reduce={args.disable_custom_all_reduce}, "
+        f"disable_cudagraph={args.disable_cudagraph}",
         flush=True,
     )
 
@@ -649,6 +680,17 @@ def main() -> None:
                 sample_rounds=args.sample_rounds,
                 num_prompts=args.num_prompts,
                 inject_rounds=2,
+                enforce_eager=args.enforce_eager,
+                disable_custom_all_reduce=args.disable_custom_all_reduce,
+                disable_cudagraph=args.disable_cudagraph,
+                enable_sleep_mode=False,
+                pre_capture_alias=False,
+                post_alias_cudagraph_capture=False,
+                sleep_probe=False,
+                sleep_level=1,
+                wake_tags="",
+                flex_kv_cache_only_sleep=False,
+                flex_partial_kv_cache_gb=0.0,
                 verify_inject=args.verify_inject,
                 memory_breakdown=args.memory_breakdown,
             )
@@ -702,6 +744,7 @@ def main() -> None:
     for item in round_metrics:
         print(
             f"  round {item['round']}: train_ms={item['mean_train_ms']:.1f}, "
+            f"s2t_ms={item['mean_s2t_ms']:.2f}, "
             f"release_ms={item['mean_runtime_release_ms']:.2f}, "
             f"steady_t2s_ms={item['steady_training_to_sampling_ms']:.2f}, "
             f"sampling_tput={item['sampling_throughput']:.1f}, "

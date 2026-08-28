@@ -16,8 +16,10 @@ Run:
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from tinker import types
@@ -128,6 +130,85 @@ def test_fsdp_port_allocation_by_index():
     finally:
         if saved is not None:
             os.environ["TUFT_CPU_TEST"] = saved
+
+
+def test_colocate_rejects_multi_gpu_fsdp_and_invalid_fraction():
+    with pytest.raises(ValueError, match="fsdp_num_gpus == data_parallel_size"):
+        ModelConfig(
+            model_name="test",
+            model_path=Path("/tmp/model"),
+            max_model_len=1024,
+            training_backend="fsdp",
+            colocate=True,
+            fsdp_num_gpus=2,
+        )
+    # Valid colocate DP pairing: one training rank + one sampler per GPU.
+    config = ModelConfig(
+        model_name="test",
+        model_path=Path("/tmp/model"),
+        max_model_len=1024,
+        training_backend="fsdp",
+        colocate=True,
+        fsdp_num_gpus=2,
+        data_parallel_size=2,
+    )
+    assert config.colocate
+    with pytest.raises(ValueError, match="sampling_memory_fraction"):
+        ModelConfig(
+            model_name="test",
+            model_path=Path("/tmp/model"),
+            max_model_len=1024,
+            colocate=True,
+            sampling_memory_fraction=1.0,
+        )
+
+
+@pytest.mark.asyncio
+async def test_fsdp_colocate_actor_uses_training_gpu_fraction(monkeypatch):
+    """FSDP colocate should leave sampling_memory_fraction for vLLM."""
+    from tuft.backends.fsdp_training_backend import FSDPTrainingBackend
+
+    captured_num_gpus: list[float] = []
+
+    class FakeRemoteMethod:
+        def __init__(self, value=None):
+            self.value = value
+
+        def remote(self, *args, **kwargs):
+            return self.value
+
+    class FakeActor:
+        def __init__(self):
+            self.get_node_ip = FakeRemoteMethod("127.0.0.1")
+            self.init_dist = FakeRemoteMethod(None)
+            self.build_worker = FakeRemoteMethod(None)
+
+    class FakeRemoteClass:
+        def options(self, **kwargs):
+            captured_num_gpus.append(kwargs["num_gpus"])
+            return self
+
+        def remote(self, *args, **kwargs):
+            return FakeActor()
+
+    fake_ray = SimpleNamespace(remote=lambda _cls: FakeRemoteClass(), get=lambda value, timeout=None: value)
+    monkeypatch.setitem(sys.modules, "ray", fake_ray)
+    monkeypatch.delenv("TUFT_FSDP_NO_RAY", raising=False)
+
+    config = ModelConfig(
+        model_name="test",
+        model_path=Path("/tmp/model"),
+        max_model_len=1024,
+        training_backend="fsdp",
+        fsdp_num_gpus=1,
+        colocate=True,
+        sampling_memory_fraction=0.25,
+    )
+    backend = FSDPTrainingBackend(config)
+    await backend.async_init()
+
+    assert captured_num_gpus == [0.75]
+    assert backend._world_size == 1
 
 
 # -----------------------------------------------------------------------------

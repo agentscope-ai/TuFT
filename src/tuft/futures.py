@@ -38,6 +38,7 @@ _get_tracer = lambda: get_tracer("tuft.futures")  # noqa: E731
 QueueState = Literal["active", "paused_capacity", "paused_rate_limit"]
 
 OperationType = Literal[
+    "create_model",
     "forward",
     "forward_backward",
     "optim_step",
@@ -346,25 +347,32 @@ class FutureStore:
         self, request_id: str, payload: Any, operation_type: str | None = None
     ) -> None:
         """Mark a future as ready with the given payload."""
+        record = None
         async with self._lock:
             record = self._records.get(request_id)
-            if record is None:
-                return
-            record.payload = payload
-            record.status = "ready"
-            record.error = None
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._save_future, request_id)
-            record.event.set()
+            if record is not None:
+                record.payload = payload
+                record.status = "ready"
+                record.error = None
+        if record is None:
+            return
+        # Persist OUTSIDE the lock: holding self._lock across run_in_executor can
+        # deadlock create_ready_future/enqueue when the thread pool is busy.
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._save_future, request_id)
+        # Wake waiters only after the record is persisted: otherwise a caller
+        # can observe the result and shut down before the ready state reaches
+        # the store, restoring a stale "pending" record after restart.
+        record.event.set()
 
-            # Update metrics
-            get_metrics().futures_completed.add(
-                1,
-                {
-                    "operation_type": operation_type or record.operation_type or "unknown",
-                    "status": "ready",
-                },
-            )
+        # Update metrics
+        get_metrics().futures_completed.add(
+            1,
+            {
+                "operation_type": operation_type or record.operation_type or "unknown",
+                "status": "ready",
+            },
+        )
 
     async def _mark_failed(
         self,
@@ -373,24 +381,29 @@ class FutureStore:
         operation_type: str | None = None,
     ) -> None:
         """Mark a future as failed with the given error."""
+        record = None
         async with self._lock:
             record = self._records.get(request_id)
-            if record is None:
-                return
-            record.status = "failed"
-            record.error = failure
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(None, self._save_future, request_id)
-            record.event.set()
+            if record is not None:
+                record.status = "failed"
+                record.error = failure
+        if record is None:
+            return
+        # Persist OUTSIDE the lock (see _mark_ready): avoids deadlocking other
+        # FutureStore callers that are waiting on self._lock.
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._save_future, request_id)
+        # Wake waiters after persistence (see _mark_ready).
+        record.event.set()
 
-            # Update metrics
-            get_metrics().futures_completed.add(
-                1,
-                {
-                    "operation_type": operation_type or record.operation_type or "unknown",
-                    "status": "failed",
-                },
-            )
+        # Update metrics
+        get_metrics().futures_completed.add(
+            1,
+            {
+                "operation_type": operation_type or record.operation_type or "unknown",
+                "status": "failed",
+            },
+        )
 
     async def retrieve(
         self,

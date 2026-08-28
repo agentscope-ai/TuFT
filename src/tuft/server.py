@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import time
 from contextlib import asynccontextmanager
 from datetime import timezone
 from functools import partial
+from pathlib import Path
 from typing import Any, Callable, cast
 
 import httpx
@@ -37,6 +40,20 @@ from .telemetry import shutdown_telemetry
 logger = logging.getLogger(__name__)
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+def _dump_evaluation_metrics(server_state: ServerState) -> None:
+    """Persist server-side evaluation metrics next to the checkpoint dir."""
+    snapshot = server_state.evaluation_snapshot()
+    if not snapshot:
+        return
+    snapshot["dumped_at"] = time.time()
+    checkpoint_dir = server_state.config.checkpoint_dir
+    out_path = (checkpoint_dir or Path(".")) / "tuft_eval_metrics.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w") as f:
+        json.dump(snapshot, f, indent=2, default=str)
+    logger.info("Evaluation metrics dumped to %s", out_path)
 
 
 async def _get_user(
@@ -105,6 +122,10 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
             yield
         finally:
             logger.info("Server shutting down")
+            try:
+                _dump_evaluation_metrics(app.state.server_state)
+            except Exception:
+                logger.exception("Failed to dump evaluation metrics")
             await app.state.httpx_client.aclose()
             await app.state.server_state.future_store.shutdown()
             store = get_redis_store()
@@ -139,6 +160,11 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
     @app.get("/api/v1/healthz", response_model=types.HealthResponse)
     async def healthz() -> types.HealthResponse:
         return types.HealthResponse(status="ok")
+
+    @app.get("/api/v1/evaluation_metrics")
+    async def evaluation_metrics(state: ServerState = Depends(_get_state)):
+        """Server-side evaluation metrics (scheduler/corrector/pipeline stats)."""
+        return state.evaluation_snapshot()
 
     @app.get(
         "/api/v1/get_server_capabilities",
@@ -218,7 +244,8 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail="Missing LoRA config"
             )
-        try:
+
+        async def _operation() -> types.CreateModelResponse:
             training_record = await state.create_model(
                 session_id=request.session_id,
                 base_model=request.base_model,
@@ -226,21 +253,23 @@ def create_root_app(config: AppConfig | None = None) -> FastAPI:
                 model_owner=user.user_id,
                 user_metadata=request.user_metadata,
             )
-        except TuFTException as exc:
-            raise HTTPException(
-                status_code=exc.status_code,
-                detail=f"Failed to create model: {exc.detail}",
-            ) from exc
-        except Exception as exc:  # pylint: disable=broad-except
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to create model: {str(exc)}",
-            ) from exc
-        response = types.CreateModelResponse(model_id=training_record.training_run_id)
-        return await state.future_store.create_ready_future(
-            response,
-            model_id=training_record.training_run_id,
+            return types.CreateModelResponse(model_id=training_record.training_run_id)
+
+        # Enqueue rather than awaiting inline: under Serial-Async a create can wait
+        # for the previous tenant's entire slice, and holding the HTTP request open
+        # that long makes the client give up before the ready future is returned.
+        # As an enqueued future the client polls retrieve_future, which tolerates
+        # the wait exactly like forward/optim/sample do.
+        return await _queue_future(
+            _operation,
+            state,
             user_id=user.user_id,
+            operation_type="create_model",
+            operation_args={
+                "session_id": request.session_id,
+                "base_model": request.base_model,
+                "user_id": user.user_id,
+            },
         )
 
     @app.post(

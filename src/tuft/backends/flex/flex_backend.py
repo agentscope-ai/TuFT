@@ -86,6 +86,9 @@ class FlexBackend(BaseTrainingBackend, BaseSamplingBackend):  # pyright: ignore[
         self._last_transform_metrics: dict[str, float] = {}
         self._vllm_base_alias_ready = False
         self._transform_lock = asyncio.Lock()
+        # Cumulative switch accounting for the evaluation breakdown figure.
+        self._transform_count = 0
+        self._transform_total_ms = 0.0
 
     @property
     def mode(self) -> FlexBackendMode:
@@ -98,6 +101,17 @@ class FlexBackend(BaseTrainingBackend, BaseSamplingBackend):  # pyright: ignore[
     @property
     def last_transform_metrics(self) -> dict[str, float]:
         return dict(self._last_transform_metrics)
+
+    def switch_stats(self) -> dict[str, float]:
+        """Cumulative mode-switch count and total duration (breakdown figure)."""
+        return {
+            "flex_switches": float(self._transform_count),
+            "flex_switch_total_ms": float(self._transform_total_ms),
+        }
+
+    def _record_transform(self, metrics: dict[str, float]) -> None:
+        self._transform_count += 1
+        self._transform_total_ms += float(metrics.get("transform_ms", 0.0))
 
     async def async_init(self) -> None:
         pass
@@ -155,6 +169,7 @@ class FlexBackend(BaseTrainingBackend, BaseSamplingBackend):  # pyright: ignore[
             self._base_model_transformed_to_sampling = True
             self._vllm_base_alias_ready = zero_copy
             self._last_transform_metrics = metrics
+            self._record_transform(metrics)
             source_released = bool(metrics.get("source_released", 0.0))
             return TransformResult(
                 direction=TransformDirection.TRAINING_TO_SAMPLING,
@@ -204,6 +219,7 @@ class FlexBackend(BaseTrainingBackend, BaseSamplingBackend):  # pyright: ignore[
 
             self._mode = FlexBackendMode.TRAINING
             self._last_transform_metrics = metrics
+            self._record_transform(metrics)
             zero_copy = _zero_copy_from(transform_result) or self._vllm_base_alias_ready
             source_released = bool(metrics.get("source_released", 0.0))
             return TransformResult(

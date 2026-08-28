@@ -1,0 +1,166 @@
+backend:
+  type: tinker
+  base_url: "http://localhost:10610"
+  api_key: "tml-test-key"
+  base_model: "Qwen/Qwen3-4B"
+
+# ============================================================
+# Multi-task logprob collection for predictor training
+# 
+# Split:
+#   TRAIN tasks  : gsm8k, math, countdown, humaneval, mbpp
+#   HOLDOUT tasks: hotpotqa, triviaqa, ifeval
+#
+# Each task has two tenants (lora_rank 8 & 16) to capture
+# diverse logprob mismatch distributions.
+# sync_mode=true => staleness=0 per batch (clean signal).
+# ============================================================
+
+tenants:
+  # ── TRAIN: Math Reasoning ──────────────────────────────────
+  - id: "gsm8k-r8"
+    task: gsm8k
+    request_rate: 2.0
+    buffer_size: 8
+    num_train_steps: 80
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 768
+    temperature: 0.7
+    sync_mode: true
+
+  - id: "gsm8k-r16"
+    task: gsm8k
+    request_rate: 2.0
+    buffer_size: 8
+    num_train_steps: 80
+    lora_rank: 16
+    learning_rate: 1e-4
+    max_tokens: 768
+    temperature: 0.7
+    sync_mode: true
+
+  - id: "math-r8"
+    task: math
+    request_rate: 2.0
+    buffer_size: 8
+    num_train_steps: 80
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 1024
+    temperature: 0.7
+    sync_mode: true
+
+  - id: "math-r16"
+    task: math
+    request_rate: 2.0
+    buffer_size: 8
+    num_train_steps: 80
+    lora_rank: 16
+    learning_rate: 1e-4
+    max_tokens: 1024
+    temperature: 0.7
+    sync_mode: true
+
+  - id: "countdown-r8"
+    task: countdown
+    request_rate: 2.0
+    buffer_size: 8
+    num_train_steps: 80
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 256
+    temperature: 0.9
+    sync_mode: true
+
+  - id: "countdown-r16"
+    task: countdown
+    request_rate: 2.0
+    buffer_size: 8
+    num_train_steps: 80
+    lora_rank: 16
+    learning_rate: 1e-4
+    max_tokens: 256
+    temperature: 0.9
+    sync_mode: true
+
+  # ── TRAIN: Code Generation ─────────────────────────────────
+  - id: "humaneval-r8"
+    task: humaneval
+    request_rate: 2.0
+    buffer_size: 8
+    num_train_steps: 80
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 512
+    temperature: 0.7
+    sync_mode: true
+
+  - id: "humaneval-r16"
+    task: humaneval
+    request_rate: 2.0
+    buffer_size: 8
+    num_train_steps: 80
+    lora_rank: 16
+    learning_rate: 1e-4
+    max_tokens: 512
+    temperature: 0.7
+    sync_mode: true
+
+  - id: "mbpp-r8"
+    task: mbpp
+    request_rate: 2.0
+    buffer_size: 8
+    num_train_steps: 80
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 512
+    temperature: 0.7
+    sync_mode: true
+
+  - id: "mbpp-r16"
+    task: mbpp
+    request_rate: 2.0
+    buffer_size: 8
+    num_train_steps: 80
+    lora_rank: 16
+    learning_rate: 1e-4
+    max_tokens: 512
+    temperature: 0.7
+    sync_mode: true
+
+  # ── HOLDOUT: Instruction Following ────────────────────────
+  - id: "ifeval-r8"
+    task: ifeval
+    request_rate: 2.0
+    buffer_size: 8
+    num_train_steps: 80
+    lora_rank: 8
+    learning_rate: 1e-4
+    max_tokens: 1024
+    temperature: 0.7
+    sync_mode: true
+
+  - id: "ifeval-r16"
+    task: ifeval
+    request_rate: 2.0
+    buffer_size: 8
+    num_train_steps: 80
+    lora_rank: 16
+    learning_rate: 1e-4
+    max_tokens: 1024
+    temperature: 0.7
+    sync_mode: true
+
+evaluation:
+  eval_interval_steps: 0   # 不需要 eval，只采集 logprob
+  eval_sample_size: 0
+  eval_temperature: 0.1
+
+logprob_collection:
+  enabled: true
+  dump_per_token: true
+  output_path: "logprobs/multitask_logprobs.jsonl"
+
+output_path: "results/multitask_logprobs.json"
+seed: 42

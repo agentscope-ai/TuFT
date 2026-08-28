@@ -14,7 +14,7 @@ import pytest
 pytestmark = [pytest.mark.gpu, pytest.mark.integration]
 
 
-BENCH_ROOT = Path(os.getenv("TUFT_FLEX_BENCH_ROOT", "/mnt/nas/hanzhang.yhz/lora_rl_bench"))
+TUFT_ROOT = Path(__file__).resolve().parents[1]
 QWEN3_ROOT = Path(os.getenv("TUFT_QWEN3_MODEL_ROOT", "/mnt/cpfs/shared/checkpoints/qwen/qwen3"))
 MODEL_CASES = [
     pytest.param("qwen3-4b", QWEN3_ROOT / "Qwen3-4B-Base", id="qwen3-4b"),
@@ -145,7 +145,7 @@ def _run_fused_benchmark(
     ]
     completed = subprocess.run(
         command,
-        cwd=str(BENCH_ROOT),
+        cwd=str(TUFT_ROOT),
         env=env,
         text=True,
         capture_output=True,
@@ -277,7 +277,7 @@ def test_fused_torchtp_vllm_roundtrip_gpu_benchmark(
     ]
     completed = subprocess.run(
         command,
-        cwd=str(BENCH_ROOT),
+        cwd=str(TUFT_ROOT),
         env=env,
         text=True,
         capture_output=True,

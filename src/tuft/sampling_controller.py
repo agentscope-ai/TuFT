@@ -69,6 +69,9 @@ class SamplingSessionRecord(BaseModel):
     base_model: str
     user_id: str
     model_path: str | None = None
+    # Training run whose checkpoint seeded this session (None for base-model
+    # sessions). Lets evaluation gates map a sample back to its tenant.
+    training_run_id: str | None = None
     session_seq_id: int
     last_seq_id: int = -1
     history: list[SamplingHistoryEntry] = Field(default_factory=list)
@@ -82,8 +85,13 @@ class SamplingController:
 
     REDIS_KEY_PREFIX = "sampling_session"
 
-    def __init__(self, config: AppConfig) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        shared_backends: Dict[str, BaseSamplingBackend] | None = None,
+    ) -> None:
         self.config = config
+        self._shared_backends = shared_backends or {}
         self.sampling_sessions: Dict[str, SamplingSessionRecord] = {}
         self._base_backends: Dict[str, BaseSamplingBackend] = self._create_backends(
             config.supported_models
@@ -174,6 +182,9 @@ class SamplingController:
     def _create_backends(self, model_configs: List[ModelConfig]) -> Dict[str, BaseSamplingBackend]:
         backends: Dict[str, BaseSamplingBackend] = {}
         for config in model_configs:
+            if config.model_name in self._shared_backends:
+                backends[config.model_name] = self._shared_backends[config.model_name]
+                continue
             backends[config.model_name] = BaseSamplingBackend.create_backend(
                 config, worker_venv_path=self.config.worker_venv_path
             )
@@ -190,6 +201,7 @@ class SamplingController:
     ) -> str:
         base_model_ref: str | None = None
         adapter_path: Path | None = None
+        source_training_run_id: str | None = None
         sampling_session_id = str(uuid.uuid4())
 
         with _get_tracer().start_as_current_span(
@@ -225,10 +237,16 @@ class SamplingController:
                     if base_model_ref not in self._base_backends:
                         raise UnknownModelException(model_name=base_model_ref)
                     adapter_path = parsed_checkpoint.adapter_path
+                    source_training_run_id = parsed_checkpoint.training_run_id
                     sampling_backend = self._base_backends[base_model_ref]
                     await sampling_backend.add_adapter(
                         lora_id=sampling_session_id, adapter_path=adapter_path
                     )
+                    # Let the L1/L2/L3 pipeline resolve this sampling key back to
+                    # the training run so adapter versions are visible to it.
+                    _alias = getattr(sampling_backend, "notify_adapter_alias", None)
+                    if _alias is not None and source_training_run_id:
+                        _alias(sampling_session_id, source_training_run_id)
                     # TODO: remove adapter when session is deleted
                 elif base_model:
                     base_model_ref = base_model
@@ -243,6 +261,7 @@ class SamplingController:
                     model_id=sampling_session_id,
                     base_model=base_model_ref,
                     model_path=str(adapter_path) if adapter_path else None,
+                    training_run_id=source_training_run_id,
                     session_seq_id=session_seq_id,
                 )
                 loop = asyncio.get_event_loop()
