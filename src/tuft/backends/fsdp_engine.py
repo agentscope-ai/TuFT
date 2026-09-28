@@ -344,18 +344,27 @@ def forward_backward(
     forward_only: bool = False,
     client_keys: list[str] | None = None,
     replicated: bool = False,
+    num_micro_batches: int | None = None,
 ) -> dict[str, Any]:
     """Run contiguous micro-batches while preserving summed gradient accumulation.
 
     In replicated mode every rank receives the full request, so FSDP's gradient
     average needs no world-size compensation. This keeps small requests active
     on every rank without counting their gradients once per replica.
+
+    Distributed callers supply the same num_micro_batches to every rank. A
+    rank with fewer real micro-batches runs zero-loss padding rounds, keeping
+    collective counts equal without expanding its configured micro-batch size.
     """
 
     if not data:
         return {"model_output": {"log_probs": []}, "metrics": {}}
     if micro_batch_size <= 0:
         raise ValueError(f"micro_batch_size must be positive, got {micro_batch_size}")
+    real_batches = (len(data) + micro_batch_size - 1) // micro_batch_size
+    rounds = real_batches if num_micro_batches is None else num_micro_batches
+    if rounds < real_batches:
+        raise ValueError("num_micro_batches must cover every local datum")
 
     device = next(module.parameters()).device
     loss_callable = get_loss_fn(loss_fn_name)
@@ -376,8 +385,15 @@ def forward_backward(
 
     grad_context = torch.no_grad() if forward_only else nullcontext()
     with grad_context:
-        for start in range(0, len(data), micro_batch_size):
+        for round_index in range(rounds):
+            start = round_index * micro_batch_size
+            padding_round = start >= len(data)
             micro_data = data[start : start + micro_batch_size]
+            if padding_round:
+                # Keep a real model graph for FSDP's forward/backward hooks.
+                # One repeated datum bounds padding memory; it contributes
+                # neither loss, metrics nor a duplicate result to the request.
+                micro_data = data[-1:]
             batch = _prepare_micro_batch(micro_data, device)
             autocast = torch.autocast(
                 device_type="cuda",
@@ -400,14 +416,18 @@ def forward_backward(
                     logits = logits / config["temperature"]
                 target_logprobs = _compute_target_logprobs(logits, batch.labels)
 
-            loss_inputs = _prepare_loss_fn_inputs(
-                micro_data,
-                target_logprobs,
-                loss_fn_name,
-                prepared_target_tokens=batch.labels,
-                client_keys=client_keys,
-            )
-            loss, metrics = loss_callable(loss_inputs, config)
+            if padding_round:
+                loss = target_logprobs.sum() * 0
+                metrics = {}
+            else:
+                loss_inputs = _prepare_loss_fn_inputs(
+                    micro_data,
+                    target_logprobs,
+                    loss_fn_name,
+                    prepared_target_tokens=batch.labels,
+                    client_keys=client_keys,
+                )
+                loss, metrics = loss_callable(loss_inputs, config)
             if not forward_only:
                 # FSDP2 `fully_shard` averages gradients across ranks during the
                 # reduce-scatter, but our loss functions are sum-reductions. Without
@@ -420,10 +440,12 @@ def forward_backward(
                     (loss * world_size).backward()
                 else:
                     loss.backward()
-            metric_list.append(metrics)
-            per_sample_logprobs.extend(
-                target_logprobs[row, :length].detach() for row, length in enumerate(batch.lengths)
-            )
+            if not padding_round:
+                metric_list.append(metrics)
+                per_sample_logprobs.extend(
+                    target_logprobs[row, :length].detach()
+                    for row, length in enumerate(batch.lengths)
+                )
 
     return {
         "model_output": {"log_probs": per_sample_logprobs},

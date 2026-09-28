@@ -1413,10 +1413,11 @@ def test_shard_list_batch_order_contract_with_variable_length_data():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("batch_size", [0, 1, 3, 4, 7])
+@pytest.mark.parametrize("batch_size", [0, 1, 3, 4, 7, 33])
 @pytest.mark.parametrize("backward", [False, True])
+@pytest.mark.parametrize("micro_batch_size", [1, 4])
 async def test_small_requests_replicate_without_duplicating_outputs_or_metrics(
-    monkeypatch, batch_size, backward
+    monkeypatch, batch_size, backward, micro_batch_size
 ):
     """Every nonempty request activates all ranks and returns one result per datum."""
     from types import SimpleNamespace
@@ -1431,12 +1432,16 @@ async def test_small_requests_replicate_without_duplicating_outputs_or_metrics(
         max_model_len=1024,
         training_backend="fsdp",
         fsdp_num_gpus=4,
+        micro_batch_size=micro_batch_size,
     )
     backend = FSDPTrainingBackend(config)
     backend._worker = None
     calls = []
 
-    def remote(data, adapter, loss_fn, config, forward_only, mb, keys, replicated):
+    def remote(data, adapter, loss_fn, config, forward_only, mb, keys, replicated, rounds):
+        assert mb == micro_batch_size
+        shard_size = batch_size if batch_size < 4 else (batch_size + 3) // 4
+        assert rounds == (shard_size + mb - 1) // mb
         calls.append((data, forward_only, replicated))
         return {
             "metrics": {"loss:sum": float(len(data)), "test:mean": 2.0},
@@ -1475,8 +1480,9 @@ async def test_small_requests_replicate_without_duplicating_outputs_or_metrics(
     assert output.metrics == {"loss:sum": float(batch_size), "test:mean": 2.0}
 
 
-@pytest.mark.parametrize("batch_size", [1, 3, 4, 7])
-def test_small_request_gradient_scale_matches_full_batch(monkeypatch, batch_size):
+@pytest.mark.parametrize("batch_size", [1, 3, 4, 7, 9, 33])
+@pytest.mark.parametrize("micro_batch_size", [1, 2, 4])
+def test_small_request_gradient_scale_matches_full_batch(monkeypatch, batch_size, micro_batch_size):
     """Simulate FSDP's gradient average without needing GPUs or a process group."""
     import copy
     from types import SimpleNamespace
@@ -1490,28 +1496,67 @@ def test_small_request_gradient_scale_matches_full_batch(monkeypatch, batch_size
         def __init__(self):
             super().__init__()
             self.table = torch.nn.Embedding(12, 12)
+            self.batch_sizes = []
 
         def forward(self, input_ids, **_kwargs):
+            self.batch_sizes.append(input_ids.shape[0])
             return SimpleNamespace(logits=self.table(input_ids))
 
     torch.manual_seed(7)
     model = TinyModel()
     data = [
         types.Datum(
-            model_input=types.ModelInput.from_ints([i, 8, 9]),
+            model_input=types.ModelInput.from_ints([i % 8, 8, 9]),
             loss_fn_inputs={"weights": types.TensorData(data=[1, 1, 0], dtype="float32")},
         )
         for i in range(batch_size)
     ]
     reference = copy.deepcopy(model)
     monkeypatch.setattr(fsdp_engine, "_fsdp_world_size", lambda: 1)
-    fsdp_engine.forward_backward(reference, data, "cross_entropy", None, 1)
+    expected = fsdp_engine.forward_backward(reference, data, "cross_entropy", None, 1)
     replicated = batch_size < 4
     shards = [data] * 4 if replicated else _shard_list(data, 4)
+    rounds = max((len(shard) + micro_batch_size - 1) // micro_batch_size for shard in shards)
     monkeypatch.setattr(fsdp_engine, "_fsdp_world_size", lambda: 4)
     gradients = []
+    loss_sum = 0.0
     for shard in shards:
         rank = copy.deepcopy(model)
-        fsdp_engine.forward_backward(rank, shard, "cross_entropy", None, 1, replicated=replicated)
+        backward_calls = []
+        rank.table.weight.register_hook(backward_calls.append)
+        output = fsdp_engine.forward_backward(
+            rank,
+            shard,
+            "cross_entropy",
+            None,
+            micro_batch_size,
+            replicated=replicated,
+            num_micro_batches=rounds,
+        )
+        assert len(rank.batch_sizes) == rounds
+        assert max(rank.batch_sizes) <= micro_batch_size
+        assert len(backward_calls) == rounds
+        real_rounds = (len(shard) + micro_batch_size - 1) // micro_batch_size
+        assert all(torch.count_nonzero(grad) == 0 for grad in backward_calls[real_rounds:])
+        assert len(output["model_output"]["log_probs"]) == len(shard)
+        loss_sum += output["metrics"]["loss:sum"]
         gradients.append(rank.table.weight.grad)
     torch.testing.assert_close(torch.stack(gradients).mean(0), reference.table.weight.grad)
+    assert loss_sum / (4 if replicated else 1) == pytest.approx(expected["metrics"]["loss:sum"])
+
+
+def test_insufficient_micro_batch_rounds_fail_before_model_execution():
+    import torch
+
+    from tuft.backends.fsdp_engine import forward_backward
+
+    model = torch.nn.Embedding(12, 12)
+    data = [
+        types.Datum(
+            model_input=types.ModelInput.from_ints([1, 2]),
+            loss_fn_inputs={"weights": types.TensorData(data=[1, 0], dtype="float32")},
+        )
+    ] * 3
+    with pytest.raises(ValueError, match="cover every local datum"):
+        forward_backward(model, data, "cross_entropy", None, 1, num_micro_batches=2)
+    assert model.weight.grad is None
