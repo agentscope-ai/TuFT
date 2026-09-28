@@ -378,7 +378,7 @@ async def test_training_seq_id_enforced(request, tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_training_seq_id_gap_fast_forward(request, tmp_path) -> None:
+async def test_training_seq_id_skips_only_confirmed_failure(request, tmp_path) -> None:
     use_gpu = request.config.getoption("--gpu")
     state = await _build_state(tmp_path, use_gpu)
     session_id = _create_session(state)
@@ -414,17 +414,25 @@ async def test_training_seq_id_gap_fast_forward(request, tmp_path) -> None:
     with pytest.raises(LossFunctionMissingInputException):
         await run(2, loss_fn="importance_sampling")
 
-    # The client abandons seq 2 and sends seq 4: a gap must be accepted
-    # (fast-forward), not 409 forever like a duplicate would.
-    await run(4)
-    assert state.training.training_runs[training.training_run_id].next_seq_id == 5
+    record = state.training.training_runs[training.training_run_id]
+    assert record.failed_seq_id == 2
 
-    # Stale seq ids that were already passed are still a conflict.
+    # Failure of seq 2 says nothing about seq 3. Do not skip both slots.
     with pytest.raises(SequenceConflictException) as excinfo:
-        await run(3)
-    assert excinfo.value.detail == "Sequence conflict: expected 5, got 3."
+        await run(4)
+    assert excinfo.value.detail == "Sequence conflict: expected 2, got 4."
+    assert record.next_seq_id == 2
+    assert record.failed_seq_id == 2
 
-    await run(5)
+    # The client can abandon the known failed slot and send its successor.
+    await run(3)
+    assert record.next_seq_id == 4
+    assert record.failed_seq_id is None
+
+    with pytest.raises(SequenceConflictException) as excinfo:
+        await run(2)
+    assert excinfo.value.detail == "Sequence conflict: expected 4, got 2."
+    await run(4)
 
 
 @pytest.mark.asyncio
