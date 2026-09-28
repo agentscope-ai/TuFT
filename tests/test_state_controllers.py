@@ -378,6 +378,64 @@ async def test_training_seq_id_enforced(request, tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_training_seq_id_skips_only_confirmed_failure(request, tmp_path) -> None:
+    use_gpu = request.config.getoption("--gpu")
+    state = await _build_state(tmp_path, use_gpu)
+    session_id = _create_session(state)
+    training = await state.create_model(
+        session_id,
+        base_model="Qwen/Qwen3-0.6B",
+        lora_config=types.LoraConfig(rank=4),
+        model_owner="tester",
+        user_metadata=None,
+    )
+    datum = types.Datum(
+        model_input=types.ModelInput.from_ints([11, 12, 13]),
+        loss_fn_inputs={
+            "target_tokens": types.TensorData(data=[21, 22, 23], dtype="int64", shape=[3]),
+            "weights": types.TensorData(data=[1.0, 1.0, 1.0], dtype="float32", shape=[3]),
+        },
+    )
+
+    async def run(seq_id: int, loss_fn: types.LossFnType = "cross_entropy") -> None:
+        config = {"raise_missing_input": 1.0} if loss_fn == "importance_sampling" else None
+        await state.run_forward(
+            training.training_run_id,
+            user_id="tester",
+            data=[datum],
+            loss_fn=loss_fn,
+            loss_fn_config=config,
+            seq_id=seq_id,
+            backward=False,
+        )
+
+    # seq 1 consumed; seq 2 fails without consuming its slot.
+    await run(1)
+    with pytest.raises(LossFunctionMissingInputException):
+        await run(2, loss_fn="importance_sampling")
+
+    record = state.training.training_runs[training.training_run_id]
+    assert record.failed_seq_id == 2
+
+    # Failure of seq 2 says nothing about seq 3. Do not skip both slots.
+    with pytest.raises(SequenceConflictException) as excinfo:
+        await run(4)
+    assert excinfo.value.detail == "Sequence conflict: expected 2, got 4."
+    assert record.next_seq_id == 2
+    assert record.failed_seq_id == 2
+
+    # The client can abandon the known failed slot and send its successor.
+    await run(3)
+    assert record.next_seq_id == 4
+    assert record.failed_seq_id is None
+
+    with pytest.raises(SequenceConflictException) as excinfo:
+        await run(2)
+    assert excinfo.value.detail == "Sequence conflict: expected 4, got 2."
+    await run(4)
+
+
+@pytest.mark.asyncio
 async def test_training_user_mismatch(request, tmp_path) -> None:
     """Test that training operations are restricted to the correct user."""
     use_gpu = request.config.getoption("--gpu")

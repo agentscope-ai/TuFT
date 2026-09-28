@@ -95,6 +95,8 @@ class TrainingRunRecord(BaseModel):
     next_sampler_checkpoint: int = 1
     corrupted: bool = False
     next_seq_id: int = 1
+    # A failed slot may be retried or explicitly abandoned by sending its successor.
+    failed_seq_id: int | None = None
     # Runtime-only fields, excluded from serialization
     backend: BaseTrainingBackend | None = Field(default=None, exclude=True)
     # Private attribute for execution lock (not a model field)
@@ -384,17 +386,37 @@ class TrainingController:
         operation: Callable[[], Awaitable[T]],
     ) -> T:
         async with record._execution_lock:
+            loop = asyncio.get_running_loop()
             if seq_id is not None:
                 expected = record.next_seq_id
                 if seq_id != expected:
-                    raise SequenceConflictException(expected=expected, got=seq_id)
+                    # A gap is safe only when the one skipped operation is known
+                    # to have failed. Unknown or merely delayed requests must
+                    # still execute before their successors.
+                    if seq_id != expected + 1 or record.failed_seq_id != expected:
+                        raise SequenceConflictException(expected=expected, got=seq_id)
+                    record.next_seq_id = seq_id
+                if record.failed_seq_id is not None:
+                    # Clear durable failure evidence before a retry/new operation
+                    # starts: cancellation does not prove that operation failed.
+                    record.failed_seq_id = None
+                    await loop.run_in_executor(
+                        None, self._save_training_run, record.training_run_id
+                    )
 
-            result = await operation()
+            try:
+                result = await operation()
+            except Exception:
+                if seq_id is not None:
+                    record.failed_seq_id = seq_id
+                    await loop.run_in_executor(
+                        None, self._save_training_run, record.training_run_id
+                    )
+                raise
 
             if seq_id is not None:
                 record.next_seq_id += 1
-            # Save the updated next_seq_id to Redis
-            loop = asyncio.get_event_loop()
+            # Save the updated sequence state to Redis.
             await loop.run_in_executor(None, self._save_training_run, record.training_run_id)
             return result
 

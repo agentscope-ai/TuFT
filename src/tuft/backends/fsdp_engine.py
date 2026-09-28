@@ -14,6 +14,7 @@ from typing import Any
 
 import torch
 from tinker import types
+from torch.autograd.function import once_differentiable
 from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoConfig, AutoModelForCausalLM
 
@@ -142,19 +143,64 @@ def _prepare_micro_batch(data: list[types.Datum], device: torch.device | str) ->
     )
 
 
+# Bound temporary FP32 tensors by vocabulary elements, not only token count.
+_LOGPROB_CHUNK_ELEMENTS = 4 * 1024 * 1024
+
+
+class _TargetLogprobs(torch.autograd.Function):
+    """Recompute softmax in backward instead of retaining FP32 vocabulary tensors."""
+
+    @staticmethod
+    def forward(ctx: Any, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        dtype = torch.float64 if logits.dtype == torch.float64 else torch.float32
+        chunk_size = max(1, _LOGPROB_CHUNK_ELEMENTS // logits.size(-1))
+        flat_logits = logits.reshape(-1, logits.size(-1))
+        flat_labels = labels.reshape(-1)
+        out = torch.empty(flat_labels.shape, dtype=dtype, device=logits.device)
+        # Custom Function.forward runs without autograd recording, so no chunk's
+        # FP32 log-softmax is retained for backward. Explicit dtype also keeps
+        # the reduction in FP32 when called inside or outside autocast.
+        for start in range(0, flat_logits.size(0), chunk_size):
+            end = start + chunk_size
+            logprobs = torch.log_softmax(flat_logits[start:end], dim=-1, dtype=dtype)
+            out[start:end] = logprobs.gather(-1, flat_labels[start:end, None]).squeeze(-1)
+            del logprobs
+        ctx.save_for_backward(logits, labels)
+        ctx.chunk_size = chunk_size
+        return out.view(labels.shape)
+
+    @staticmethod
+    @once_differentiable
+    def backward(  # pyright: ignore[reportIncompatibleMethodOverride]
+        ctx: Any, grad_output: torch.Tensor
+    ) -> tuple[torch.Tensor, None]:
+        logits, labels = ctx.saved_tensors
+        dtype = torch.float64 if logits.dtype == torch.float64 else torch.float32
+        flat_logits = logits.reshape(-1, logits.size(-1))
+        flat_labels = labels.reshape(-1)
+        flat_grad_output = grad_output.reshape(-1)
+        # The full input gradient is unavoidable, but stays in the input dtype.
+        # Only one vocabulary chunk is promoted to FP32 at a time.
+        grad_logits = torch.empty(flat_logits.shape, dtype=logits.dtype, device=logits.device)
+        for start in range(0, flat_logits.size(0), ctx.chunk_size):
+            end = start + ctx.chunk_size
+            grad = torch.softmax(flat_logits[start:end], dim=-1, dtype=dtype)
+            upstream = flat_grad_output[start:end, None].to(dtype)
+            grad.neg_().mul_(upstream)
+            grad.scatter_add_(-1, flat_labels[start:end, None], upstream)
+            grad_logits[start:end] = grad
+            del grad, upstream
+        return grad_logits.view(logits.shape), None
+
+
 def _compute_target_logprobs(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-    """Gather label log-probabilities without materializing a full fp32 log-softmax."""
+    """Compute FP32 target logprobs with bounded workspace and first-order gradients.
 
-    if logits.dtype in (torch.float32, torch.float64):
-        label_logits = torch.gather(logits, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
-        logsumexp = torch.stack([torch.logsumexp(row, dim=-1) for row in logits])
-        return label_logits - logsumexp
-
-    rows = []
-    for row_logits, row_labels in zip(logits, labels, strict=True):
-        row_logprobs = torch.nn.functional.log_softmax(row_logits, dim=-1)
-        rows.append(row_logprobs.gather(dim=-1, index=row_labels.unsqueeze(-1)).squeeze(-1))
-    return torch.stack(rows)
+    FP64 inputs retain their precision. FP16/BF16 inputs are promoted per chunk;
+    backward recomputes probabilities so promoted chunks do not accumulate in
+    the autograd graph. Only the original logits and labels are saved.
+    """
+    return _TargetLogprobs.apply(logits, labels)
 
 
 def _datum_field(
