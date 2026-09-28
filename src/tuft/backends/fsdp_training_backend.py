@@ -627,6 +627,7 @@ class MultiAdapterFSDPWorker:
         forward_only: bool = False,
         client_keys: list[str] | None = None,
         replicated: bool = False,
+        num_micro_batches: int | None = None,
     ) -> Dict[str, Any]:
         """Run forward/backward without stepping or clearing accumulated gradients.
 
@@ -658,6 +659,7 @@ class MultiAdapterFSDPWorker:
             forward_only=forward_only,
             client_keys=client_keys,
             replicated=replicated,
+            num_micro_batches=num_micro_batches,
         )
 
     def optim_step(
@@ -984,6 +986,7 @@ class FSDPWorkerActor:
         micro_batch_size: Optional[int] = None,
         client_keys: Optional[list[str]] = None,
         replicated: bool = False,
+        num_micro_batches: int | None = None,
     ) -> Dict[str, Any]:
         """Run forward (+backward) on this actor's data shard.
 
@@ -1006,13 +1009,8 @@ class FSDPWorkerActor:
                 "loss_fn_outputs": [],
             }
 
-        # Keep a single micro-batch when the configured size does not divide
-        # the shard. The backend applies the same fallback on every rank.
-        if micro_batch_size and micro_batch_size > 0 and len(data) % micro_batch_size == 0:
-            mb = micro_batch_size
-        else:
-            mb = len(data)
-        n_micro = len(data) // mb
+        mb = micro_batch_size if micro_batch_size and micro_batch_size > 0 else len(data)
+        n_micro = (len(data) + mb - 1) // mb
         out = self._worker.forward_backward(
             adapter_name,
             data,
@@ -1022,9 +1020,10 @@ class FSDPWorkerActor:
             forward_only=forward_only,
             client_keys=client_keys,
             replicated=replicated,
+            num_micro_batches=num_micro_batches,
         )
         metrics = dict(out.get("metrics") or {})
-        metrics["actor/num_micro_batches"] = float(n_micro)
+        metrics["actor/num_micro_batches"] = float(num_micro_batches or n_micro)
         all_outputs = _fsdp_logprobs_to_loss_fn_outputs(out, data)
 
         return {
@@ -1426,11 +1425,8 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             # safe because each actor serializes its own method calls, but here two
             # runs' asyncio.to_thread calls could otherwise race on set_adapter.
             async with self._lock:
-                if mb > 0 and len(data) % mb == 0:
-                    eff_mb = mb
-                else:
-                    eff_mb = max(len(data), 1)
-                n_micro = max(len(data) // eff_mb, 1) if data else 0
+                eff_mb = mb if mb > 0 else max(len(data), 1)
+                n_micro = (len(data) + eff_mb - 1) // eff_mb
                 out = await asyncio.to_thread(
                     self._worker.forward_backward,
                     adapter_name,
@@ -1461,18 +1457,11 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             replicated = len(data) < n_actors
             shards = [data] * n_actors if replicated else _shard_list(data, n_actors)
 
-            # In multi-actor mode every actor must issue the same number of
-            # micro-batches, otherwise FSDP-2 NCCL collectives deadlock
-            # (one rank finishes early while others are still iterating).
-            # Only use micro-batching when mb evenly divides ALL shard sizes;
-            # otherwise fall back to single-batch per shard (mb=None).
-            if mb > 0 and all(len(s) % mb == 0 for s in shards if s):
-                # Still need same micro-batch count: check that all non-empty
-                # shards produce the same n_micro.
-                micro_counts = {len(s) // mb for s in shards if s}
-                eff_mb = mb if len(micro_counts) == 1 else None
-            else:
-                eff_mb = None
+            # Bound every real micro-batch while keeping collective rounds
+            # symmetric. Short ranks pad with zero-loss model passes instead
+            # of forcing all ranks to materialize their entire shards at once.
+            eff_mb = mb if mb > 0 else max(map(len, shards))
+            n_micro = max((len(shard) + eff_mb - 1) // eff_mb for shard in shards)
 
             self.logger.info(
                 "FSDP multi-actor forward: batch=%d actors=%d mb=%s eff_mb=%s",
@@ -1497,6 +1486,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                         eff_mb,
                         client_keys,
                         replicated,
+                        n_micro,
                     )
                 )
                 ref_weights.append(len(shard))
