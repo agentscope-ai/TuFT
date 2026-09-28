@@ -297,8 +297,14 @@ def forward_backward(
     *,
     forward_only: bool = False,
     client_keys: list[str] | None = None,
+    replicated: bool = False,
 ) -> dict[str, Any]:
-    """Run contiguous micro-batches while preserving summed gradient accumulation."""
+    """Run contiguous micro-batches while preserving summed gradient accumulation.
+
+    In replicated mode every rank receives the full request, so FSDP's gradient
+    average needs no world-size compensation. This keeps small requests active
+    on every rank without counting their gradients once per replica.
+    """
 
     if not data:
         return {"model_output": {"log_probs": []}, "metrics": {}}
@@ -364,7 +370,7 @@ def forward_backward(
                 # rate whenever the GPU count changes. Multiply back by world_size so
                 # the reduced gradient equals the full-batch sum gradient.
                 world_size = _fsdp_world_size()
-                if world_size > 1:
+                if world_size > 1 and not replicated:
                     (loss * world_size).backward()
                 else:
                     loss.backward()
