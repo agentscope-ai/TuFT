@@ -20,7 +20,7 @@ from transformers import AutoConfig, AutoModelForCausalLM
 from tuft.backends.loss_inputs import (
     FSDP_BACKEND_OWNED_LOSS_INPUTS,
     batch_loss_fn_input,
-    validate_client_loss_fn_inputs,
+    validate_fsdp_loss_fn_inputs,
 )
 from tuft.loss_fn import get_loss_fn
 
@@ -194,10 +194,19 @@ def _prepare_loss_fn_inputs(
     batch_size, max_len = target_logprobs.shape
     device = target_logprobs.device
     if client_keys is None:
-        client_keys = validate_client_loss_fn_inputs(
-            data,
-            ignored_keys=FSDP_BACKEND_OWNED_LOSS_INPUTS,
-        )
+        client_keys = validate_fsdp_loss_fn_inputs(data, loss_fn_name)
+    if loss_fn_name == "trinity_ppo":
+        # Match HF's generic tensor padding. In particular, never infer response
+        # masks from sequence lengths or invent old-policy logprobs/advantages.
+        return {
+            **{
+                key: batch_loss_fn_input(data, key, device=device)
+                for key in client_keys
+                if key not in {"target_logprobs", "target_tokens"}
+            },
+            "target_tokens": prepared_target_tokens,
+            "target_logprobs": target_logprobs,
+        }
     client_key_set = set(client_keys)
     loss_fn_inputs = {
         key: batch_loss_fn_input(data, key, device=device)
@@ -311,10 +320,7 @@ def forward_backward(
     # Validate before the first backward so malformed later rows cannot leave
     # partial accumulated gradients behind. Multi-actor callers pass the keys
     # derived from the unsharded request so every rank emits the same owned fields.
-    local_keys = validate_client_loss_fn_inputs(
-        data,
-        ignored_keys=FSDP_BACKEND_OWNED_LOSS_INPUTS,
-    )
+    local_keys = validate_fsdp_loss_fn_inputs(data, loss_fn_name)
     if client_keys is None:
         client_keys = local_keys
     elif unexpected_keys := set(local_keys).difference(client_keys):

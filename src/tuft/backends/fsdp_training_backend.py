@@ -49,10 +49,7 @@ from tuft.backends.lora_modules import (
     resolve_lora_targets,
     routed_expert_mismatch_hint,
 )
-from tuft.backends.loss_inputs import (
-    FSDP_BACKEND_OWNED_LOSS_INPUTS,
-    validate_client_loss_fn_inputs,
-)
+from tuft.backends.loss_inputs import validate_fsdp_loss_fn_inputs
 from tuft.backends.vllm_lora_compat import (
     add_language_model_aliases,
     vllm_nests_language_model,
@@ -1395,10 +1392,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         loss_fn_name = (
             loss_fn if isinstance(loss_fn, str) else getattr(loss_fn, "__name__", "cross_entropy")
         )
-        client_keys = validate_client_loss_fn_inputs(
-            data,
-            ignored_keys=FSDP_BACKEND_OWNED_LOSS_INPUTS,
-        )
+        client_keys = validate_fsdp_loss_fn_inputs(data, loss_fn_name)
 
         # Per-call internal micro-batch grad accumulation.
         #

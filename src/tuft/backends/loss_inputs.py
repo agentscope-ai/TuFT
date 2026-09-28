@@ -33,6 +33,20 @@ def client_loss_fn_input_keys(data: list[types.Datum]) -> list[str]:
     return list(dict.fromkeys(key for datum in data for key in (datum.loss_fn_inputs or {})))
 
 
+def validate_fsdp_loss_fn_inputs(data: list[types.Datum], loss_fn_name: str) -> list[str]:
+    """Keep legacy defaults, but require explicit inputs for normalized PPO."""
+    if loss_fn_name != "trinity_ppo":
+        return validate_client_loss_fn_inputs(data, ignored_keys=FSDP_BACKEND_OWNED_LOSS_INPUTS)
+    keys = validate_client_loss_fn_inputs(
+        data,
+        ignored_keys=MODEL_DERIVED_LOSS_INPUTS,
+        required_keys=frozenset({"target_tokens", "logprobs", "advantages"}),
+    )
+    if data and not ({"mask", "weights"} & set(keys)):
+        raise ValueError("trinity_ppo requires an explicit response mask or weights")
+    return keys
+
+
 def validate_client_loss_fn_inputs(
     data: list[types.Datum],
     *,
