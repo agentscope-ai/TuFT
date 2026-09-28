@@ -2,7 +2,7 @@
 
 import copy
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import pytest
 import torch
@@ -97,7 +97,9 @@ def test_mask_overrides_weights_and_all_masked_nonfinite_tokens_are_harmless():
     loss.backward()
     assert torch.isfinite(loss)
     assert all(torch.isfinite(torch.tensor(value)) for value in metrics.values())
-    assert torch.all(inputs["target_logprobs"].grad[masked] == 0)
+    gradient = inputs["target_logprobs"].grad
+    assert gradient is not None
+    assert torch.all(gradient[masked] == 0)
     assert metrics["trinity/response_tokens:sum"] == 5
 
 
@@ -183,7 +185,7 @@ async def test_hf_fsdp_and_direct_model_gradients_match(micro_batch_size):
     expected.backward()
     out = forward_backward(fsdp_model, data, "trinity_ppo", CONFIG, micro_batch_size)
     hf = HFTrainingModel.__new__(HFTrainingModel)
-    hf.model = hf_network
+    hf.model = cast(Any, hf_network)
     hf_loss = 0.0
     for start in range(0, len(data), micro_batch_size):
         value, _, _ = await hf._forward_micro_batch(
