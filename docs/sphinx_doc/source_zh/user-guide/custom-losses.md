@@ -41,9 +41,9 @@ training_client.forward_backward_custom(data, my_loss, loss_type_input="logprobs
 
 ## 何时使用自定义损失
 
-TuFT 内置五个服务器端损失函数——`cross_entropy`、`importance_sampling`、`ppo`、`cispo` 和 `dro`——在 `forward_backward(data, loss_fn=...)` 中按名称选用。服务器只接受这五个名称，因此客户端无法在共享基础设施上运行任意 Python 代码。
+TuFT 内置的服务器端损失函数——`cross_entropy`、`importance_sampling`、`ppo`、`cispo`、`dro` 和 `trinity_ppo`——在 `forward_backward(data, loss_fn=...)` 中按名称选用。服务器只接受这些已注册名称，因此客户端无法在共享基础设施上运行任意 Python 代码。
 
-当你的目标函数是**逐 token 目标对数概率**的可微函数、却不在这五个之列时，就该用 `forward_backward_custom` 了。典型场景：
+当你的目标函数是**逐 token 目标对数概率**的可微函数、却不在这些内置函数之列时，就该用 `forward_backward_custom` 了。典型场景：
 
 - **偏好类损失**，例如比较 chosen 与 rejected 回复的 DPO。
 - **组合损失**，例如 DPO 加上带权 NLL，或再加一个策略/参考模型稳定项。
@@ -58,6 +58,45 @@ TuFT 内置五个服务器端损失函数——`cross_entropy`、`importance_sam
 ```
 
 ---
+
+## 服务器端按回复归一化的 PPO
+
+`trinity_ppo` 实现 dual-clipped PPO 和可选的 K2 KL 惩罚。它先对每条 datum
+的有效回复 token 求均值，再对 datum 求均值，与 Trinity 的客户端目标一致。
+HF 与 FSDP 后端均支持此损失。
+
+发送与输入 token 对齐的 `target_tokens`、采样策略的 `logprobs`、`advantages`
+和 `weights`。正权重表示需要训练的回复 token；提示词、填充和丢弃的回复应为零。
+显式二值 `mask` 的优先级高于 `weights`。`kl_coef > 0` 时必须提供 `ref_logprobs`。
+
+每个 token 级字段必须是一维张量，长度与该 datum 的 `model_input` token 数严格一致。
+HF 和 FSDP 会在填充、分发给 worker 或首次前向/反向计算前，校验整个请求中所有
+datum 的长度和显式二值 mask。因此，后续 datum 出错时，不会被填充值掩盖，也不会
+留下本次请求的部分梯度。正 `weights` 不要求为二值。
+
+```python
+loss_config = {
+    "clip_range": 0.2,
+    "clip_ratio_c": 3.0,
+    "kl_coef": 0.001,
+    "num_total_datums": len(full_optimizer_batch),
+}
+for chunk in chunks:
+    training_client.forward_backward(
+        chunk, loss_fn="trinity_ppo", loss_fn_config=loss_config
+    ).result()
+# 所有分块累积梯度后，只调用一次 optim_step。
+```
+
+每个分块都必须传入相同的完整优化批次 `num_total_datums`，包含回复全部被屏蔽的
+datum；这些 datum 贡献零损失。这样 SDK 分块、后端微批和 FSDP 分片都不会改变
+梯度尺度。Tinker 0.25 的传输格式支持此 TuFT 注册名，但 SDK 的静态
+`LossFnType` 类型标注尚未列出它。
+
+诊断指标采用可相加的 `:sum`。将 `trinity/ratio_sum:sum`、
+`trinity/clipped_tokens:sum` 或 `trinity/kl_sum:sum` 除以
+`trinity/response_tokens:sum` 可得到 token 均值，需要单独处理零计数的情况。
+不要直接平均大小不同的分块的均值。
 
 ## 自定义损失的工作原理
 
@@ -278,7 +317,7 @@ training_client.optim_step(types.AdamParams(learning_rate=1e-4)).result()
 
 ## 错误处理
 
-- **未知的损失名到不了模型。** `/forward_backward` 只接受五个内置名称，其余一律返回 **422**。`forward_backward_custom` 的服务器端工作复用现有内置损失，因此不需要新增任何服务器端名称。
+- **未知的损失名到不了模型。** `/forward_backward` 只接受已注册的内置名称，其余一律返回 **422**。`forward_backward_custom` 的服务器端工作复用现有内置损失，因此不需要新增任何服务器端名称。
 - **datum 输入格式错误**会收到针对 `loss_fn_inputs` 的具体报错。不支持的键在第一遍之前就被 SDK 拒绝；键、形状、数据类型不匹配则由服务器校验。`target_tokens` 和 `weights` 的长度必须与模型输入一致。
 - **回调异常留在客户端。** 你的损失函数抛出异常（或某个 datum 带了不支持的键）时，错误出现在你自己的进程里。即使它发生在两遍之间也无碍：第一遍没有累积任何梯度，训练运行的梯度状态原封不动，直接重试即可。
 
@@ -287,7 +326,7 @@ training_client.optim_step(types.AdamParams(learning_rate=1e-4)).result()
 - **第一遍只读模型。** 不改权重，不积梯度。回调失败时训练运行不受影响，可直接重试。
 - **第二遍与普通的 `forward_backward` 无异。** 梯度持续累积到下一次 `optim_step`，因此可以在一次优化器更新之前叠加自定义梯度和内置梯度。
 - **两遍之间不要更新模型。** 客户端回调运行期间，其他线程不得调用 `optim_step`——否则返回的对数概率描述的是旧模型，反向传播用的却是新模型。串行使用是安全的：等自定义调用完成，再更新优化器。
-- **自定义代码永远不在服务器上运行。** 共享服务器始终只执行五个内置损失函数。
+- **自定义代码永远不在服务器上运行。** 共享服务器始终只执行已注册的内置损失函数。
 
 ---
 

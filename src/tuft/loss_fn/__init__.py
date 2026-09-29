@@ -22,6 +22,7 @@ LOSS_FN = {
     "dro": "tuft.loss_fn.dro.dro_loss",
     "importance_sampling": "tuft.loss_fn.importance_sampling.importance_sampling_loss",
     "ppo": "tuft.loss_fn.ppo.ppo_loss",
+    "trinity_ppo": "tuft.loss_fn.trinity_ppo.trinity_ppo_loss",
 }
 
 
