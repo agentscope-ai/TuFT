@@ -186,11 +186,11 @@ function runs in the client process; the server runs only its built-in losses.</
 <hr class="docutils"/>
 <section id="when-to-use-a-custom-loss">
 <h2>When to Use a Custom Loss<a class="headerlink" href="#when-to-use-a-custom-loss" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#when-to-use-a-custom-loss'">¶</a></h2>
-<p>TuFT ships five server-side loss functions — <code class="docutils literal notranslate"><span class="pre">cross_entropy</span></code>, <code class="docutils literal notranslate"><span class="pre">importance_sampling</span></code>, <code class="docutils literal notranslate"><span class="pre">ppo</span></code>,
-<code class="docutils literal notranslate"><span class="pre">cispo</span></code>, and <code class="docutils literal notranslate"><span class="pre">dro</span></code> — selected by name in <code class="docutils literal notranslate"><span class="pre">forward_backward(data,</span> <span class="pre">loss_fn=...)</span></code>. The server accepts
+<p>TuFT ships server-side loss functions — <code class="docutils literal notranslate"><span class="pre">cross_entropy</span></code>, <code class="docutils literal notranslate"><span class="pre">importance_sampling</span></code>, <code class="docutils literal notranslate"><span class="pre">ppo</span></code>,
+<code class="docutils literal notranslate"><span class="pre">cispo</span></code>, <code class="docutils literal notranslate"><span class="pre">dro</span></code>, and <code class="docutils literal notranslate"><span class="pre">trinity_ppo</span></code> — selected by name in <code class="docutils literal notranslate"><span class="pre">forward_backward(data,</span> <span class="pre">loss_fn=...)</span></code>. The server accepts
 only these names, so a client cannot run arbitrary Python on shared infrastructure.</p>
 <p>Reach for <code class="docutils literal notranslate"><span class="pre">forward_backward_custom</span></code> when your objective is a differentiable function of the
-<strong>per-token target log-probabilities</strong> but is not one of those five. Typical cases:</p>
+<strong>per-token target log-probabilities</strong> but is not one of those built-ins. Typical cases:</p>
 <ul class="simple">
 <li><p><strong>Preference losses</strong> such as DPO that compare chosen and rejected responses.</p></li>
 <li><p><strong>Combined losses</strong>, such as DPO plus weighted NLL or a policy/reference stability term.</p></li>
@@ -206,6 +206,44 @@ and no new server-side loss names are introduced.</p>
 </div>
 </section>
 <hr class="docutils"/>
+<section id="response-normalized-ppo-on-the-server">
+<h2>Response-normalized PPO on the server<a class="headerlink" href="#response-normalized-ppo-on-the-server" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#response-normalized-ppo-on-the-server'">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">trinity_ppo</span></code> implements dual-clipped PPO plus an optional K2 KL penalty, with the
+same response-token-mean, then datum-mean reduction as Trinity’s client loss.
+Unlike the built-in token-summed <code class="docutils literal notranslate"><span class="pre">ppo</span></code>, it gives each datum equal weight regardless
+of response length. Both HF and FSDP backends support it.</p>
+<p>Send <code class="docutils literal notranslate"><span class="pre">target_tokens</span></code>, sampling-policy <code class="docutils literal notranslate"><span class="pre">logprobs</span></code>, <code class="docutils literal notranslate"><span class="pre">advantages</span></code>, and <code class="docutils literal notranslate"><span class="pre">weights</span></code>
+aligned with each input token. Positive weights mark trained response tokens;
+prompt, padding and discarded responses have zero weights. An explicit binary
+<code class="docutils literal notranslate"><span class="pre">mask</span></code>, when supplied, takes precedence. Provide <code class="docutils literal notranslate"><span class="pre">ref_logprobs</span></code> when <code class="docutils literal notranslate"><span class="pre">kl_coef</span> <span class="pre">&gt;</span> <span class="pre">0</span></code>.</p>
+<p>Each token-level field must be a one-dimensional tensor with exactly the datum’s
+<code class="docutils literal notranslate"><span class="pre">model_input</span></code> token count. HF and FSDP validate every datum’s lengths and explicit
+binary mask before padding, worker dispatch or the first forward/backward. A bad
+later datum therefore cannot silently acquire padded values or leave partial
+gradients from this request. Positive <code class="docutils literal notranslate"><span class="pre">weights</span></code> need not be binary.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><code><span id="line-1"><span class="n">loss_config</span> <span class="o">=</span> <span class="p">{</span>
+</span><span id="line-2">    <span class="s2">"clip_range"</span><span class="p">:</span> <span class="mf">0.2</span><span class="p">,</span>
+</span><span id="line-3">    <span class="s2">"clip_ratio_c"</span><span class="p">:</span> <span class="mf">3.0</span><span class="p">,</span>
+</span><span id="line-4">    <span class="s2">"kl_coef"</span><span class="p">:</span> <span class="mf">0.001</span><span class="p">,</span>
+</span><span id="line-5">    <span class="s2">"num_total_datums"</span><span class="p">:</span> <span class="nb">len</span><span class="p">(</span><span class="n">full_optimizer_batch</span><span class="p">),</span>
+</span><span id="line-6"><span class="p">}</span>
+</span><span id="line-7"><span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="n">chunks</span><span class="p">:</span>
+</span><span id="line-8">    <span class="n">training_client</span><span class="o">.</span><span class="n">forward_backward</span><span class="p">(</span>
+</span><span id="line-9">        <span class="n">chunk</span><span class="p">,</span> <span class="n">loss_fn</span><span class="o">=</span><span class="s2">"trinity_ppo"</span><span class="p">,</span> <span class="n">loss_fn_config</span><span class="o">=</span><span class="n">loss_config</span>
+</span><span id="line-10">    <span class="p">)</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+</span><span id="line-11"><span class="c1"># Call optim_step once after all chunks have accumulated gradients.</span>
+</span></code></pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">num_total_datums</span></code> is required: use the same full optimizer-batch count in every
+chunk, including datums whose entire response is masked. Those datums contribute
+zero loss. This keeps gradient scale unchanged when the SDK, micro-batches or
+FSDP ranks split the batch. The Tinker 0.25 wire format accepts TuFT’s registered
+loss name, although the SDK’s static <code class="docutils literal notranslate"><span class="pre">LossFnType</span></code> annotation does not list it.</p>
+<p>Diagnostics use additive <code class="docutils literal notranslate"><span class="pre">:sum</span></code> statistics. Divide <code class="docutils literal notranslate"><span class="pre">trinity/ratio_sum:sum</span></code>,
+<code class="docutils literal notranslate"><span class="pre">trinity/clipped_tokens:sum</span></code>, or <code class="docutils literal notranslate"><span class="pre">trinity/kl_sum:sum</span></code> by
+<code class="docutils literal notranslate"><span class="pre">trinity/response_tokens:sum</span></code> to obtain token-level means; handle a zero count
+explicitly. This avoids averaging means from unequally sized chunks.</p>
+</section>
 <section id="how-custom-losses-work">
 <h2>How Custom Losses Work<a class="headerlink" href="#how-custom-losses-work" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#how-custom-losses-work'">¶</a></h2>
 <p>A <strong>log-probability</strong> is the model’s score for a target token, expressed on a logarithmic scale.
@@ -464,7 +502,7 @@ must satisfy <code class="docutils literal notranslate"><span class="pre">len(da
 <section id="error-handling">
 <h2>Error Handling<a class="headerlink" href="#error-handling" title="Link to this heading" x-intersect.margin.0%.0%.-70%.0%="activeSection = '#error-handling'">¶</a></h2>
 <ul class="simple">
-<li><p><strong>Unknown loss names never reach a model.</strong> <code class="docutils literal notranslate"><span class="pre">/forward_backward</span></code> accepts only the five built-in
+<li><p><strong>Unknown loss names never reach a model.</strong> <code class="docutils literal notranslate"><span class="pre">/forward_backward</span></code> accepts only registered built-in
 names and returns <strong>422</strong> for anything else. <code class="docutils literal notranslate"><span class="pre">forward_backward_custom</span></code> uses an existing built-in
 loss for its server work, so it needs no new server-side name.</p></li>
 <li><p><strong>Malformed datum inputs</strong> are rejected with a <code class="docutils literal notranslate"><span class="pre">loss_fn_inputs</span></code>-specific error. Unsupported
@@ -487,7 +525,7 @@ gradients. If the callback fails, the training run is unchanged and you can retr
 while the client callback is running. Otherwise, the returned log-probabilities describe the
 old model while the backward pass uses the new model. Sequential use is safe: wait for the
 custom call, then update the optimizer.</p></li>
-<li><p><strong>Custom code never runs server-side.</strong> Shared servers still execute only the five built-in
+<li><p><strong>Custom code never runs server-side.</strong> Shared servers still execute only registered built-in
 loss functions.</p></li>
 </ul>
 </section>
@@ -518,6 +556,7 @@ run the same math on log-probabilities returned by <code class="docutils literal
 <li><a :data-current="activeSection === '#what-you-ll-learn'" class="reference internal" href="#what-you-ll-learn">What You’ll Learn</a></li>
 <li><a :data-current="activeSection === '#table-of-contents'" class="reference internal" href="#table-of-contents">Table of Contents</a></li>
 <li><a :data-current="activeSection === '#when-to-use-a-custom-loss'" class="reference internal" href="#when-to-use-a-custom-loss">When to Use a Custom Loss</a></li>
+<li><a :data-current="activeSection === '#response-normalized-ppo-on-the-server'" class="reference internal" href="#response-normalized-ppo-on-the-server">Response-normalized PPO on the server</a></li>
 <li><a :data-current="activeSection === '#how-custom-losses-work'" class="reference internal" href="#how-custom-losses-work">How Custom Losses Work</a></li>
 <li><a :data-current="activeSection === '#supervised-fine-tuning-example'" class="reference internal" href="#supervised-fine-tuning-example">Supervised Fine-Tuning Example</a></li>
 <li><a :data-current="activeSection === '#dpo-nll-example'" class="reference internal" href="#dpo-nll-example">DPO + NLL Example</a></li>

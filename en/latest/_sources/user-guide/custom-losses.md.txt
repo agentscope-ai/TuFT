@@ -44,12 +44,12 @@ training_client.forward_backward_custom(data, my_loss, loss_type_input="logprobs
 
 ## When to Use a Custom Loss
 
-TuFT ships five server-side loss functions — `cross_entropy`, `importance_sampling`, `ppo`,
-`cispo`, and `dro` — selected by name in `forward_backward(data, loss_fn=...)`. The server accepts
+TuFT ships server-side loss functions — `cross_entropy`, `importance_sampling`, `ppo`,
+`cispo`, `dro`, and `trinity_ppo` — selected by name in `forward_backward(data, loss_fn=...)`. The server accepts
 only these names, so a client cannot run arbitrary Python on shared infrastructure.
 
 Reach for `forward_backward_custom` when your objective is a differentiable function of the
-**per-token target log-probabilities** but is not one of those five. Typical cases:
+**per-token target log-probabilities** but is not one of those built-ins. Typical cases:
 
 - **Preference losses** such as DPO that compare chosen and rejected responses.
 - **Combined losses**, such as DPO plus weighted NLL or a policy/reference stability term.
@@ -67,6 +67,49 @@ and no new server-side loss names are introduced.
 ```
 
 ---
+
+## Response-normalized PPO on the server
+
+`trinity_ppo` implements dual-clipped PPO plus an optional K2 KL penalty, with the
+same response-token-mean, then datum-mean reduction as Trinity's client loss.
+Unlike the built-in token-summed `ppo`, it gives each datum equal weight regardless
+of response length. Both HF and FSDP backends support it.
+
+Send `target_tokens`, sampling-policy `logprobs`, `advantages`, and `weights`
+aligned with each input token. Positive weights mark trained response tokens;
+prompt, padding and discarded responses have zero weights. An explicit binary
+`mask`, when supplied, takes precedence. Provide `ref_logprobs` when `kl_coef > 0`.
+
+Each token-level field must be a one-dimensional tensor with exactly the datum's
+`model_input` token count. HF and FSDP validate every datum's lengths and explicit
+binary mask before padding, worker dispatch or the first forward/backward. A bad
+later datum therefore cannot silently acquire padded values or leave partial
+gradients from this request. Positive `weights` need not be binary.
+
+```python
+loss_config = {
+    "clip_range": 0.2,
+    "clip_ratio_c": 3.0,
+    "kl_coef": 0.001,
+    "num_total_datums": len(full_optimizer_batch),
+}
+for chunk in chunks:
+    training_client.forward_backward(
+        chunk, loss_fn="trinity_ppo", loss_fn_config=loss_config
+    ).result()
+# Call optim_step once after all chunks have accumulated gradients.
+```
+
+`num_total_datums` is required: use the same full optimizer-batch count in every
+chunk, including datums whose entire response is masked. Those datums contribute
+zero loss. This keeps gradient scale unchanged when the SDK, micro-batches or
+FSDP ranks split the batch. The Tinker 0.25 wire format accepts TuFT's registered
+loss name, although the SDK's static `LossFnType` annotation does not list it.
+
+Diagnostics use additive `:sum` statistics. Divide `trinity/ratio_sum:sum`,
+`trinity/clipped_tokens:sum`, or `trinity/kl_sum:sum` by
+`trinity/response_tokens:sum` to obtain token-level means; handle a zero count
+explicitly. This avoids averaging means from unequally sized chunks.
 
 ## How Custom Losses Work
 
@@ -332,7 +375,7 @@ the request into smaller server-side batches.
 
 ## Error Handling
 
-- **Unknown loss names never reach a model.** `/forward_backward` accepts only the five built-in
+- **Unknown loss names never reach a model.** `/forward_backward` accepts only registered built-in
   names and returns **422** for anything else. `forward_backward_custom` uses an existing built-in
   loss for its server work, so it needs no new server-side name.
 - **Malformed datum inputs** are rejected with a `loss_fn_inputs`-specific error. Unsupported
@@ -353,7 +396,7 @@ the request into smaller server-side batches.
   while the client callback is running. Otherwise, the returned log-probabilities describe the
   old model while the backward pass uses the new model. Sequential use is safe: wait for the
   custom call, then update the optimizer.
-- **Custom code never runs server-side.** Shared servers still execute only the five built-in
+- **Custom code never runs server-side.** Shared servers still execute only registered built-in
   loss functions.
 
 ---
