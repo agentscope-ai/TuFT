@@ -14,6 +14,7 @@ from typing import Any
 
 import torch
 from tinker import types
+from torch.autograd.function import once_differentiable
 from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoConfig, AutoModelForCausalLM
 
@@ -142,19 +143,64 @@ def _prepare_micro_batch(data: list[types.Datum], device: torch.device | str) ->
     )
 
 
+# Bound temporary FP32 tensors by vocabulary elements, not only token count.
+_LOGPROB_CHUNK_ELEMENTS = 4 * 1024 * 1024
+
+
+class _TargetLogprobs(torch.autograd.Function):
+    """Recompute softmax in backward instead of retaining FP32 vocabulary tensors."""
+
+    @staticmethod
+    def forward(ctx: Any, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        dtype = torch.float64 if logits.dtype == torch.float64 else torch.float32
+        chunk_size = max(1, _LOGPROB_CHUNK_ELEMENTS // logits.size(-1))
+        flat_logits = logits.reshape(-1, logits.size(-1))
+        flat_labels = labels.reshape(-1)
+        out = torch.empty(flat_labels.shape, dtype=dtype, device=logits.device)
+        # Custom Function.forward runs without autograd recording, so no chunk's
+        # FP32 log-softmax is retained for backward. Explicit dtype also keeps
+        # the reduction in FP32 when called inside or outside autocast.
+        for start in range(0, flat_logits.size(0), chunk_size):
+            end = start + chunk_size
+            logprobs = torch.log_softmax(flat_logits[start:end], dim=-1, dtype=dtype)
+            out[start:end] = logprobs.gather(-1, flat_labels[start:end, None]).squeeze(-1)
+            del logprobs
+        ctx.save_for_backward(logits, labels)
+        ctx.chunk_size = chunk_size
+        return out.view(labels.shape)
+
+    @staticmethod
+    @once_differentiable
+    def backward(  # pyright: ignore[reportIncompatibleMethodOverride]
+        ctx: Any, grad_output: torch.Tensor
+    ) -> tuple[torch.Tensor, None]:
+        logits, labels = ctx.saved_tensors
+        dtype = torch.float64 if logits.dtype == torch.float64 else torch.float32
+        flat_logits = logits.reshape(-1, logits.size(-1))
+        flat_labels = labels.reshape(-1)
+        flat_grad_output = grad_output.reshape(-1)
+        # The full input gradient is unavoidable, but stays in the input dtype.
+        # Only one vocabulary chunk is promoted to FP32 at a time.
+        grad_logits = torch.empty(flat_logits.shape, dtype=logits.dtype, device=logits.device)
+        for start in range(0, flat_logits.size(0), ctx.chunk_size):
+            end = start + ctx.chunk_size
+            grad = torch.softmax(flat_logits[start:end], dim=-1, dtype=dtype)
+            upstream = flat_grad_output[start:end, None].to(dtype)
+            grad.neg_().mul_(upstream)
+            grad.scatter_add_(-1, flat_labels[start:end, None], upstream)
+            grad_logits[start:end] = grad
+            del grad, upstream
+        return grad_logits.view(logits.shape), None
+
+
 def _compute_target_logprobs(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-    """Gather label log-probabilities without materializing a full fp32 log-softmax."""
+    """Compute FP32 target logprobs with bounded workspace and first-order gradients.
 
-    if logits.dtype in (torch.float32, torch.float64):
-        label_logits = torch.gather(logits, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
-        logsumexp = torch.stack([torch.logsumexp(row, dim=-1) for row in logits])
-        return label_logits - logsumexp
-
-    rows = []
-    for row_logits, row_labels in zip(logits, labels, strict=True):
-        row_logprobs = torch.nn.functional.log_softmax(row_logits, dim=-1)
-        rows.append(row_logprobs.gather(dim=-1, index=row_labels.unsqueeze(-1)).squeeze(-1))
-    return torch.stack(rows)
+    FP64 inputs retain their precision. FP16/BF16 inputs are promoted per chunk;
+    backward recomputes probabilities so promoted chunks do not accumulate in
+    the autograd graph. Only the original logits and labels are saved.
+    """
+    return _TargetLogprobs.apply(logits, labels)
 
 
 def _datum_field(
@@ -306,13 +352,28 @@ def forward_backward(
     *,
     forward_only: bool = False,
     client_keys: list[str] | None = None,
+    replicated: bool = False,
+    num_micro_batches: int | None = None,
 ) -> dict[str, Any]:
-    """Run contiguous micro-batches while preserving summed gradient accumulation."""
+    """Run contiguous micro-batches while preserving summed gradient accumulation.
+
+    In replicated mode every rank receives the full request, so FSDP's gradient
+    average needs no world-size compensation. This keeps small requests active
+    on every rank without counting their gradients once per replica.
+
+    Distributed callers supply the same num_micro_batches to every rank. A
+    rank with fewer real micro-batches runs zero-loss padding rounds, keeping
+    collective counts equal without expanding its configured micro-batch size.
+    """
 
     if not data:
         return {"model_output": {"log_probs": []}, "metrics": {}}
     if micro_batch_size <= 0:
         raise ValueError(f"micro_batch_size must be positive, got {micro_batch_size}")
+    real_batches = (len(data) + micro_batch_size - 1) // micro_batch_size
+    rounds = real_batches if num_micro_batches is None else num_micro_batches
+    if rounds < real_batches:
+        raise ValueError("num_micro_batches must cover every local datum")
 
     device = next(module.parameters()).device
     loss_callable = get_loss_fn(loss_fn_name)
@@ -330,8 +391,15 @@ def forward_backward(
 
     grad_context = torch.no_grad() if forward_only else nullcontext()
     with grad_context:
-        for start in range(0, len(data), micro_batch_size):
+        for round_index in range(rounds):
+            start = round_index * micro_batch_size
+            padding_round = start >= len(data)
             micro_data = data[start : start + micro_batch_size]
+            if padding_round:
+                # Keep a real model graph for FSDP's forward/backward hooks.
+                # One repeated datum bounds padding memory; it contributes
+                # neither loss, metrics nor a duplicate result to the request.
+                micro_data = data[-1:]
             batch = _prepare_micro_batch(micro_data, device)
             autocast = torch.autocast(
                 device_type="cuda",
@@ -354,14 +422,18 @@ def forward_backward(
                     logits = logits / config["temperature"]
                 target_logprobs = _compute_target_logprobs(logits, batch.labels)
 
-            loss_inputs = _prepare_loss_fn_inputs(
-                micro_data,
-                target_logprobs,
-                loss_fn_name,
-                prepared_target_tokens=batch.labels,
-                client_keys=client_keys,
-            )
-            loss, metrics = loss_callable(loss_inputs, config)
+            if padding_round:
+                loss = target_logprobs.sum() * 0
+                metrics = {}
+            else:
+                loss_inputs = _prepare_loss_fn_inputs(
+                    micro_data,
+                    target_logprobs,
+                    loss_fn_name,
+                    prepared_target_tokens=batch.labels,
+                    client_keys=client_keys,
+                )
+                loss, metrics = loss_callable(loss_inputs, config)
             if not forward_only:
                 # FSDP2 `fully_shard` averages gradients across ranks during the
                 # reduce-scatter, but our loss functions are sum-reductions. Without
@@ -370,14 +442,16 @@ def forward_backward(
                 # rate whenever the GPU count changes. Multiply back by world_size so
                 # the reduced gradient equals the full-batch sum gradient.
                 world_size = _fsdp_world_size()
-                if world_size > 1:
+                if world_size > 1 and not replicated:
                     (loss * world_size).backward()
                 else:
                     loss.backward()
-            metric_list.append(metrics)
-            per_sample_logprobs.extend(
-                target_logprobs[row, :length].detach() for row, length in enumerate(batch.lengths)
-            )
+            if not padding_round:
+                metric_list.append(metrics)
+                per_sample_logprobs.extend(
+                    target_logprobs[row, :length].detach()
+                    for row, length in enumerate(batch.lengths)
+                )
 
     return {
         "model_output": {"log_probs": per_sample_logprobs},

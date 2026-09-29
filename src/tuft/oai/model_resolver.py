@@ -76,12 +76,16 @@ def resolve_model(
             )
 
         adapter_path = parsed_checkpoint.adapter_path
-        lora_id = parsed_checkpoint.training_run_id
+        # Use a checkpoint-unique lora_id so different checkpoints from the
+        # same training run are registered as distinct adapters in vLLM and
+        # cached separately in the OAI router's _loaded_loras. The previous
+        # code used training_run_id, which collapsed all checkpoints of a run
+        # into one cache entry — the first checkpoint loaded would silently
+        # serve every subsequent checkpoint request.
+        checkpoint_name = parsed_checkpoint.checkpoint_id
+        lora_id = f"{parsed_checkpoint.training_run_id}:{checkpoint_name}"
 
         if adapter_path.exists():
-            # vLLM expects the lora_name (lora_id) as the model field,
-            # not the filesystem path. The LoRA is registered under lora_id
-            # via the OAI router's _ensure_lora_loaded().
             return ResolvedModel(
                 base_model=base_model_ref,
                 backend_model_name=lora_id,
@@ -89,6 +93,12 @@ def resolve_model(
                 lora_id=lora_id,
             )
         else:
+            logger.warning(
+                "Adapter path %s does not exist for checkpoint %s; "
+                "falling back to base model (no LoRA applied)",
+                adapter_path,
+                model_field,
+            )
             return ResolvedModel(
                 base_model=base_model_ref,
                 backend_model_name=str(

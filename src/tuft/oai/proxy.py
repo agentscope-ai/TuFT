@@ -13,6 +13,11 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 logger = logging.getLogger(__name__)
 
+# Long agentic generations (32k tokens under concurrent load) routinely exceed
+# five minutes; a shorter deadline here surfaces as ReadTimeout and the caller
+# loses the whole rollout instead of the one slow request.
+BACKEND_TIMEOUT_SECONDS = 1800.0
+
 
 async def proxy_request(
     client: httpx.AsyncClient,
@@ -44,7 +49,9 @@ async def proxy_request(
     headers = {"Authorization": "Bearer EMPTY"}
 
     if stream:
-        req = client.build_request("POST", url, json=body, headers=headers, timeout=300.0)
+        req = client.build_request(
+            "POST", url, json=body, headers=headers, timeout=BACKEND_TIMEOUT_SECONDS
+        )
         resp = await client.send(req, stream=True)
         if resp.status_code != 200:
             error_body = await resp.aread()
@@ -73,7 +80,7 @@ async def _non_stream_proxy(
     response_id_prefix: str,
 ) -> JSONResponse:
     """Forward a non-streaming request and rewrite the response."""
-    resp = await client.post(url, json=body, headers=headers, timeout=300.0)
+    resp = await client.post(url, json=body, headers=headers, timeout=BACKEND_TIMEOUT_SECONDS)
     if resp.status_code != 200:
         return JSONResponse(content=resp.json(), status_code=resp.status_code)
 
