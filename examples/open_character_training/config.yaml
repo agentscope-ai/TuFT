@@ -1,0 +1,71 @@
+# TuFT server config for the Open Character Training example.
+#
+# Hardware baseline: four NVIDIA CUDA GPUs with at least 40 GB VRAM each.
+# Two standalone vLLM replicas and two FSDP workers each reserve one GPU.
+# The measured companion run used four A100-80GB GPUs for the 4B arm; other
+# accelerators and the 40 GB floor still require end-to-end validation.
+#
+# Generate a key, replace the placeholder below, then launch:
+#   python -c "import secrets; print('tml-' + secrets.token_urlsafe(24))"
+#   CUDA_VISIBLE_DEVICES=0,1,2,3 tuft launch --host 0.0.0.0 --port 10610 \
+#       --config examples/open_character_training/config.yaml
+#   Modal: python deploy/modal/launch.py --config examples/open_character_training/config.yaml --foreground
+#   Lambda: python deploy/lambda/launch.py --config examples/open_character_training/config.yaml
+
+checkpoint_dir: ~/.cache/tuft/open-character-training
+model_owner: local-user
+
+supported_models:
+  - model_name: Qwen/Qwen3.5-4B
+    model_path: Qwen/Qwen3.5-4B
+    max_model_len: 8192
+    sampling_max_model_len: 8192
+    tensor_parallel_size: 1
+    data_parallel_size: 2
+    sampling_enforce_eager: true
+
+    # FSDP training and sampling use separate whole GPUs. Together with the two
+    # data-parallel vLLM replicas above, this configuration needs four GPUs.
+    colocate: false
+    training_backend: fsdp
+    fsdp_num_gpus: 2
+    micro_batch_size: 2
+    fsdp_qv_only: false
+    fsdp_train_attn: true
+    fsdp_train_mlp: true
+    fsdp_train_unembed: true
+    attn_implementation: sdpa
+
+    # Match the paper and companion run at rank 64, alpha 128. The client asks
+    # for all attention and MLP projections. Qwen3.5 has no supported
+    # unembedding LoRA target, so the effective set is q/k/v/o_proj plus
+    # gate/up/down_proj.
+    max_lora_rank: 64
+    lora_alpha_ratio: 2
+    max_loras: 4
+
+    temperature: 0.7
+    top_p: 0.95
+
+authorized_users:
+  tml-CHANGE-ME: local-user
+
+persistence:
+  mode: DISABLE
+
+telemetry:
+  enabled: false
+
+# Cloud infrastructure sections are stripped before TuFT reads the config.
+# See docs/sphinx_doc/source/deployment/{modal,lambda}.md for setup and teardown.
+modal:
+  gpu: A100-40GB:4
+  name: open-character-training
+  proxy_auth: false
+  min_containers: 0
+
+lambda:
+  name: open-character-training
+  # The launcher auto-picks a 1-GPU VM unless --instance-type is supplied.
+  # Pin a currently available 4-GPU instance type when launching this example.
+  # filesystem: tuft   # optional persistent storage for checkpoints/model cache
