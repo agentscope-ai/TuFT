@@ -69,6 +69,11 @@ HF 与 FSDP 后端均支持此损失。
 和 `weights`。正权重表示需要训练的回复 token；提示词、填充和丢弃的回复应为零。
 显式二值 `mask` 的优先级高于 `weights`。`kl_coef > 0` 时必须提供 `ref_logprobs`。
 
+每个 token 级字段必须是一维张量，长度与该 datum 的 `model_input` token 数严格一致。
+HF 和 FSDP 会在填充、分发给 worker 或首次前向/反向计算前，校验整个请求中所有
+datum 的长度和显式二值 mask。因此，后续 datum 出错时，不会被填充值掩盖，也不会
+留下本次请求的部分梯度。正 `weights` 不要求为二值。
+
 ```python
 loss_config = {
     "clip_range": 0.2,

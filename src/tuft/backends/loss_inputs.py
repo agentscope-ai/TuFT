@@ -37,6 +37,11 @@ def validate_fsdp_loss_fn_inputs(data: list[types.Datum], loss_fn_name: str) -> 
     """Keep legacy defaults, but require explicit inputs for normalized PPO."""
     if loss_fn_name != "trinity_ppo":
         return validate_client_loss_fn_inputs(data, ignored_keys=FSDP_BACKEND_OWNED_LOSS_INPUTS)
+    return validate_trinity_ppo_loss_fn_inputs(data)
+
+
+def validate_trinity_ppo_loss_fn_inputs(data: list[types.Datum]) -> list[str]:
+    """Validate every PPO row before padding, sharding or accumulating gradients."""
     keys = validate_client_loss_fn_inputs(
         data,
         ignored_keys=MODEL_DERIVED_LOSS_INPUTS,
@@ -44,6 +49,25 @@ def validate_fsdp_loss_fn_inputs(data: list[types.Datum], loss_fn_name: str) -> 
     )
     if data and not ({"mask", "weights"} & set(keys)):
         raise ValueError("trinity_ppo requires an explicit response mask or weights")
+
+    token_keys = {"target_tokens", "logprobs", "advantages", "ref_logprobs", "mask", "weights"}
+    for index, datum in enumerate(data):
+        length = len(datum.model_input.to_ints())
+        if length == 0:
+            raise ValueError(f"trinity_ppo datum {index} model_input must contain tokens")
+        for key in keys:
+            if key not in token_keys:
+                continue
+            tensor = datum.loss_fn_inputs[key].to_torch()
+            # Padding fields independently can hide a short or long row if
+            # another datum supplies the maximum width. Check the unpadded row.
+            if tensor.ndim != 1 or tensor.shape[0] != length:
+                raise ValueError(
+                    f"trinity_ppo datum {index} field {key!r} must be a 1-D tensor "
+                    f"matching model_input length {length}; got shape {tuple(tensor.shape)}"
+                )
+            if key == "mask" and not torch.all((tensor == 0) | (tensor == 1)):
+                raise ValueError(f"trinity_ppo datum {index} mask must contain only zero or one")
     return keys
 
 

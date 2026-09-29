@@ -1,8 +1,12 @@
 """CPU checks against an independent per-token PPO reference and both backends."""
 
+import asyncio
 import copy
+import logging
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import MagicMock
 
 import pytest
 import torch
@@ -13,6 +17,7 @@ from tinker.proto.request_conv import forward_backward_request_to_proto
 from tuft.backends.fsdp_engine import forward_backward
 from tuft.backends.hf_training_model import HFTrainingModel
 from tuft.compat import decode_forward_backward_request
+from tuft.config import ModelConfig
 from tuft.exceptions import LossFunctionMissingInputException
 from tuft.loss_fn import get_loss_fn
 
@@ -126,9 +131,34 @@ class _TinyModel(torch.nn.Module):
     def __init__(self):
         super().__init__()
         self.table = torch.nn.Embedding(12, 12)
+        self.forward_calls = 0
 
     def forward(self, input_ids, **_kwargs):
+        self.forward_calls += 1
         return SimpleNamespace(logits=self.table(input_ids))
+
+
+def _hf_model(network, micro_batch_size, monkeypatch):
+    model = HFTrainingModel.__new__(HFTrainingModel)
+    model.config = cast(Any, SimpleNamespace(micro_batch_size=micro_batch_size))
+    model.model = cast(Any, network)
+    model._lock = asyncio.Lock()
+    model.logger = logging.getLogger(__name__)
+    monkeypatch.setattr(model, "_activate_adapter", lambda _lora_id: None)
+    for name in ("empty_cache", "reset_peak_memory_stats"):
+        monkeypatch.setattr(torch.cuda, name, lambda: None)
+    for name in ("memory_allocated", "memory_reserved", "max_memory_allocated"):
+        monkeypatch.setattr(torch.cuda, name, lambda: 0)
+    return model
+
+
+async def _run_backend(backend, network, data, micro_batch_size, monkeypatch):
+    if backend == "fsdp":
+        return forward_backward(network, data, "trinity_ppo", CONFIG, micro_batch_size)
+    model = _hf_model(network, micro_batch_size, monkeypatch)
+    return await model.forward(
+        data, "lora", cast(types.LossFnType, "trinity_ppo"), CONFIG, backward=True
+    )
 
 
 def _datums():
@@ -160,12 +190,23 @@ def _datums():
 
 
 @pytest.mark.parametrize("micro_batch_size", [1, 2, 3])
-async def test_hf_fsdp_and_direct_model_gradients_match(micro_batch_size):
+@pytest.mark.parametrize("explicit_mask", [False, True])
+async def test_hf_fsdp_and_direct_model_gradients_match(
+    micro_batch_size, explicit_mask, monkeypatch
+):
     torch.manual_seed(13)
     fsdp_model = _TinyModel()
     hf_network = copy.deepcopy(fsdp_model)
     direct = copy.deepcopy(fsdp_model)
     data = _datums()
+    for datum in data:
+        weights = datum.loss_fn_inputs["weights"].to_torch()
+        if explicit_mask:
+            datum.loss_fn_inputs["mask"] = datum.loss_fn_inputs["weights"]
+            weights = torch.ones_like(weights)
+        # Positive weights still identify response tokens; only explicit masks
+        # are binary. In the explicit-mask case, weights must not override it.
+        datum.loss_fn_inputs["weights"] = types.TensorData.from_torch(weights * 2.5)
     terms = []
     for datum in data:
         tokens = torch.tensor(datum.model_input.to_ints())
@@ -177,23 +218,19 @@ async def test_hf_fsdp_and_direct_model_gradients_match(micro_batch_size):
                 logprobs[None],
                 fields["logprobs"],
                 fields["advantages"],
-                fields["weights"],
+                fields["mask" if explicit_mask else "weights"],
                 fields["ref_logprobs"],
             )
         )
     expected = torch.stack(terms).sum()
     expected.backward()
     out = forward_backward(fsdp_model, data, "trinity_ppo", CONFIG, micro_batch_size)
-    hf = HFTrainingModel.__new__(HFTrainingModel)
-    hf.model = cast(Any, hf_network)
-    hf_loss = 0.0
-    for start in range(0, len(data), micro_batch_size):
-        value, _, _ = await hf._forward_micro_batch(
-            data[start : start + micro_batch_size], get_loss_fn("trinity_ppo"), CONFIG, True
-        )
-        hf_loss += value
+    hf = _hf_model(hf_network, micro_batch_size, monkeypatch)
+    hf_output = await hf.forward(
+        data, "lora", cast(types.LossFnType, "trinity_ppo"), CONFIG, backward=True
+    )
     assert out["metrics"]["loss:sum"] == pytest.approx(expected.item(), abs=1e-6)
-    assert hf_loss == pytest.approx(expected.item(), abs=1e-6)
+    assert hf_output.metrics["loss:sum"] == pytest.approx(expected.item(), abs=1e-6)
     torch.testing.assert_close(fsdp_model.table.weight.grad, direct.table.weight.grad)
     torch.testing.assert_close(hf_network.table.weight.grad, direct.table.weight.grad)
 
@@ -205,6 +242,117 @@ def test_fsdp_validates_later_rows_before_accumulating_gradients():
     with pytest.raises(ValueError, match="logprobs"):
         forward_backward(model, data, "trinity_ppo", CONFIG, 1)
     assert model.table.weight.grad is None
+
+
+@pytest.mark.parametrize("backend", ["fsdp", "hf"])
+@pytest.mark.parametrize("micro_batch_size", [1, 3])
+@pytest.mark.parametrize(
+    "field", ["target_tokens", "logprobs", "advantages", "ref_logprobs", "mask", "weights"]
+)
+@pytest.mark.parametrize("length", [2, 4])
+async def test_token_lengths_rejected_before_computation(
+    backend, micro_batch_size, field, length, monkeypatch
+):
+    model = _TinyModel()
+    # A previous valid request may already have accumulated gradients. Rejecting
+    # this request must preserve them, not clear them or add partial gradients.
+    previous_gradient = torch.ones_like(model.table.weight)
+    model.table.weight.grad = previous_gradient.clone()
+    data = _datums()
+    for datum in data:
+        datum.loss_fn_inputs["mask"] = datum.loss_fn_inputs["weights"]
+    original = data[-1].loss_fn_inputs[field]
+    data[-1].loss_fn_inputs[field] = types.TensorData(
+        data=[1] * length, dtype=original.dtype, shape=[length]
+    )
+    with pytest.raises(ValueError, match=f"datum 2.*{field}.*model_input"):
+        await _run_backend(backend, model, data, micro_batch_size, monkeypatch)
+    assert model.forward_calls == 0
+    torch.testing.assert_close(model.table.weight.grad, previous_gradient)
+
+
+@pytest.mark.parametrize("backend", ["fsdp", "hf"])
+@pytest.mark.parametrize("micro_batch_size", [1, 3])
+@pytest.mark.parametrize("value", [-1.0, 0.5, 2.0, float("nan"), float("inf")])
+async def test_nonbinary_mask_rejected_before_computation(
+    backend, micro_batch_size, value, monkeypatch
+):
+    model = _TinyModel()
+    data = _datums()
+    for datum in data:
+        datum.loss_fn_inputs["mask"] = datum.loss_fn_inputs["weights"]
+    data[-1].loss_fn_inputs["mask"] = types.TensorData(
+        data=[0.0, 1.0, value], dtype="float32", shape=[3]
+    )
+    with pytest.raises(ValueError, match="datum 2.*mask.*zero or one"):
+        await _run_backend(backend, model, data, micro_batch_size, monkeypatch)
+    assert model.forward_calls == 0
+    assert model.table.weight.grad is None
+
+
+@pytest.mark.parametrize("backend", ["fsdp", "hf"])
+@pytest.mark.parametrize("ndim", [0, 2])
+async def test_token_fields_require_one_dimension(backend, ndim, monkeypatch):
+    model = _TinyModel()
+    data = _datums()
+    # All rows have the same invalid rank, so the generic consistency check
+    # alone cannot reject this request.
+    for datum in data:
+        tensor = datum.loss_fn_inputs["logprobs"].to_torch()
+        tensor = tensor[0] if ndim == 0 else tensor.unsqueeze(0)
+        datum.loss_fn_inputs["logprobs"] = types.TensorData.from_torch(tensor)
+    with pytest.raises(ValueError, match="datum 0.*logprobs.*1-D"):
+        await _run_backend(backend, model, data, 1, monkeypatch)
+    assert model.forward_calls == 0
+    assert model.table.weight.grad is None
+
+
+@pytest.mark.parametrize("backend", ["fsdp", "hf"])
+async def test_empty_later_datum_rejected_before_computation(backend, monkeypatch):
+    model = _TinyModel()
+    data = _datums()
+    data[-1] = types.Datum(
+        model_input=types.ModelInput.from_ints([]),
+        loss_fn_inputs={
+            key: types.TensorData.from_torch(value.to_torch()[:0])
+            for key, value in data[-1].loss_fn_inputs.items()
+        },
+    )
+    with pytest.raises(ValueError, match="datum 2.*model_input must contain tokens"):
+        await _run_backend(backend, model, data, 1, monkeypatch)
+    assert model.forward_calls == 0
+    assert model.table.weight.grad is None
+
+
+@pytest.mark.parametrize("field", ["logprobs", "mask"])
+async def test_fsdp_request_rejected_before_actor_dispatch(field):
+    from tuft.backends.fsdp_training_backend import FSDPTrainingBackend
+
+    backend = FSDPTrainingBackend(
+        ModelConfig(
+            model_name="test",
+            model_path=Path("/tmp/qwen-model"),
+            max_model_len=32,
+            training_backend="fsdp",
+            fsdp_num_gpus=2,
+        )
+    )
+    actors = [MagicMock(), MagicMock()]
+    backend._actors = actors
+    backend._lora_id_to_adapter_name = {"lora": "adapter_0"}
+    data = _datums()
+    for datum in data:
+        datum.loss_fn_inputs["mask"] = datum.loss_fn_inputs["weights"]
+    values = [-2.0] if field == "logprobs" else [0.0, 1.0, 0.5]
+    data[-1].loss_fn_inputs[field] = types.TensorData(
+        data=values, dtype="float32", shape=[len(values)]
+    )
+    with pytest.raises(ValueError, match=f"datum 2.*{field}"):
+        await backend.forward(
+            data, "lora", cast(types.LossFnType, "trinity_ppo"), CONFIG, backward=True
+        )
+    for actor in actors:
+        actor.forward_backward.remote.assert_not_called()
 
 
 def test_registered_loss_name_passes_protobuf_decoder():

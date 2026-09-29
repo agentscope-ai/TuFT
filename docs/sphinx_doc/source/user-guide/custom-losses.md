@@ -80,6 +80,12 @@ aligned with each input token. Positive weights mark trained response tokens;
 prompt, padding and discarded responses have zero weights. An explicit binary
 `mask`, when supplied, takes precedence. Provide `ref_logprobs` when `kl_coef > 0`.
 
+Each token-level field must be a one-dimensional tensor with exactly the datum's
+`model_input` token count. HF and FSDP validate every datum's lengths and explicit
+binary mask before padding, worker dispatch or the first forward/backward. A bad
+later datum therefore cannot silently acquire padded values or leave partial
+gradients from this request. Positive `weights` need not be binary.
+
 ```python
 loss_config = {
     "clip_range": 0.2,

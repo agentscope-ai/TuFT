@@ -26,6 +26,7 @@ from tuft.backends.loss_inputs import (
     MODEL_DERIVED_LOSS_INPUTS,
     batch_loss_fn_input,
     validate_client_loss_fn_inputs,
+    validate_trinity_ppo_loss_fn_inputs,
 )
 from tuft.backends.vllm_lora_compat import (
     add_language_model_aliases,
@@ -374,11 +375,14 @@ class HFTrainingModel:
                 )
 
             micro_batch_size = self.config.micro_batch_size
-            client_keys = validate_client_loss_fn_inputs(
-                data,
-                ignored_keys=MODEL_DERIVED_LOSS_INPUTS,
-                required_keys=frozenset({"target_tokens"}),
-            )
+            if loss_fn == "trinity_ppo":
+                client_keys = validate_trinity_ppo_loss_fn_inputs(data)
+            else:
+                client_keys = validate_client_loss_fn_inputs(
+                    data,
+                    ignored_keys=MODEL_DERIVED_LOSS_INPUTS,
+                    required_keys=frozenset({"target_tokens"}),
+                )
 
             num_micro_batches = (batch_size + micro_batch_size - 1) // micro_batch_size
             span.set_attribute("tuft.num_micro_batches", num_micro_batches)
