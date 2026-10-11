@@ -227,6 +227,12 @@ class VLLMEngine:
             return None
         return f"http://{self.api_server_host}:{self.api_server_port}"
 
+    def get_device_assignment(self) -> dict:
+        """Ray's physical GPU assignment, before starting the engine workers."""
+        import ray
+
+        return {"node": ray.get_runtime_context().get_node_id(), "gpus": ray.get_gpu_ids()}
+
     async def generate(self, prompt: Any, lora_request: Any = None, **kwargs: Any) -> Any:
         """Generate and return the raw vLLM ``RequestOutput``.
 

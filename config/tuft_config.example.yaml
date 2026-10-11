@@ -47,6 +47,10 @@ model_owner: local-user
 #       become usable again once the capability is re-enabled. An empty list
 #       is rejected. colocate requires both capabilities.
 #   - tensor_parallel_size: Number of GPUs for tensor parallelism (default: 1)
+#   - scheduling: Optional bounded sampling admission. policy is round_robin
+#       (default), balanced (dedicated replicas), or loopweave (one shared HF
+#       training/sampling GPU plus fixed samplers). See tuft_config.loopweave.yaml
+#       and the development/loopweave guide for requirements and limits.
 #   - temperature: Default sampling temperature (default: 1.0)
 #   - top_p: Default nucleus sampling probability (default: 1.0)
 #   - top_k: Default top-k sampling (default: -1, disabled)

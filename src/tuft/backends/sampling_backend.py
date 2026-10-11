@@ -14,6 +14,7 @@ from opentelemetry.trace import StatusCode
 from tinker import types
 
 from ..config import ModelConfig
+from ..scheduling import ResourceScheduler
 from ..telemetry.tracing import get_tracer
 from .base_backend import BaseSamplingBackend
 from .vllm_engine import VLLMEngine, VLLMEngineConfig
@@ -96,6 +97,7 @@ class VLLMSamplingBackend(BaseSamplingBackend):
         self._instance_index = instance_index
         self.engine = self._create_engine(config)
         self.lora_adapters: dict[str, LoRARequest] = {}
+        self._zero_adapters: set[str] = set()
         self._counter = 1
         self._lock = asyncio.Lock()
         self._openai_api_url: Optional[str] = None
@@ -135,7 +137,8 @@ class VLLMSamplingBackend(BaseSamplingBackend):
             max_loras=config.max_loras,
             quantization=config.quantization,
             enable_runtime_lora_updating=True,
-            enable_openai_api=True,
+            # Only the scheduler may submit GPU work to a flex replica.
+            enable_openai_api=not (config.colocate and config.scheduling.policy == "loopweave"),
             enable_auto_tool_choice=config.enable_auto_tool_choice,
             tool_call_parser=config.tool_call_parser,
             reasoning_parser=config.reasoning_parser,
@@ -282,6 +285,8 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                     if lora_id is not None and lora_id not in self.lora_adapters:
                         raise ValueError(f"LoRA adapter {lora_id} not found in backend.")
                     lora_request = self.lora_adapters[lora_id] if lora_id is not None else None
+                    if lora_id in self._zero_adapters:
+                        lora_request = None
 
                 prompt_token_ids = prompt.to_ints()
                 params = {
@@ -342,6 +347,15 @@ class VLLMSamplingBackend(BaseSamplingBackend):
     async def add_adapter(self, lora_id: str, adapter_path: Path) -> None:
         from vllm.lora.request import LoRARequest
 
+        from .adapter_equivalence import is_zero_lora_snapshot
+
+        zero_snapshot = False
+        if (
+            self.config.scheduling.policy != "round_robin"
+            and self.config.scheduling.merge_zero_adapters
+        ):
+            zero_snapshot = await asyncio.to_thread(is_zero_lora_snapshot, adapter_path)
+
         with _get_tracer().start_as_current_span("sampling_backend.add_adapter") as span:
             span.set_attribute("tuft.lora_id", lora_id)
             try:
@@ -364,6 +378,9 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                             f"vLLM did not register LoRA adapter {lora_id} from {adapter_path}."
                         )
                     self.lora_adapters[lora_id] = request
+                    self._zero_adapters.discard(lora_id)
+                    if zero_snapshot:
+                        self._zero_adapters.add(lora_id)
             except Exception as e:
                 span.record_exception(e)
                 span.set_status(StatusCode.ERROR)
@@ -376,6 +393,7 @@ class VLLMSamplingBackend(BaseSamplingBackend):
                 if lora_id in self.lora_adapters:
                     # vLLM removes adapters by their integer id, not name.
                     lora_request = self.lora_adapters.pop(lora_id)
+                    self._zero_adapters.discard(lora_id)
                     await self.engine.remove_lora.remote(lora_request.lora_int_id)  # type: ignore[attr-defined]
 
     async def shutdown(self) -> None:
@@ -391,10 +409,11 @@ class VLLMSamplingBackend(BaseSamplingBackend):
         except Exception:
             pass
         self.lora_adapters.clear()
+        self._zero_adapters.clear()
 
 
 class DPSamplingBackend(BaseSamplingBackend):
-    """Data-Parallel sampling backend: N independent vLLM instances with round-robin LB.
+    """Data-parallel sampling with optional bounded, work-aware admission.
 
     Each instance runs on its own GPU(s) (tensor_parallel_size per instance).
     Requests are distributed across instances using round-robin for uniform load.
@@ -408,10 +427,22 @@ class DPSamplingBackend(BaseSamplingBackend):
     ) -> None:
         super().__init__(config)
         self._dp_size = config.data_parallel_size
+        self.scheduler: ResourceScheduler | None = None
+        if config.scheduling.policy != "round_robin":
+            self.scheduler = ResourceScheduler(
+                self._dp_size,
+                config.scheduling,
+                flex_index=0 if config.scheduling.policy == "loopweave" else None,
+            )
         self._instances: list[VLLMSamplingBackend] = []
         for i in range(self._dp_size):
+            # Only replica zero shares the training GPU. The other replicas
+            # retain full dedicated GPUs and persistent KV caches.
+            instance_config = config
+            if config.scheduling.policy == "loopweave" and i > 0:
+                instance_config = config.model_copy(update={"colocate": False})
             instance = VLLMSamplingBackend(
-                config, worker_venv_path=worker_venv_path, instance_index=i
+                instance_config, worker_venv_path=worker_venv_path, instance_index=i
             )
             self._instances.append(instance)
         # Atomic round-robin counter
@@ -443,12 +474,18 @@ class DPSamplingBackend(BaseSamplingBackend):
 
         For DP-aware routing, use get_openai_api_urls() instead.
         """
-        return self._instances[0].get_openai_api_url() if self._instances else None
+        index = 1 if self.config.scheduling.policy == "loopweave" else 0
+        return self._instances[index].get_openai_api_url() if self._instances else None
 
     def get_openai_api_urls(self) -> list[str]:
         """Return all vLLM instance URLs for DP-aware load balancing."""
         urls = []
-        for inst in self._instances:
+        # HTTP streaming cannot hold a scheduler reservation through this URL
+        # interface. Keep it on persistent replicas, including adapter loads.
+        instances = (
+            self._instances[1:] if self.config.scheduling.policy == "loopweave" else self._instances
+        )
+        for inst in instances:
             url = inst.get_openai_api_url()
             if url:
                 urls.append(url)
@@ -456,6 +493,10 @@ class DPSamplingBackend(BaseSamplingBackend):
 
     def get_next_openai_api_url(self) -> Optional[str]:
         """Return the next URL via round-robin for load-balanced proxying."""
+        if self.config.scheduling.policy == "loopweave":
+            index = 1 + self._rr_counter % (self._dp_size - 1)
+            self._rr_counter += 1
+            return self._instances[index].get_openai_api_url()
         inst = self._next_instance()
         return inst.get_openai_api_url()
 
@@ -467,16 +508,36 @@ class DPSamplingBackend(BaseSamplingBackend):
         include_prompt_logprobs: bool = False,
         topk_prompt_logprobs: int = 0,
         lora_id: Optional[str] = None,
+        tenant_id: str | None = None,
     ) -> types.SampleResponse:
-        """Route sampling to a DP instance via round-robin."""
-        instance = self._next_instance()
-        return await instance.sample(
-            prompt=prompt,
-            num_samples=num_samples,
-            sampling_params=sampling_params,
-            include_prompt_logprobs=include_prompt_logprobs,
-            topk_prompt_logprobs=topk_prompt_logprobs,
-            lora_id=lora_id,
+        """Route sampling according to the configured admission policy."""
+
+        async def execute(index: int) -> types.SampleResponse:
+            return await self._instances[index].sample(
+                prompt=prompt,
+                num_samples=num_samples,
+                sampling_params=sampling_params,
+                include_prompt_logprobs=include_prompt_logprobs,
+                topk_prompt_logprobs=topk_prompt_logprobs,
+                lora_id=lora_id,
+            )
+
+        if self.scheduler is None:
+            index = self._rr_counter % self._dp_size
+            self._rr_counter += 1
+            return await execute(index)
+        max_tokens = sampling_params.max_tokens
+        if max_tokens is None:
+            # Match VLLMSamplingBackend.sample's actual fallback. API handlers
+            # may already have resolved a configured default into this request.
+            max_tokens = 16
+        work = max(1, num_samples) * (len(prompt.to_ints()) + max_tokens)
+        return await self.scheduler.sample(
+            tenant=tenant_id or lora_id or "base",
+            adapter=lora_id,
+            work=work,
+            flex_eligible=work <= self.config.scheduling.flex_max_tokens,
+            operation=execute,
         )
 
     async def add_adapter(self, lora_id: str, adapter_path: Path) -> None:
@@ -486,6 +547,14 @@ class DPSamplingBackend(BaseSamplingBackend):
         inconsistent adapter sets (some registered, some not), causing round-robin
         sampling to intermittently fail with an unknown lora_id.
         """
+        if self.scheduler is not None and self.scheduler.flex_index is not None:
+            # Registration can allocate/copy device memory; share the same
+            # drain boundary as training mutations on the colocated replica.
+            await self.scheduler.training(lambda: self._add_adapter(lora_id, adapter_path))
+            return
+        await self._add_adapter(lora_id, adapter_path)
+
+    async def _add_adapter(self, lora_id: str, adapter_path: Path) -> None:
         results = await asyncio.gather(
             *[inst.add_adapter(lora_id, adapter_path) for inst in self._instances],
             return_exceptions=True,
@@ -505,10 +574,18 @@ class DPSamplingBackend(BaseSamplingBackend):
 
     async def remove_adapter(self, lora_id: str) -> None:
         """Remove LoRA adapter from ALL DP instances."""
+        if self.scheduler is not None and self.scheduler.flex_index is not None:
+            await self.scheduler.training(lambda: self._remove_adapter(lora_id))
+            return
+        await self._remove_adapter(lora_id)
+
+    async def _remove_adapter(self, lora_id: str) -> None:
         await asyncio.gather(*[inst.remove_adapter(lora_id) for inst in self._instances])
 
     async def shutdown(self) -> None:
         """Shut down all DP vLLM instances."""
+        if self.scheduler is not None:
+            await self.scheduler.close()
         for inst in self._instances:
             try:
                 await inst.shutdown()

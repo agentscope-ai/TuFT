@@ -70,7 +70,7 @@ class BaseSamplingBackend(BaseBackend):
             from ..backends.sampling_backend import DummySamplingBackend
 
             return DummySamplingBackend(config)
-        if config.data_parallel_size > 1:
+        if config.data_parallel_size > 1 or config.scheduling.policy != "round_robin":
             from ..backends.sampling_backend import DPSamplingBackend
 
             return DPSamplingBackend(config, worker_venv_path=worker_venv_path)

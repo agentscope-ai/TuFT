@@ -159,6 +159,10 @@ class HFTrainingModel:
         """Do nothing for now. Just used to make sure the actor is ready."""
         pass
 
+    def get_device_assignment(self) -> dict:
+        """Expose Ray placement for validating shared-GPU scheduling at startup."""
+        return {"node": ray.get_runtime_context().get_node_id(), "gpus": ray.get_gpu_ids()}
+
     # --------------------------------
     # LoRA adapter management methods
     # --------------------------------

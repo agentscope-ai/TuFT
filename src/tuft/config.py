@@ -60,6 +60,24 @@ class TelemetryConfig(BaseModel):
     resource_attributes: dict[str, str] = Field(default_factory=dict)
 
 
+class SchedulingConfig(BaseModel):
+    """Bounded multi-tenant sampling and optional training-GPU borrowing."""
+
+    policy: Literal["round_robin", "balanced", "loopweave"] = "round_robin"
+    max_inflight_per_replica: int = Field(default=32, ge=1)
+    max_queued_requests: int = Field(default=1024, ge=1)
+    queue_timeout_s: float = Field(default=120, gt=0, allow_inf_nan=False)
+    # Affinity only wins when its extra queued token work fits this fraction.
+    locality_slack: float = Field(default=0.1, ge=0, le=1, allow_inf_nan=False)
+    merge_zero_adapters: bool = True
+    flex_max_inflight: int = Field(default=4, ge=1)
+    flex_max_tokens: int = Field(default=256, ge=1)
+    # Briefly keep the training lane open for an arriving optim_step/checkpoint.
+    training_quiet_s: float = Field(default=0.05, ge=0, le=10, allow_inf_nan=False)
+    # Allow a short training burst to finish before placing its next rollout.
+    sampling_alignment_s: float = Field(default=0.05, ge=0, le=10, allow_inf_nan=False)
+
+
 class ModelConfig(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
 
@@ -80,6 +98,7 @@ class ModelConfig(BaseModel):
     # tensor_parallel_size GPUs) and load-balance requests across them.  Ideal for small
     # models where TP introduces unnecessary cross-GPU communication overhead.
     data_parallel_size: int = 1
+    scheduling: SchedulingConfig = Field(default_factory=SchedulingConfig)
 
     # default sampling parameters for this model
     temperature: float = 1.0
@@ -193,13 +212,26 @@ class ModelConfig(BaseModel):
     def validate_colocate(self) -> "ModelConfig":
         if self.colocate and self.tensor_parallel_size != 1:
             raise ValueError("Colocate option is only supported for tensor_parallel_size=1.")
-        if self.colocate and self.data_parallel_size > 1:
+        if self.colocate and self.data_parallel_size > 1 and self.scheduling.policy != "loopweave":
             raise ValueError("Colocate option is not supported with data_parallel_size > 1.")
         if self.colocate and not (self.training_enabled and self.sampling_enabled):
             raise ValueError(
                 "Colocate places sampling and training on the same device, so it requires "
                 f"both capabilities; model {self.model_name} declares {self.capabilities}."
             )
+        return self
+
+    @model_validator(mode="after")
+    def validate_scheduling(self) -> "ModelConfig":
+        if self.data_parallel_size < 1:
+            raise ValueError("data_parallel_size must be positive")
+        if self.scheduling.policy == "loopweave":
+            if not self.colocate or self.training_backend != "hf":
+                raise ValueError("loopweave requires colocate=true and training_backend='hf'")
+            if self.data_parallel_size < 2:
+                raise ValueError("loopweave requires at least one fixed and one flex sampler")
+            if not 0 < self.sampling_memory_fraction < 1:
+                raise ValueError("loopweave sampling_memory_fraction must be between 0 and 1")
         return self
 
     @model_validator(mode="after")

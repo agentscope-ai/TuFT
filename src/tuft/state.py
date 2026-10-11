@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -141,16 +142,53 @@ class ServerState:
         self.sessions = SessionManager()
         self.training = TrainingController(self.config)
         self.sampling = SamplingController(self.config)
+        from .backends.sampling_backend import DPSamplingBackend
+        from .backends.training_backend import HFTrainingBackend
+
+        for model in self.config.supported_models:
+            if model.scheduling.policy == "loopweave":
+                training_backend = self.training.training_backends[model.model_name]
+                sampling_backend = self.sampling._base_backends[model.model_name]
+                # CPU dummy factories intentionally do not allocate the GPU pool.
+                if isinstance(sampling_backend, DPSamplingBackend) and isinstance(
+                    training_backend, HFTrainingBackend
+                ):
+                    training_backend.scheduler = sampling_backend.scheduler
         self.auth_db = AuthenticationDB(self.config.authorized_users)
         self.future_store = FutureStore()
 
     async def async_init(self) -> None:
         """Put any async initialization logic here"""
+        from .backends.sampling_backend import DPSamplingBackend
+        from .backends.training_backend import HFTrainingBackend
+
+        for model in self.config.supported_models:
+            if model.scheduling.policy == "loopweave":
+                training = self.training.training_backends[model.model_name]
+                sampling = self.sampling._base_backends[model.model_name]
+                if isinstance(training, HFTrainingBackend) and isinstance(
+                    sampling, DPSamplingBackend
+                ):
+                    trainer_device, sampler_device = await asyncio.gather(
+                        training.model.get_device_assignment.remote(),
+                        sampling._instances[0].engine.get_device_assignment.remote(),
+                    )
+                    if not trainer_device["gpus"] or trainer_device != sampler_device:
+                        raise RuntimeError(
+                            "LoopWeave requires trainer and flex sampler on the same GPU; "
+                            f"got {trainer_device} and {sampler_device}. "
+                            "Use an otherwise idle Ray cluster with the configured GPU count."
+                        )
         await self.sampling.async_init()
         await self._restore_from_checkpoints()
 
     async def shutdown(self) -> None:
         """Shut down all backends and release resources (Ray actors, GPU memory)."""
+        # Drain shared-GPU reservations before either side's actors are killed.
+        for backend in self.sampling._base_backends.values():
+            scheduler = getattr(backend, "scheduler", None)
+            if scheduler is not None:
+                await scheduler.close()
         try:
             await self.training.shutdown()
         except Exception:
