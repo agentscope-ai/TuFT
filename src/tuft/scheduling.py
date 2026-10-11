@@ -101,6 +101,9 @@ class ResourceScheduler:
         self._started = time.monotonic()
         self.profiler = LoopProfiler()
         self._seconds_per_token: float | None = None
+        self._flex_busy_since = 0.0
+        self._flex_busy_work = 0
+        self._flex_busy_failed = False
 
     def snapshot(self) -> dict[str, Any]:
         """Bounded aggregate metrics, without tenant identifiers."""
@@ -288,6 +291,12 @@ class ResourceScheduler:
                 continue
             stalled = 0
             self._remove_queued(request)
+            if index == self.flex_index:
+                if not self._active[index]:
+                    self._flex_busy_since = time.monotonic()
+                    self._flex_busy_work = 0
+                    self._flex_busy_failed = False
+                self._flex_busy_work += request.work
             self._active[index] += 1
             self._work[index] += request.work
             self._adapter[index] = request.adapter
@@ -308,6 +317,8 @@ class ResourceScheduler:
             self._stats[f"replica_{index}_completed"] += 1
         except BaseException as exc:
             self._stats["failed"] += 1
+            if index == self.flex_index:
+                self._flex_busy_failed = True
             if not request.future.done():
                 if isinstance(exc, asyncio.CancelledError):
                     request.future.cancel()
@@ -316,16 +327,19 @@ class ResourceScheduler:
         finally:
             elapsed = time.monotonic() - started
             self._stats[f"replica_{index}_request_s"] += elapsed
-            if index == self.flex_index:
-                rate = elapsed / request.work
-                self._seconds_per_token = (
-                    rate
-                    if self._seconds_per_token is None
-                    else 0.2 * rate + 0.8 * self._seconds_per_token
-                )
             self._active[index] -= 1
             self._work[index] -= request.work
             if index == self.flex_index and not self._active[index]:
+                # Concurrent requests share a decode batch. Summing individual
+                # latencies counts the same GPU interval repeatedly and makes
+                # a learned window reject useful work as concurrency increases.
+                if not self._flex_busy_failed:
+                    rate = (time.monotonic() - self._flex_busy_since) / self._flex_busy_work
+                    self._seconds_per_token = (
+                        rate
+                        if self._seconds_per_token is None
+                        else 0.2 * rate + 0.8 * self._seconds_per_token
+                    )
                 self._flex_drained.set()
             self._pump()
 

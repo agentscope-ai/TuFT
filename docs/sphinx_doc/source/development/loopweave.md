@@ -16,6 +16,12 @@ sampling sessions retain their published snapshot identity.
 | `balanced` | Existing dedicated sampling replicas, bounded fair admission and outstanding-token routing. Works with HF or FSDP training. |
 | `loopweave` | One shared HF/vLLM GPU plus persistent sampling GPUs; admission closes and drains before training. |
 
+`config/tuft_config.loopweave.h100.yaml` records the measured four-tenant Qwen3-4B
+throughput profile on two H100 80GB GPUs. It enables CUDA graphs and raises the
+fixed/shared in-flight limits to 128/64. The conservative defaults bound smaller
+drain batches; they are not a universal throughput optimum. Short eager-mode
+pilots regressed, so keep this policy opt-in and measure the intended workload.
+
 `loopweave` requires one configured base model, `training_backend: hf`,
 `tensor_parallel_size: 1`, `colocate: true`, both capabilities, and
 `data_parallel_size >= 2`. The DP count includes the shared sampler. Therefore
@@ -123,7 +129,8 @@ alternates policy order, and records raw NVML samples and per-run throughput and
 latency. Training data and sampling token budgets are identical across policies.
 Each tenant publishes its updated snapshot between measured rounds.
 The throughput case uses four tenants, 32 samples per tenant per round, three
-rounds, 128 generated tokens per sample, fixed/flex limits 128/64, CUDA graphs,
+rounds, 512 generated tokens per sample, fixed/flex limits 128/64, CUDA graphs,
+a 544-token shared-request budget,
 and a 0.25-second alignment budget. These are explicitly measured settings,
 not a claim that the conservative defaults fit every workload.
 GPU-seconds are allocated GPU count multiplied by measured elapsed time, not

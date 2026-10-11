@@ -93,9 +93,12 @@ def main(
     output_tokens: int = 512,
 ):
     result = benchmark.remote(repeats, model, validate_tests, output_tokens)  # type: ignore[attr-defined]
-    output = (
-        ROOT / "benchmarks" / "loopweave" / f"gpu-{model.rsplit('/', 1)[-1]}-{output_tokens}.json"
+    name = (
+        f"gpu-integration-{model.rsplit('/', 1)[-1]}.json"
+        if repeats == 0
+        else f"gpu-{model.rsplit('/', 1)[-1]}-{output_tokens}.json"
     )
+    output = ROOT / "benchmarks" / "loopweave" / name
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, indent=2) + "\n")
     print(f"Saved {output}")

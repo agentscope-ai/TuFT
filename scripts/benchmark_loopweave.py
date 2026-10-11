@@ -382,6 +382,7 @@ def main():
             result["runs"].append(row)
             args.output.write_text(json.dumps(result, indent=2) + "\n")
             print(json.dumps(row), flush=True)
+    args.output.write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result), flush=True)
 
 

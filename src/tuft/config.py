@@ -395,13 +395,17 @@ class AppConfig(BaseModel):
         supported workflow, and must not be flagged as configuration drift.
         Records belonging to a disabled capability are preserved and validated
         against the rest of the model configuration instead.
+
+        Scheduling is also runtime-only: it changes admission and routing, not
+        adapter geometry or checkpoint contents. Excluding it preserves restart
+        compatibility with signatures written before scheduling was configurable.
         """
         return self.model_dump(
             mode="json",
             exclude={
                 "persistence": True,
                 "authorized_users": True,
-                "supported_models": {"__all__": {"capabilities"}},
+                "supported_models": {"__all__": {"capabilities", "scheduling"}},
             },
         )
 

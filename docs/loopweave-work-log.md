@@ -144,3 +144,36 @@ sampling probabilities unless a separately validated API contract supports this.
 - Self-review caught overload being surfaced as a generic server error. It now
   inherits TuFT's existing resource-exhausted exception (429), with a regression
   assertion. Round-robin behavior remains the default.
+
+## Final validation preparation
+
+- The CUDA-graph 128-token pilot completed identical 49,152-token work in
+  11.516 s static versus 11.013 s shared (1.046x), with mean sampling latency
+  2.229 versus 1.678 s. Each replica completed 192 requests during measurement.
+  This single modest gain is not treated as a stable performance conclusion.
+- The final run alternates policy order across three repetitions using 512-token
+  rollouts (196,608 tokens, 12 training steps, eight publications per policy/run).
+  It also executes the actual two-GPU pytest integration test. Earlier shorter
+  and eager-mode results remain in the report rather than being discarded.
+- Full local test hook: 612 passed, 32 GPU tests skipped. Lint, formatting,
+  isolated type checking and secret scanning all pass. Fixed the type-check
+  hook's Tinker constraint to match pyproject's existing >=0.25,<0.26 range;
+  its previous open-ended >=0.18.2 installed an incompatible API. Public model
+  revision hashes are explicitly allowlisted for the secret scanner.
+- Implementation commit: `26afb88`. Existing user edits to pyproject.toml and
+  .agents remain separate. Stale sandbox test processes were stopped after
+  successful replacement runs with the required local socket access.
+- Final self-review found that adding a default scheduling field to persisted
+  AppConfig signatures would block restart of existing servers. Scheduling is
+  now excluded as runtime-only metadata, alongside capabilities. A regression
+  reconstructs the old signature, allows a scheduling-only change, and still
+  rejects LoRA-rank drift. This follow-up changes persistence serialization only;
+  the in-progress GPU runs use commit 26afb88 with persistence disabled, so their
+  timed execution path is unaffected. Targeted persistence checks pass.
+- A second late review correction measures shared-sampler service rate over a
+  complete concurrent busy interval. Per-request elapsed time double-counted
+  that interval and could overestimate drain time after stable loop histories
+  formed. Failed intervals do not update the estimate. Deterministic tests cover
+  both cases. The three-round performance runs had no window rejections; the results therefore
+  demonstrate borrowing/alignment, not a learned-prediction performance benefit.
+  A separate five-round real-GPU integration run checks the final source.

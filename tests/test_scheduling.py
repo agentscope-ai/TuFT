@@ -2,11 +2,13 @@
 
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
 
-from tuft.config import ModelConfig, SchedulingConfig
+from tuft.config import AppConfig, ModelConfig, SchedulingConfig
+from tuft.persistence.redis_store import ConfigSignature
 from tuft.scheduling import LoopProfiler, ResourceScheduler, SchedulingOverloadedError
 
 
@@ -356,3 +358,69 @@ def test_reject_invalid_hybrid_layout(override):
     values.update(override)
     with pytest.raises(ValidationError):
         ModelConfig.model_validate(values)
+
+
+def test_legacy_persistence_signature_allows_scheduler_change_but_not_geometry(tmp_path):
+    model = ModelConfig(
+        model_name="qwen", model_path=Path("qwen"), max_model_len=512, max_lora_rank=8
+    )
+    config = AppConfig(supported_models=[model], checkpoint_dir=tmp_path)
+    # Reconstruct a pre-scheduler signature using the old serialization shape.
+    legacy_data = config.model_dump(
+        mode="json",
+        exclude={
+            "persistence": True,
+            "authorized_users": True,
+            "supported_models": {"__all__": {"capabilities"}},
+        },
+    )
+    legacy_data["supported_models"][0].pop("scheduling")
+    legacy = ConfigSignature(config_data=legacy_data)
+    assert legacy.matches(ConfigSignature.from_app_config(config))
+    model.scheduling = SchedulingConfig(policy="balanced")
+    assert legacy.matches(ConfigSignature.from_app_config(config))
+    model.max_lora_rank = 16
+    assert not legacy.matches(ConfigSignature.from_app_config(config))
+
+
+async def test_window_service_estimate_counts_concurrent_gpu_interval_once(monkeypatch):
+    import tuft.scheduling as module
+
+    now = [0.0]
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    scheduler = ResourceScheduler(2, config(flex_max_inflight=2), flex_index=0)
+    fixed_release, flex_release = asyncio.Event(), asyncio.Event()
+    fixed_started = asyncio.Event()
+    flex_indices = []
+
+    async def fixed(index):
+        assert index == 1
+        fixed_started.set()
+        await fixed_release.wait()
+
+    async def flex(index):
+        flex_indices.append(index)
+        await flex_release.wait()
+
+    fixed_task = asyncio.create_task(scheduler.sample("fixed", None, 10000, False, fixed))
+    await fixed_started.wait()
+    batch = [asyncio.create_task(scheduler.sample(str(i), None, 100, True, flex)) for i in range(2)]
+    await spin_until(lambda: len(flex_indices) == 2)
+    assert flex_indices == [0, 0]
+    now[0] = 10.0
+    flex_release.set()
+    await asyncio.gather(*batch)
+    # 200 reserved tokens served in one 10-second concurrent interval.
+    assert scheduler._seconds_per_token == pytest.approx(10 / 200)
+
+    async def fail(index):
+        assert index == 0
+        raise RuntimeError("backend rejected request")
+
+    with pytest.raises(RuntimeError, match="rejected"):
+        await scheduler.sample("bad", None, 100, True, fail)
+    # Fast failures must not be learned as improved GPU throughput.
+    assert scheduler._seconds_per_token == pytest.approx(10 / 200)
+    fixed_release.set()
+    await fixed_task
+    await scheduler.close()
