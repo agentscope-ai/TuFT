@@ -1,0 +1,6 @@
+# Local diagnostics and superseded copies; cited raw measurements stay versioned.
+*.log
+gpu-results.json
+gpu-Qwen3-4B.json
+cpu-test-counts.json
+cpu-final.xml

@@ -1,0 +1,15 @@
+{
+  "environment": {
+    "torch": "2.11.0+cu130",
+    "vllm": "0.24.0",
+    "transformers": "5.19.0",
+    "python": "3.12.13",
+    "model_path": "/root/.cache/huggingface/hub/models--Qwen--Qwen3-4B/snapshots/1cfa9a7208912126459214e8b04321603b3df60c",
+    "model_name": "Qwen/Qwen3-4B",
+    "benchmark_sha256": "c1c0ce792136e1e58da7436b735fbc1c2d5718576b79fbecfd056de299c114fc",
+    "source_sha256": "7651254a63e52e2229e1a2f22bb73ac51653ec2b76c2d3af118fe6d930c0aa0c",
+    "gpus": "name, memory.total [MiB], driver_version\nNVIDIA H100 80GB HBM3, 81559 MiB, 580.95.05\nNVIDIA H100 80GB HBM3, 81559 MiB, 580.95.05\n"
+  },
+  "runs": [],
+  "gpu_tests_junit": "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites name=\"pytest tests\"><testsuite name=\"pytest\" errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"1\" time=\"369.885\" timestamp=\"2026-10-11T09:36:33.207123+00:00\" hostname=\"modal\"><testcase classname=\"tests.test_loopweave_gpu\" name=\"test_multi_tenant_training_publication_and_sampling\" time=\"369.854\" /></testsuite></testsuites>"
+}

@@ -1,0 +1,40 @@
+{
+  "round_robin": {
+    "runs": 1,
+    "elapsed_median_s": 21.779038986000018,
+    "steps_per_s_median": 0.55098849897435,
+    "gpu_seconds_per_step": 3.629839831000003,
+    "sample_latency_mean_s": 6.085455808333334,
+    "sample_latency_p95_s": 6.473278489999984,
+    "train_latency_mean_s": 1.1604254429999965,
+    "total_output_tokens": 12288,
+    "gpu_sm_percent_mean": 5.752293577981652,
+    "peak_memory_gib_per_gpu": [
+      3.53009033203125,
+      72.46942138671875
+    ]
+  },
+  "loopweave": {
+    "runs": 1,
+    "elapsed_median_s": 22.054768991999993,
+    "steps_per_s_median": 0.5441000086807893,
+    "gpu_seconds_per_step": 3.675794831999999,
+    "sample_latency_mean_s": 6.121227353135417,
+    "sample_latency_p95_s": 6.547605524000005,
+    "train_latency_mean_s": 1.2025266670000103,
+    "total_output_tokens": 12288,
+    "gpu_sm_percent_mean": 5.522935779816514,
+    "peak_memory_gib_per_gpu": [
+      39.8714599609375,
+      72.469482421875
+    ]
+  },
+  "paired_speedup": {
+    "values": [
+      0.9874979417784884
+    ],
+    "median": 0.9874979417784884,
+    "min": 0.9874979417784884,
+    "max": 0.9874979417784884
+  }
+}

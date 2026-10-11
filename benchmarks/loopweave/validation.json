@@ -1,0 +1,61 @@
+{
+  "cpu-final": {
+    "tests": "604",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "39.769",
+    "timestamp": "2026-10-11T08:57:56.229612+00:00"
+  },
+  "scheduler-tests": {
+    "name": "pytest",
+    "errors": "0",
+    "failures": "0",
+    "skipped": "0",
+    "tests": "38",
+    "time": "9.055",
+    "timestamp": "2026-10-11T09:29:43.018821+00:00",
+    "hostname": "qlc-ark1"
+  },
+  "lint": "passed",
+  "typecheck": "0 errors, 0 warnings, 0 informations",
+  "full_repository_suite": {
+    "name": "pytest",
+    "errors": "0",
+    "failures": "0",
+    "skipped": "32",
+    "tests": "646",
+    "time": "51.332",
+    "timestamp": "2026-10-11T09:38:12.427688+00:00",
+    "hostname": "qlc-ark1"
+  },
+  "repository_commit_hooks": "all passed for final source (commit-followup-final.log)",
+  "implementation_commit": "26afb88",
+  "restart_regression": {
+    "name": "pytest",
+    "errors": "0",
+    "failures": "0",
+    "skipped": "1",
+    "tests": "57",
+    "time": "9.683",
+    "timestamp": "2026-10-11T09:19:05.842579+00:00",
+    "hostname": "qlc-ark1"
+  },
+  "final_source_sha256": "7651254a63e52e2229e1a2f22bb73ac51653ec2b76c2d3af118fe6d930c0aa0c",
+  "final_source_commit": "5bd0005",
+  "gpu_integration": {
+    "name": "pytest",
+    "errors": "0",
+    "failures": "0",
+    "skipped": "0",
+    "tests": "1",
+    "time": "369.885",
+    "timestamp": "2026-10-11T09:36:33.207123+00:00",
+    "hostname": "modal",
+    "training_steps": 10,
+    "publications": 8,
+    "output_tokens": 10240,
+    "source_sha256": "7651254a63e52e2229e1a2f22bb73ac51653ec2b76c2d3af118fe6d930c0aa0c"
+  },
+  "performance_source_commit": "26afb88"
+}

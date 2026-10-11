@@ -177,3 +177,32 @@ sampling probabilities unless a separately validated API contract supports this.
   both cases. The three-round performance runs had no window rejections; the results therefore
   demonstrate borrowing/alignment, not a learned-prediction performance benefit.
   A separate five-round real-GPU integration run checks the final source.
+
+## Completed results
+
+- Three matched 4B / 512-token pairs all improved: static/shared seconds were
+  27.196/21.501, 25.406/20.205 and 26.451/20.521. Median paired throughput gain
+  is 26.5% (range 25.7–28.9%). Pooled allocated GPU-seconds per training step fell
+  4.392 to 3.457 (21.3%); mean sampling latency fell 6.828 to 4.675 s (31.5%).
+- Tradeoffs: mean training latency increased 1.453 to 1.659 s (14.2%); the shared
+  GPU retained substantially more memory. Earlier eager-mode regressions remain
+  in the report. This is a workload-specific steady-state result, not a claim
+  about startup cost, universal speedup, task quality, or the paper's full system.
+- Each measured shared run completed 192 requests on each replica, with no window
+  rejections. Every policy/run passed real adapter-isolation, checkpoint-restore
+  and new-snapshot assertions; zero-adapter greedy tokens/log probabilities
+  matched exactly in all shared runs.
+- Final source commit `5bd0005`: all repository hooks pass, 614 local tests pass
+  (32 GPU tests skipped locally), and the separate five-round real-GPU test passes
+  on two H100s: 10 updates, eight publications and 10,240 generated tokens.
+  Its recorded source hash matches the local final source. The first GPU pytest
+  launch found an unrelated installed `scripts` package shadowing the checkout;
+  loading the harness by its explicit checkout path resolved it.
+- Raw measurements, all earlier pilots, JUnit evidence, summary JSON and chart:
+  `benchmarks/loopweave/README.md`. Reproduction commands and the measured H100
+  configuration are linked there. No persistent service was deployed.
+- Artifact commit secret scanning flagged generated SHA-256 provenance strings.
+  Reviewed only the flagged source/harness fingerprint fields and added precise
+  false-positive entries to .secrets.baseline; no detector was disabled and no
+  credential was added. The final timed source and harness hashes were checked
+  against commit 26afb88, and the GPU-test hash matches commit 5bd0005.
