@@ -1,0 +1,4 @@
+{
+  "returncode": 0,
+  "junit": "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites name=\"pytest tests\"><testsuite name=\"pytest\" errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"2\" time=\"281.141\" timestamp=\"2026-10-11T20:24:50.013030+00:00\" hostname=\"modal\"><testcase classname=\"tests.test_qwen_vllm_shared_gpu\" name=\"test_hybrid_vllm_aliases_and_recurrent_sleep[False]\" time=\"226.235\" /><testcase classname=\"tests.test_qwen_vllm_shared_gpu\" name=\"test_hybrid_vllm_aliases_and_recurrent_sleep[True]\" time=\"54.877\" /></testsuite></testsuites>"
+}

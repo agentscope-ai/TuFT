@@ -71,6 +71,9 @@ class SamplingSessionRecord(BaseModel):
     base_model: str
     user_id: str
     model_path: str | None = None
+    # Provenance for loop scheduling, separate from fairness/user and adapter IDs.
+    # Old sessions and base-only/public foreign snapshots safely remain unlinked.
+    training_run_id: str | None = None
     session_seq_id: int
     last_seq_id: int = -1
     history: list[SamplingHistoryEntry] = Field(default_factory=list)
@@ -239,6 +242,7 @@ class SamplingController:
     ) -> str:
         base_model_ref: str | None = None
         adapter_path: Path | None = None
+        training_run_id: str | None = None
         sampling_session_id = str(uuid.uuid4())
 
         with _get_tracer().start_as_current_span(
@@ -274,6 +278,8 @@ class SamplingController:
                     if base_model_ref not in self._base_backends:
                         self.require_sampling_capability(base_model_ref)
                         raise UnknownModelException(model_name=base_model_ref)
+                    if model_owner == user_id:
+                        training_run_id = parsed_checkpoint.training_run_id
                     adapter_path = parsed_checkpoint.adapter_path
                     sampling_backend = self._base_backends[base_model_ref]
                     await sampling_backend.add_adapter(
@@ -292,6 +298,7 @@ class SamplingController:
                     session_id=session_id,
                     user_id=user_id,
                     model_id=sampling_session_id,
+                    training_run_id=training_run_id,
                     base_model=base_model_ref,
                     model_path=str(adapter_path) if adapter_path else None,
                     session_seq_id=session_seq_id,
@@ -396,7 +403,12 @@ class SamplingController:
             topk_prompt_logprobs = request.topk_prompt_logprobs or 0
 
             scheduling_kwargs = (
-                {"tenant_id": user_id} if isinstance(backend, DPSamplingBackend) else {}
+                {
+                    "tenant_id": user_id,
+                    "loop_id": self.sampling_sessions[sampling_session_id].training_run_id,
+                }
+                if isinstance(backend, DPSamplingBackend)
+                else {}
             )
             response = await backend.sample(
                 prompt=prompt,

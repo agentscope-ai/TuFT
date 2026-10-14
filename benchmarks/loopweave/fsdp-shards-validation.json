@@ -1,0 +1,4 @@
+{
+  "returncode": 0,
+  "junit": "<?xml version=\"1.0\" encoding=\"utf-8\"?><testsuites name=\"pytest tests\"><testsuite name=\"pytest\" errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"3\" time=\"153.836\" timestamp=\"2026-10-11T20:28:53.730710+00:00\" hostname=\"modal\"><testcase classname=\"tests.test_fsdp_shared_gpu\" name=\"test_fsdp_tp_shards_preserve_training_and_storage\" time=\"24.557\" /><testcase classname=\"tests.test_fsdp_shared_gpu\" name=\"test_hybrid_fsdp_tp_shards_preserve_training_and_storage[dense]\" time=\"108.567\" /><testcase classname=\"tests.test_fsdp_shared_gpu\" name=\"test_hybrid_fsdp_tp_shards_preserve_training_and_storage[moe]\" time=\"20.683\" /></testsuite></testsuites>"
+}

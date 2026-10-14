@@ -1,0 +1,81 @@
+{
+  "round_robin": {
+    "runs": 1,
+    "elapsed_median_s": 65.43619440299994,
+    "steps_per_s_median": 0.18338474768407156,
+    "gpu_seconds_per_step": 10.90603240049999,
+    "sample_latency_mean_s": 11.714044516153647,
+    "sample_latency_p95_s": 18.717056531000026,
+    "train_latency_mean_s": 2.1778129614166724,
+    "total_output_tokens": 49152,
+    "peak_total_memory_gib": 127.89154052734375,
+    "mean_total_memory_gib": 119.81078539889283,
+    "gpu_sm_percent_mean": 41.13957055214724,
+    "peak_memory_gib_per_gpu": [
+      70.17034912109375,
+      57.72119140625
+    ]
+  },
+  "loopweave": {
+    "runs": 1,
+    "elapsed_median_s": 48.65799946699997,
+    "steps_per_s_median": 0.24661926366575024,
+    "gpu_seconds_per_step": 8.109666577833329,
+    "sample_latency_mean_s": 5.537278666486975,
+    "sample_latency_p95_s": 12.491999533000012,
+    "train_latency_mean_s": 4.097106718833326,
+    "total_output_tokens": 49152,
+    "peak_total_memory_gib": 178.4111328125,
+    "mean_total_memory_gib": 170.56155572055786,
+    "gpu_sm_percent_mean": 52.64876033057851,
+    "peak_memory_gib_per_gpu": [
+      120.33447265625,
+      58.07666015625
+    ]
+  },
+  "loopweave_shared": {
+    "runs": 1,
+    "elapsed_median_s": 44.18524192999985,
+    "steps_per_s_median": 0.27158389262665833,
+    "gpu_seconds_per_step": 7.364206988333308,
+    "sample_latency_mean_s": 5.266111667138026,
+    "sample_latency_p95_s": 11.150330263000114,
+    "train_latency_mean_s": 3.224925212250014,
+    "total_output_tokens": 49152,
+    "peak_total_memory_gib": 123.2568359375,
+    "mean_total_memory_gib": 121.3120161983945,
+    "gpu_sm_percent_mean": 58.29816513761468,
+    "peak_memory_gib_per_gpu": [
+      65.18017578125,
+      58.07666015625
+    ],
+    "shared_base_storage_gib": 50.097705364227295,
+    "reclaimed_sampler_memory_gib": 4.638671875,
+    "sleep_mean_ms": 132.6040884999884,
+    "wake_mean_ms": 149.43408900001032
+  },
+  "paired_speedup": {
+    "values": [
+      1.344818840063061
+    ],
+    "median": 1.344818840063061,
+    "min": 1.344818840063061,
+    "max": 1.344818840063061
+  },
+  "shared_vs_static": {
+    "values": [
+      1.480951366220123
+    ],
+    "median": 1.480951366220123,
+    "min": 1.480951366220123,
+    "max": 1.480951366220123
+  },
+  "shared_vs_duplicate": {
+    "values": [
+      1.101227408556143
+    ],
+    "median": 1.101227408556143,
+    "min": 1.101227408556143,
+    "max": 1.101227408556143
+  }
+}

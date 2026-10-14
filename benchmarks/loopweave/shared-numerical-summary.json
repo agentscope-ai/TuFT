@@ -1,0 +1,67 @@
+{
+  "purpose": "Numerical controls only; not throughput results.",
+  "compiled": {
+    "loopweave_shared": {
+      "cross_engine_max_error": 0.32262420654296875,
+      "same_engine_before_after_errors": [
+        0.0,
+        0.0
+      ],
+      "buffer_hashes_unchanged": true
+    },
+    "loopweave": {
+      "cross_engine_max_error": 0.2577648162841797,
+      "same_engine_before_after_errors": [
+        0.0,
+        0.0
+      ],
+      "buffer_hashes_unchanged": true
+    }
+  },
+  "eager": {
+    "loopweave_shared": {
+      "cross_engine_max_error": 0.0,
+      "same_engine_before_after_errors": [
+        0.0,
+        0.0
+      ],
+      "buffer_hashes_unchanged": true
+    },
+    "loopweave": {
+      "cross_engine_max_error": 0.0,
+      "same_engine_before_after_errors": [
+        0.0,
+        0.0
+      ],
+      "buffer_hashes_unchanged": true
+    }
+  },
+  "compiled_shared_matches_prior_ordinary_exactly": true,
+  "trained_normal_mode": {
+    "repeat_error": 0.12496662139892578,
+    "switch_error": 0.12443161010742188,
+    "adapter_mismatches": []
+  },
+  "accepted_gpu_integration": [
+    {
+      "batch_invariant": false,
+      "training_steps": 10,
+      "published_updates": 8,
+      "generated_tokens": 10240,
+      "base_weights_unchanged": true,
+      "adapter_weights_unchanged": true,
+      "repeat_max_logprob_error": 0.13640594482421875,
+      "switch_max_logprob_error": 0.12495279312133789
+    },
+    {
+      "batch_invariant": true,
+      "training_steps": 10,
+      "published_updates": 8,
+      "generated_tokens": 10240,
+      "base_weights_unchanged": true,
+      "adapter_weights_unchanged": true,
+      "repeat_max_logprob_error": 0.0,
+      "switch_max_logprob_error": 0.0
+    }
+  ]
+}

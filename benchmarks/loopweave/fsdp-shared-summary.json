@@ -1,0 +1,93 @@
+{
+  "round_robin": {
+    "runs": 3,
+    "elapsed_median_s": 23.019696209999893,
+    "steps_per_s_median": 0.5212927177895219,
+    "gpu_seconds_per_step": 7.653571717555546,
+    "sample_latency_mean_s": 5.457762166849827,
+    "sample_latency_p95_s": 5.761533975000096,
+    "train_latency_mean_s": 1.520165756694447,
+    "total_output_tokens": 589824,
+    "peak_total_memory_gib": 73.163330078125,
+    "mean_total_memory_gib": 72.87598084566886,
+    "gpu_sm_percent_mean": 43.307748538011694,
+    "peak_memory_gib_per_gpu": [
+      25.03790283203125,
+      25.03790283203125,
+      11.41876220703125,
+      11.66876220703125
+    ]
+  },
+  "loopweave": {
+    "runs": 3,
+    "elapsed_median_s": 19.60397596300004,
+    "steps_per_s_median": 0.6121207260531457,
+    "gpu_seconds_per_step": 6.552585824666683,
+    "sample_latency_mean_s": 3.8266479684644152,
+    "sample_latency_p95_s": 4.521903678999934,
+    "train_latency_mean_s": 1.8194221081944242,
+    "total_output_tokens": 589824,
+    "peak_total_memory_gib": 122.1898193359375,
+    "mean_total_memory_gib": 122.06565159538768,
+    "gpu_sm_percent_mean": 61.942439862542955,
+    "peak_memory_gib_per_gpu": [
+      25.09844970703125,
+      25.07891845703125,
+      35.9183349609375,
+      36.0941162109375
+    ]
+  },
+  "loopweave_shared": {
+    "runs": 3,
+    "elapsed_median_s": 20.722483163000106,
+    "steps_per_s_median": 0.5790811798764514,
+    "gpu_seconds_per_step": 6.851755874222211,
+    "sample_latency_mean_s": 3.802519033440971,
+    "sample_latency_p95_s": 4.4214489693332935,
+    "train_latency_mean_s": 2.0248378011388706,
+    "total_output_tokens": 589824,
+    "peak_total_memory_gib": 109.0101318359375,
+    "mean_total_memory_gib": 94.86605524782274,
+    "gpu_sm_percent_mean": 59.36147540983607,
+    "peak_memory_gib_per_gpu": [
+      25.09844970703125,
+      25.07891845703125,
+      29.3011474609375,
+      29.5316162109375
+    ],
+    "shared_base_storage_gib": 7.492795944213867,
+    "reclaimed_sampler_memory_gib": 32.33203125,
+    "sleep_mean_ms": 56.705712999978964,
+    "wake_mean_ms": 117.64914311109149
+  },
+  "paired_speedup": {
+    "values": [
+      1.1733736952856897,
+      1.1477828318840997,
+      1.1829391613135896
+    ],
+    "median": 1.1733736952856897,
+    "min": 1.1477828318840997,
+    "max": 1.1829391613135896
+  },
+  "shared_vs_static": {
+    "values": [
+      1.1772435837522321,
+      1.085830634775258,
+      1.0910213328924494
+    ],
+    "median": 1.0910213328924494,
+    "min": 1.085830634775258,
+    "max": 1.1772435837522321
+  },
+  "shared_vs_duplicate": {
+    "values": [
+      1.0032980869454384,
+      0.9460244609103045,
+      0.9222970788125144
+    ],
+    "median": 0.9460244609103045,
+    "min": 0.9222970788125144,
+    "max": 1.0032980869454384
+  }
+}

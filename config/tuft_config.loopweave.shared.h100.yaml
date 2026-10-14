@@ -1,0 +1,31 @@
+# Qwen3 BF16 TP=1 shared frozen weights, two H100 80GB GPUs.
+# Explicit 16 GiB KV pool per sampler; validate other model/batch sizes separately.
+checkpoint_dir: /tmp/tuft-loopweave-checkpoints
+authorized_users:
+  tml-local-dev-key: local-user
+supported_models:
+  - model_name: Qwen/Qwen3-4B
+    model_path: Qwen/Qwen3-4B
+    max_model_len: 1024
+    sampling_max_model_len: 1024
+    training_backend: hf
+    tensor_parallel_size: 1
+    data_parallel_size: 2
+    colocate: true
+    sampling_memory_fraction: 0.45
+    sampling_kv_cache_memory_bytes: 17179869184
+    sampling_enforce_eager: false
+    max_lora_rank: 8
+    max_loras: 4
+    micro_batch_size: 4
+    scheduling:
+      policy: loopweave
+      max_inflight_per_replica: 128
+      max_queued_requests: 1024
+      queue_timeout_s: 120
+      locality_slack: 0.1
+      merge_zero_adapters: true
+      flex_max_inflight: 64
+      flex_max_tokens: 544
+      training_quiet_s: 0.05
+      sampling_alignment_s: 0.25

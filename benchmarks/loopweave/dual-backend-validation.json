@@ -1,0 +1,93 @@
+{
+  "date": "2026-10-11",
+  "scope": "Physical frozen-base sharing for HF TP=1 and FSDP2 with matching vLLM TP; FSDP base matrices remain sharded.",
+  "runtime": {
+    "torch": "2.11.0+cu130",
+    "vllm": "0.24.0",
+    "transformers": "5.19.0"
+  },
+  "cpu": {
+    "passed": 635,
+    "skipped": 34,
+    "elapsed_s": 51.75,
+    "command": "TMPDIR=/tmp .venv/bin/pytest"
+  },
+  "checks": {
+    "ruff": "passed, pinned 0.14.14",
+    "ruff_format": "passed, pinned 0.14.14",
+    "pyright": "passed, pinned 1.1.408",
+    "shared_configs": "HF and FSDP configurations validated"
+  },
+  "gpu": [
+    {
+      "test": "Two-rank FSDP storage, numerical equivalence and startup cleanup",
+      "artifact": null,
+      "passed": 1,
+      "elapsed_s": 23.02,
+      "gpus": 2,
+      "modal_url": "https://modal.com/apps/ekzhu67/main/ap-DhQeOF9tROqUFPtlQEx4Kq",
+      "provenance": "Historical Qwen3-only run. Its local JUnit path was subsequently replaced by expanded three-family validation; timing and Modal URL are retained from the original run.",
+      "superseded_artifact": "fsdp-shards-validation.json"
+    },
+    {
+      "test": "FSDP/TP=2 Qwen3-0.6B deterministic integration",
+      "artifact": "fsdp-shared-Qwen3-0.6B-repeats-0.json",
+      "passed": 1,
+      "elapsed_s": 318.38,
+      "gpus": 4,
+      "modal_url": "https://modal.com/apps/ekzhu67/main/ap-acqOekVGgpXETEsWhnSrdY",
+      "provenance": "Before final fail-closed rank guard and startup cleanup; source/harness digests are recorded in the artifact."
+    },
+    {
+      "test": "HF Qwen3-0.6B deterministic and normal integration",
+      "artifact": "shared-weights-gpu-integration-Qwen3-0.6B.json",
+      "passed": 2,
+      "elapsed_s_by_mode": {
+        "deterministic": 271.74,
+        "normal": 288.03
+      },
+      "gpus": 2,
+      "modal_url": "https://modal.com/apps/ekzhu67/main/ap-njIJfkQxZFkXDRmlZ02C8P",
+      "provenance": "After multi-rank loader changes; subsequent production changes affected FSDP only."
+    }
+  ],
+  "secret_scan": {
+    "method": "Read-only scan of changed/new files, excluding user .agents directory and binary plots.",
+    "production_python_findings": 0,
+    "evidence_findings": "Recorded SHA-256 digests; baseline unchanged. Existing repository placeholders/checksums remain unsuppressed."
+  },
+  "limitations": [
+    "Dense BF16 Qwen3 only; tested HF TP=1 and FSDP=TP=2 on H100.",
+    "Internal CUDA IPC reducers and version-specific vLLM model/worker integration remain.",
+    "Same-node FSDP group with validated even partitions required.",
+    "Startup still needs temporary destination allocations and full FSDP initialization per rank.",
+    "Normal-mode scores are not bitwise deterministic; snapshots remain explicitly published."
+  ],
+  "performance": {
+    "artifact": "fsdp-shared-Qwen3-4B-repeats-3.json",
+    "summary": "fsdp-shared-summary.json",
+    "figure": "fsdp-shared-performance.png",
+    "modal_url": "https://modal.com/apps/ekzhu67/main/ap-l7zGoJ4H7Gs8GTBnwdk7So",
+    "matched_triples": 3,
+    "runs": 9,
+    "gpus_per_run": 4,
+    "per_run": {
+      "output_tokens": 196608,
+      "optimizer_steps": 12,
+      "snapshot_publications": 8
+    },
+    "source_and_harness_match_final_checkout": false,
+    "all_tenant_losses_finite": true,
+    "all_correctness_checks_passed": true,
+    "all_shared_rank_aliases_verified": true,
+    "all_base_hashes_preserved": true,
+    "all_gpu_adapter_bytes_preserved": true,
+    "static_to_shared_gpu_time_reduction_percent": 10.47636153319309,
+    "duplicate_to_shared_peak_memory_reduction_gib": 13.1796875,
+    "duplicate_to_shared_gpu_time_increase_percent": 4.565679222839414,
+    "containers_released": true,
+    "notes": "Steady-state normal-mode measurements. Startup and probes excluded. No prediction-window rejections. Static has the lowest peak memory.",
+    "source_and_harness_match_validated_qwen3_checkpoint": true
+  },
+  "historical_scope": "Qwen3 validation before the hybrid dense/MoE extension; source and harness hashes refer to that validated checkpoint, not the current checkout."
+}

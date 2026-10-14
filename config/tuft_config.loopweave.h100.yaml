@@ -1,7 +1,7 @@
 # Throughput profile validated on two H100 80GB GPUs, Qwen3-4B, four tenants.
 # Measurement used 32-token prompts, 512-token outputs and 4x64-token training
 # batches. Recheck memory and drain latency before increasing these workloads.
-# Both model copies and the KV pool remain resident on the shared GPU.
+# The colocated sampler shares the frozen base; its KV pool is released for training.
 checkpoint_dir: /tmp/tuft-loopweave-checkpoints
 authorized_users:
   tml-local-dev-key: local-user
@@ -14,7 +14,7 @@ supported_models:
     tensor_parallel_size: 1
     data_parallel_size: 2
     colocate: true
-    sampling_memory_fraction: 0.45
+    sampling_kv_cache_memory_bytes: 17179869184
     sampling_enforce_eager: false
     max_lora_rank: 8
     max_loras: 4

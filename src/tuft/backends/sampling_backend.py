@@ -95,7 +95,13 @@ class VLLMSamplingBackend(BaseSamplingBackend):
         super().__init__(config)
         self._worker_venv_path = worker_venv_path
         self._instance_index = instance_index
-        self.engine = self._create_engine(config)
+        # FSDP owns the full GPU group. Its colocated TP actor is created only
+        # after rank placement is known, on the same node and ordered devices.
+        self.engine = (
+            None
+            if config.colocate and config.training_backend == "fsdp"
+            else self._create_engine(config)
+        )
         self.lora_adapters: dict[str, LoRARequest] = {}
         self._zero_adapters: set[str] = set()
         self._counter = 1
@@ -107,6 +113,35 @@ class VLLMSamplingBackend(BaseSamplingBackend):
             return self._create_colocated_engine(config)
         else:
             return self._create_standalone_engine(config)
+
+    def configure_fsdp_placement(self, assignments: list[dict]) -> None:
+        import ray
+        from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
+
+        if self.engine is not None or len(assignments) != self.config.tensor_parallel_size:
+            raise RuntimeError("Invalid FSDP sampling placement initialization")
+        nodes = {a["node"] for a in assignments}
+        gpus = [str(int(float(a["gpus"][0]))) for a in assignments if len(a["gpus"]) == 1]
+        if len(nodes) != 1 or len(set(gpus)) != len(assignments):
+            raise ValueError("FSDP sharing requires distinct GPUs on one node")
+        engine_config = self._build_engine_config(
+            self.config,
+            tensor_parallel_size=len(gpus),
+            gpu_memory_utilization=self.config.sampling_memory_fraction,
+        )
+        engine_config.shared_gpu_ids = gpus
+        runtime_env = {}
+        if self._worker_venv_path:
+            runtime_env["py_executable"] = str(Path(self._worker_venv_path) / "bin" / "python")
+        self.engine = (
+            ray.remote(VLLMEngine)
+            .options(
+                num_gpus=0,
+                scheduling_strategy=NodeAffinitySchedulingStrategy(next(iter(nodes)), soft=False),
+                runtime_env=runtime_env,
+            )
+            .remote(engine_config)
+        )
 
     def _build_engine_config(
         self,
@@ -143,6 +178,12 @@ class VLLMSamplingBackend(BaseSamplingBackend):
             tool_call_parser=config.tool_call_parser,
             reasoning_parser=config.reasoning_parser,
             bundle_indices=bundle_indices,
+            share_base_weights=config.colocate and config.scheduling.share_base_weights,
+            kv_cache_memory_bytes=config.sampling_kv_cache_memory_bytes,
+            language_model_only=config.sampling_language_model_only,
+            moe_backend=config.sampling_moe_backend,
+            gdn_prefill_backend=config.sampling_gdn_prefill_backend,
+            max_num_seqs=config.sampling_max_num_seqs,
         )
 
     def _create_colocated_engine(self, config: ModelConfig):
@@ -509,6 +550,7 @@ class DPSamplingBackend(BaseSamplingBackend):
         topk_prompt_logprobs: int = 0,
         lora_id: Optional[str] = None,
         tenant_id: str | None = None,
+        loop_id: str | None = None,
     ) -> types.SampleResponse:
         """Route sampling according to the configured admission policy."""
 
@@ -538,6 +580,7 @@ class DPSamplingBackend(BaseSamplingBackend):
             work=work,
             flex_eligible=work <= self.config.scheduling.flex_max_tokens,
             operation=execute,
+            loop_id=loop_id,
         )
 
     async def add_adapter(self, lora_id: str, adapter_path: Path) -> None:

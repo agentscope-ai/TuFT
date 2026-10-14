@@ -9,15 +9,15 @@ as training is queued, and training starts only after admitted samples drain.
 from __future__ import annotations
 
 import asyncio
-import statistics
 import time
-from collections import OrderedDict, defaultdict, deque
+from collections import defaultdict, deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
 from .config import SchedulingConfig
 from .exceptions import ResourceExhaustedException
+from .loop_scheduling import LoopProfiler
 
 
 T = TypeVar("T")
@@ -38,37 +38,10 @@ class _Request:
     submitted: float
     admitted: asyncio.Event
     aligned: bool = False
-
-
-class LoopProfiler:
-    """Conservative median predictor; irregular or stale loops provide no horizon."""
-
-    def __init__(self, max_tenants: int = 1024) -> None:
-        self.max_tenants = max_tenants
-        self.arrivals: OrderedDict[str, deque[float]] = OrderedDict()
-
-    def observe(self, tenant: str, now: float) -> None:
-        history = self.arrivals.setdefault(tenant, deque(maxlen=9))
-        if not history or now > history[-1]:
-            history.append(now)
-        self.arrivals.move_to_end(tenant)
-        while len(self.arrivals) > self.max_tenants:
-            self.arrivals.popitem(last=False)
-
-    def horizon(self, now: float) -> float | None:
-        predictions = []
-        for history in self.arrivals.values():
-            if len(history) < 4:
-                continue
-            intervals = [b - a for a, b in zip(history, list(history)[1:], strict=False)]
-            period = statistics.median(intervals)
-            if period <= 0 or max(abs(p - period) for p in intervals) > 0.2 * period:
-                continue
-            # Never extrapolate indefinitely across disappeared/paused tenants.
-            predicted = history[-1] + period
-            if predicted > now:
-                predictions.append(predicted)
-        return min(predictions) if predictions else None
+    hold_until: float = 0.0
+    loop_id: str | None = None
+    loop_generation: int = 0
+    alignment_until: float = 0.0
 
 
 class ResourceScheduler:
@@ -104,6 +77,42 @@ class ResourceScheduler:
         self._flex_busy_since = 0.0
         self._flex_busy_work = 0
         self._flex_busy_failed = False
+        self._flex_service_started = False
+        self._phase_transition: Callable[[bool], Awaitable[None]] | None = None
+        self._phase_lock = asyncio.Lock()
+        self._phase_state: bool | None = None
+        self._switch_cost: dict[bool, float] = {}
+        self._last_training_end = 0.0
+        self._rates: list[float | None] = [None] * replicas
+        self._busy_since = [0.0] * replicas
+        self._busy_work = [0] * replicas
+        self._busy_failed = [False] * replicas
+        self._probe_active = False
+        self._borrowing = False
+
+    def set_phase_transition(self, callback: Callable[[bool], Awaitable[None]]) -> None:
+        """Install before serving; True releases sampler memory for training."""
+        if self.flex_index is None or self._tasks:
+            raise RuntimeError("Phase transitions require an idle flex scheduler")
+        self._phase_transition = callback
+        self._phase_state = None
+
+    async def _enter_phase(self, training: bool) -> None:
+        if self._phase_transition is None:
+            return
+        # A sampling batch can admit dozens of requests together. Coalesce the
+        # wakeup in the driver, avoiding one Ray RPC for every sample.
+        async with self._phase_lock:
+            if self._phase_state is training:
+                return
+            self._phase_state = None
+            started = time.monotonic()
+            await self._phase_transition(training)
+            elapsed = time.monotonic() - started
+            previous = self._switch_cost.get(training, elapsed)
+            self._switch_cost[training] = 0.2 * elapsed + 0.8 * previous
+            self._stats["switch_to_training_s" if training else "switch_to_sampling_s"] += elapsed
+            self._phase_state = training
 
     def snapshot(self) -> dict[str, Any]:
         """Bounded aggregate metrics, without tenant identifiers."""
@@ -116,6 +125,10 @@ class ResourceScheduler:
             "training_pending": self._training_pending,
             "training_active": self._training_active,
             "profiled_tenants": len(self.profiler.arrivals),
+            "loop_observations": sum(s.observations for s in self.profiler.states.values()),
+            "sampling_seconds_per_token": list(self._rates),
+            "switch_to_training_estimate_s": self._switch_cost.get(True),
+            "switch_to_sampling_estimate_s": self._switch_cost.get(False),
         }
 
     def _track(self, coro: Awaitable) -> asyncio.Task:
@@ -133,6 +146,8 @@ class ResourceScheduler:
         work: int,
         flex_eligible: bool,
         operation: Callable[[int], Awaitable[T]],
+        *,
+        loop_id: str | None = None,
     ) -> T:
         if self._closed:
             raise RuntimeError("Scheduler is closed")
@@ -151,6 +166,34 @@ class ResourceScheduler:
             time.monotonic(),
             asyncio.Event(),
         )
+        request.alignment_until = request.submitted + self.config.sampling_alignment_s
+        if loop_id is not None and self.flex_index is not None:
+            previous = self.profiler.states.get(loop_id)
+            first_wave = previous is None or previous.sampling_started is None
+            request.hold_until, infeasible = self.profiler.sampling_gate(
+                loop_id,
+                request.submitted,
+                max_delay=min(self.config.loop_max_delay_s, self.config.queue_timeout_s / 2),
+                fraction=self.config.loop_delay_fraction,
+                lookahead=self.config.loop_lookahead_s,
+            )
+            request.loop_id = loop_id
+            request.loop_generation = self.profiler.states[loop_id].generation
+            period = self.profiler.period(loop_id)
+            if period is not None:
+                # Reactive waiting must not extend a profiled wave's delay budget.
+                request.alignment_until = request.submitted + min(
+                    self.config.sampling_alignment_s,
+                    self.config.loop_max_delay_s,
+                    self.config.loop_delay_fraction * period,
+                )
+            self._stats["infeasible_plans"] += int(infeasible)
+            if request.hold_until > request.submitted:
+                self._stats["loop_held_requests"] += 1
+                self._stats["loop_requested_hold_s"] += request.hold_until - request.submitted
+                if first_wave:
+                    self._stats["loop_planned_waves"] += 1
+                    self._stats["loop_planned_delay_s"] += request.hold_until - request.submitted
         if tenant not in self._queues:
             self._queues[tenant] = deque()
             self._tenants.append(tenant)
@@ -188,12 +231,84 @@ class ResourceScheduler:
                 del self._queues[request.tenant]
                 self._tenants.remove(request.tenant)
 
+    def _borrow_worthwhile(self, request: _Request, now: float, horizon: float | None) -> bool:
+        """Entry gate; draining and training priority never depend on this model."""
+        if not self.config.cost_aware_borrowing or self.config.policy != "loopweave":
+            return True
+        index = self.flex_index
+        assert index is not None
+        if self._probe_active:
+            return False  # At most one bounded cold-start request, not a whole wave.
+        if self._active[index] or self._borrowing:
+            return True  # Wake cost is already paid; the deadline guard still applies.
+        if now - self._last_training_end < self.config.borrow_min_dwell_s:
+            self._stats["borrow_dwell_rejections"] += 1
+            self._schedule_wake(self.config.borrow_min_dwell_s - (now - self._last_training_end))
+            return False
+        fixed = [i for i in range(len(self._work)) if i != index]
+        rates = [self._rates[i] for i in fixed]
+        round_trip = self._switch_cost.get(True, 0.0) + (
+            self._switch_cost.get(False, 0.0) if self._phase_state is not False else 0.0
+        )
+        if (
+            self._seconds_per_token is None
+            or len(self._switch_cost) < 2
+            or any(r is None for r in rates)
+        ):
+            # Learn from a bounded probe only when persistent capacity is full.
+            # Never guess a token rate or a switch latency for a cold model.
+            backlog = sum(
+                r.work
+                for q in self._queues.values()
+                for r in q
+                if r.flex_eligible and r.hold_until <= now
+            )
+            probe = (
+                request.work <= (self.config.borrow_probe_tokens or self.config.flex_max_tokens)
+                and backlog >= self.config.borrow_min_backlog_tokens
+                and all(self._active[i] >= self.config.max_inflight_per_replica for i in fixed)
+                and (
+                    horizon is None
+                    or (
+                        len(self._switch_cost) == 2
+                        and all(r is not None for r in rates)
+                        and now
+                        + self.config.borrow_safety_factor
+                        * (round_trip + request.work * max(r or 0.0 for r in rates))
+                        < horizon
+                    )
+                )
+            )
+            if not probe:
+                self._stats["borrow_cold_rejections"] += 1
+            return probe
+        fixed_finish = min((self._work[i] + request.work) * (self._rates[i] or 0.0) for i in fixed)
+        flex_finish = self.config.borrow_safety_factor * (
+            round_trip + request.work * self._seconds_per_token
+        )
+        if fixed_finish <= flex_finish or (horizon is not None and now + flex_finish >= horizon):
+            self._stats["borrow_cost_rejections"] += 1
+            return False
+        self._stats["borrow_profitable_candidates"] += 1
+        return True
+
     def _choose(self, request: _Request, now: float, horizon: float | None) -> int | None:
+        if request.loop_id is not None:
+            state = self.profiler.states.get(request.loop_id)
+            if (
+                state is None
+                or state.ready is not None
+                or state.generation != request.loop_generation
+            ):
+                request.hold_until = 0.0
+        if now < request.hold_until:
+            self._schedule_wake(request.hold_until - now)
+            return None
         if (
             self.flex_index is not None
             and request.flex_eligible
             and (self._training_pending or self._training_active or now < self._quiet_until)
-            and now < request.submitted + self.config.sampling_alignment_s
+            and now < request.alignment_until
         ):
             # Without this bounded delay, the next rollout wave is irrevocably
             # sent to fixed replicas during the post-update quiet interval, and
@@ -201,7 +316,7 @@ class ResourceScheduler:
             if not request.aligned:
                 request.aligned = True
                 self._stats["aligned_requests"] += 1
-            self._schedule_wake(request.submitted + self.config.sampling_alignment_s - now)
+            self._schedule_wake(request.alignment_until - now)
             return None
         candidates = []
         for index, active in enumerate(self._active):
@@ -219,12 +334,16 @@ class ResourceScheduler:
                     # Include already reserved work and a safety factor. This
                     # prediction is admission guidance, never a preemption promise;
                     # unexpected training still drains actual admitted requests.
-                    finish = now + 1.5 * self._seconds_per_token * (
-                        self._work[index] + request.work
+                    finish = now + self.config.borrow_safety_factor * (
+                        self._seconds_per_token * (self._work[index] + request.work)
+                        + self._switch_cost.get(True, 0)
+                        + (self._switch_cost.get(False, 0) if self._phase_state is not False else 0)
                     )
                     if finish >= horizon:
                         self._stats["window_rejections"] += 1
                         continue
+                if not self._borrow_worthwhile(request, now, horizon):
+                    continue
             if active < limit:
                 candidates.append(index)
         if not candidates:
@@ -291,11 +410,29 @@ class ResourceScheduler:
                 continue
             stalled = 0
             self._remove_queued(request)
+            if not self._active[index]:
+                self._busy_since[index] = time.monotonic()
+                self._busy_work[index] = 0
+                self._busy_failed[index] = False
+            self._busy_work[index] += request.work
             if index == self.flex_index:
+                self._borrowing = True
                 if not self._active[index]:
                     self._flex_busy_since = time.monotonic()
                     self._flex_busy_work = 0
                     self._flex_busy_failed = False
+                    self._flex_service_started = False
+                    self._probe_active = (
+                        self.config.cost_aware_borrowing
+                        and self.config.policy == "loopweave"
+                        and (
+                            self._seconds_per_token is None
+                            or len(self._switch_cost) < 2
+                            or any(r is None for i, r in enumerate(self._rates) if i != index)
+                        )
+                    )
+                    if self._probe_active:
+                        self._stats["borrow_probes"] += 1
                 self._flex_busy_work += request.work
             self._active[index] += 1
             self._work[index] += request.work
@@ -310,6 +447,13 @@ class ResourceScheduler:
     async def _execute(self, request: _Request, index: int) -> None:
         started = time.monotonic()
         try:
+            if index == self.flex_index:
+                await self._enter_phase(False)
+                if not self._flex_service_started:
+                    # Count concurrent engine service once, excluding wake time.
+                    self._flex_service_started = True
+                    self._flex_busy_since = time.monotonic()
+                    self._busy_since[index] = self._flex_busy_since
             result = await request.operation(index)
             if not request.future.done():
                 request.future.set_result(result)
@@ -317,6 +461,7 @@ class ResourceScheduler:
             self._stats[f"replica_{index}_completed"] += 1
         except BaseException as exc:
             self._stats["failed"] += 1
+            self._busy_failed[index] = True
             if index == self.flex_index:
                 self._flex_busy_failed = True
             if not request.future.done():
@@ -329,7 +474,14 @@ class ResourceScheduler:
             self._stats[f"replica_{index}_request_s"] += elapsed
             self._active[index] -= 1
             self._work[index] -= request.work
+            if not self._active[index] and not self._busy_failed[index]:
+                rate = (time.monotonic() - self._busy_since[index]) / self._busy_work[index]
+                previous = self._rates[index]
+                self._rates[index] = rate if previous is None else 0.2 * rate + 0.8 * previous
             if index == self.flex_index and not self._active[index]:
+                self._probe_active = False
+                if self._flex_busy_failed:
+                    self._borrowing = False
                 # Concurrent requests share a decode batch. Summing individual
                 # latencies counts the same GPU interval repeatedly and makes
                 # a learned window reject useful work as concurrency increases.
@@ -344,15 +496,21 @@ class ResourceScheduler:
             self._pump()
 
     async def training(
-        self, operation: Callable[[], Awaitable[T]], *, tenant: str | None = None
+        self,
+        operation: Callable[[], Awaitable[T]],
+        *,
+        tenant: str | None = None,
+        reclaim_sampler_memory: bool = False,
+        kind: str = "backward",
     ) -> T:
         if self._closed:
             raise RuntimeError("Scheduler is closed")
-        if tenant is not None:
-            self.profiler.observe(tenant, time.monotonic())
+        if tenant is not None and kind == "backward":
+            self.profiler.training_ready(tenant, time.monotonic())
         # Count readiness synchronously so another sample cannot sneak in first.
         self._training_pending += 1
-        task = self._track(self._train(operation))
+        self._pump()  # Drop obsolete holds if training arrived earlier than planned.
+        task = self._track(self._train(operation, reclaim_sampler_memory, tenant, kind))
         # Once admitted, a mutation is irrevocable. Finish its caller's sequence
         # guard too: propagating cancellation here would permit a retry of an
         # optimizer update that the GPU has already committed.
@@ -363,22 +521,52 @@ class ResourceScheduler:
                 if task.done():
                     return task.result()
 
-    async def _train(self, operation: Callable[[], Awaitable[T]]) -> T:
+    async def _train(
+        self,
+        operation: Callable[[], Awaitable[T]],
+        reclaim_sampler_memory: bool,
+        tenant: str | None,
+        kind: str,
+    ) -> T:
         waiting = time.monotonic()
         try:
             async with self._training_lock:
                 await self._flex_drained.wait()
                 self._training_active = True
+                self._borrowing = False
                 started = time.monotonic()
                 self._stats["exclusive_wait_s"] += started - waiting
                 try:
-                    result = await operation()
+                    await self._enter_phase(reclaim_sampler_memory)
+                    executing = time.monotonic()
+                    try:
+                        result = await operation()
+                    except BaseException:
+                        if tenant is not None:
+                            self.profiler.forget(tenant)
+                        raise
+                    busy = time.monotonic() - executing
+                    self._stats[
+                        "training_execution_s"
+                        if tenant is not None and kind in {"backward", "optimizer"}
+                        else "maintenance_execution_s"
+                    ] += busy
+                    if tenant is not None:
+                        if kind == "reset":
+                            self.profiler.forget(tenant)
+                        elif kind in {"backward", "optimizer"}:
+                            self.profiler.executed(tenant, busy, commit=kind == "optimizer")
                     self._stats["exclusive_completed"] += 1
                     return result
                 finally:
                     self._stats["exclusive_busy_s"] += time.monotonic() - started
                     self._training_active = False
+                    self._last_training_end = time.monotonic()
                     self._quiet_until = time.monotonic() + self.config.training_quiet_s
+        except BaseException:
+            if tenant is not None:
+                self.profiler.forget(tenant)
+            raise
         finally:
             self._training_pending -= 1
             if not self._closed:

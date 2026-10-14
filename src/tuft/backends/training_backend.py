@@ -33,12 +33,21 @@ class HFTrainingBackend(BaseTrainingBackend):
     async def async_init(self) -> None:
         await self.model.async_init.remote()
 
-    async def _execute(self, method, *args, scheduler_tenant: str | None = None, **kwargs):
+    async def _execute(
+        self,
+        method,
+        *args,
+        scheduler_tenant: str | None = None,
+        scheduler_kind: str = "backward",
+        **kwargs,
+    ):
         async def operation():
             return await method.remote(*args, **kwargs)
 
         if self.scheduler is not None:
-            return await self.scheduler.training(operation, tenant=scheduler_tenant)
+            return await self.scheduler.training(
+                operation, tenant=scheduler_tenant, reclaim_sampler_memory=True, kind=scheduler_kind
+            )
         return await operation()
 
     async def create_adapter(self, lora_id: str, lora_config: types.LoraConfig) -> None:
@@ -54,7 +63,9 @@ class HFTrainingBackend(BaseTrainingBackend):
     async def remove_adapter(self, lora_id: str) -> None:
         with _get_tracer().start_as_current_span("training_backend.remove_adapter") as span:
             span.set_attribute("tuft.lora_id", lora_id)
-            await self._execute(self.model.remove_adapter, lora_id)
+            await self._execute(
+                self.model.remove_adapter, lora_id, scheduler_tenant=lora_id, scheduler_kind="reset"
+            )
 
     async def forward(
         self,
@@ -111,7 +122,14 @@ class HFTrainingBackend(BaseTrainingBackend):
             # Inject trace context for Ray actor
             trace_context: dict[str, str] = {}
             inject_context(trace_context)
-            return await self._execute(self.model.optim_step, adam_params, lora_id, trace_context)
+            return await self._execute(
+                self.model.optim_step,
+                adam_params,
+                lora_id,
+                trace_context,
+                scheduler_tenant=lora_id,
+                scheduler_kind="optimizer",
+            )
 
     async def save_state(
         self, lora_id: str, checkpoint_record: "CheckpointRecord", optimizer: bool
@@ -143,6 +161,8 @@ class HFTrainingBackend(BaseTrainingBackend):
             inject_context(trace_context)
             await self._execute(
                 self.model.load_state,
+                scheduler_tenant=lora_id,
+                scheduler_kind="reset",
                 lora_id=lora_id,
                 checkpoint_record=checkpoint_record,
                 optimizer=optimizer,

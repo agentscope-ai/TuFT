@@ -22,6 +22,8 @@ import asyncio
 import itertools
 import os
 import socket
+import tempfile
+import time
 from dataclasses import dataclass
 from logging import getLogger
 from typing import Any, Optional
@@ -74,6 +76,14 @@ class VLLMEngineConfig:
 
     # Ray placement-group bundle indices ("" outside standalone TP mode).
     bundle_indices: str = ""
+    share_base_weights: bool = False
+    kv_cache_memory_bytes: int | None = None
+    language_model_only: bool = False
+    moe_backend: str = "auto"
+    gdn_prefill_backend: str | None = None
+    max_num_seqs: int | None = None
+    # Trusted physical devices reserved by the colocated FSDP actors.
+    shared_gpu_ids: list[str] | None = None
 
 
 class VLLMEngine:
@@ -84,6 +94,8 @@ class VLLMEngine:
     """
 
     def __init__(self, config: VLLMEngineConfig) -> None:
+        if config.shared_gpu_ids is not None:
+            os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(config.shared_gpu_ids)
         import vllm
         from packaging.version import parse as parse_version
         from vllm.sampling_params import RequestOutputKind
@@ -129,6 +141,31 @@ class VLLMEngine:
         self._request_counter = itertools.count(1)
         self._prepared = False
         self._prepare_lock = asyncio.Lock()
+        self._shared_manifest_dir: Any = None
+        self._phase_lock = asyncio.Lock()
+        self._sleeping = False
+        self._phase_failed = False
+        self._phase_stats: dict[str, float] = {}
+
+    def configure_shared_weights(self, descriptors: dict | list[dict]) -> None:
+        """Accept trusted trainer IPC metadata before engine initialization."""
+        import pickle
+        from pathlib import Path
+
+        import torch
+        import vllm
+
+        from .shared_weights import check_shared_weight_versions
+
+        check_shared_weight_versions(torch.__version__, vllm.__version__)
+        if not self.config.share_base_weights or self._prepared or self._shared_manifest_dir:
+            raise RuntimeError("Invalid shared-weight initialization order")
+        self._shared_manifest_dir = tempfile.TemporaryDirectory(prefix="tuft-shared-")
+        path = Path(self._shared_manifest_dir.name) / "weights.pkl"
+        ranks = descriptors if isinstance(descriptors, list) else [descriptors]
+        if len(ranks) != self.config.tensor_parallel_size:
+            raise ValueError("Shared weight rank count must equal sampler TP size")
+        path.write_bytes(pickle.dumps(ranks))
 
     async def prepare(self) -> None:
         """Create the vLLM engine, apply worker patches, start the API server."""
@@ -169,16 +206,94 @@ class VLLMEngine:
                 # temperature scaling) -- required for RL importance ratios.
                 logprobs_mode="processed_logprobs",
                 async_scheduling=True,
+                kv_cache_memory_bytes=self.config.kv_cache_memory_bytes,
+                language_model_only=self.config.language_model_only,
+                moe_backend=self.config.moe_backend,
+                gdn_prefill_backend=self.config.gdn_prefill_backend,
+                max_num_seqs=self.config.max_num_seqs,
             )
             if self.config.quantization:
                 engine_args.quantization = self.config.quantization
+            if self.config.share_base_weights:
+                if self._shared_manifest_dir is None:
+                    raise RuntimeError("Shared sampler requires trainer IPC descriptors")
+                engine_args.load_format = "tuft_shared"
+                engine_args.model_loader_extra_config = {
+                    "manifest": self._shared_manifest_dir.name + "/weights.pkl"
+                }
+                engine_args.enable_sleep_mode = True
+                # Trainers load text backbones only. Do not allocate an unused
+                # vision encoder in the consumer. Triton MoE retains the BF16
+                # expert matrix layout rather than creating shuffled copies.
+                engine_args.language_model_only = True
+                engine_args.moe_backend = "triton"
 
             self.async_llm = vllm.AsyncLLMEngine.from_engine_args(engine_args)
             # Apply TuFT's worker-side patches (prompt-logprobs temperature
             # scaling) on every worker process; see vllm_worker.py.
             await self.async_llm.collective_rpc("apply_patches")
+            if self.config.share_base_weights:
+                await self.async_llm.collective_rpc("shared_weight_report")
+                self._shared_manifest_dir.cleanup()
             await self._run_api_server()
             self._prepared = True
+
+    async def reset_prefix_cache(self) -> bool:
+        """Diagnostic cache-reset control; callers must first drain requests."""
+        return await self.async_llm.reset_prefix_cache()
+
+    async def set_training_phase(self, training: bool) -> None:
+        """Called only with the scheduler's shared-GPU reservation held.
+
+        Imported base storage is owned by HF, outside vLLM's sleep allocator.
+        Level 1 preserves any private weights/LoRA buffers and discards KV data.
+        """
+        if not self.config.share_base_weights:
+            return
+        async with self._phase_lock:
+            if self._phase_failed:
+                raise RuntimeError("Shared sampler phase transition previously failed")
+            if training == self._sleeping:
+                return
+            start = time.monotonic()
+            try:
+                if training:
+                    await self.async_llm.sleep(level=1)
+                else:
+                    await self.async_llm.wake_up()
+                self._sleeping = training
+            except BaseException:
+                self._phase_failed = True
+                raise
+            key = "sleep" if training else "wake"
+            self._phase_stats[key + "_s"] = (
+                self._phase_stats.get(key + "_s", 0) + time.monotonic() - start
+            )
+            self._phase_stats[key + "_count"] = self._phase_stats.get(key + "_count", 0) + 1
+
+    async def shared_weight_report(self) -> dict:
+        rows = await self.async_llm.collective_rpc("shared_weight_report")
+        totals = {key: sum(row[key] for row in rows) for key in rows[0]}
+        return {**totals, "ranks": rows, **self._phase_stats, "sleeping": self._sleeping}
+
+    async def _rank_fingerprints(self, method: str) -> dict:
+        rows = await self.async_llm.collective_rpc(method)
+        if len(rows) == 1:
+            return rows[0]
+        return {
+            f"rank_{rank}/{key}": value
+            for rank, row in enumerate(rows)
+            for key, value in row.items()
+        }
+
+    async def base_weight_fingerprints(self) -> dict:
+        return await self._rank_fingerprints("base_weight_fingerprints")
+
+    async def model_buffer_fingerprints(self) -> dict:
+        return await self._rank_fingerprints("model_buffer_fingerprints")
+
+    async def adapter_weight_fingerprints(self) -> dict:
+        return await self._rank_fingerprints("adapter_weight_fingerprints")
 
     async def _run_api_server(self) -> None:
         """Start vLLM's OpenAI-compatible API server in this actor's event loop."""
@@ -284,3 +399,5 @@ class VLLMEngine:
         if self.async_llm is not None:
             logger.info("Shutting down vLLM engine")
             self.async_llm.shutdown()
+        if self._shared_manifest_dir is not None:
+            self._shared_manifest_dir.cleanup()

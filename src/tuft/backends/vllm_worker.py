@@ -3,9 +3,9 @@
 Adapted from Trinity-RFT (``trinity/common/models/vllm_worker.py`` and
 ``trinity/common/models/vllm_patch/worker_patch.py``, Apache-2.0,
 https://github.com/agentscope-ai/Trinity-RFT), with the weight-sync pieces
-(MoE weight-loader patch and checkpoint weight-transfer engine) removed --
-TuFT delivers trained weights to the sampler as on-disk LoRA adapters and
-never syncs full model weights into vLLM.
+(MoE weight-loader patch and checkpoint weight-transfer engine) removed.
+TuFT publishes trained LoRA snapshots separately. Its opt-in shared-base loader
+aliases frozen HF weights at startup without full-model update transfers.
 
 WHY THIS PATCH EXISTS:
   Upstream vLLM does not apply temperature scaling when computing *prompt*
@@ -300,3 +300,70 @@ class TuFTGPUWorker(VLLMGPUWorker):
     def apply_patches(self, *args: Any, **kwargs: Any) -> None:
         """Apply necessary patches to vLLM inside the worker process."""
         patch_vllm_prompt_logprobs(self.model_runner)
+
+    def load_model(self, *, load_dummy_weights: bool = False) -> None:
+        if self.vllm_config.load_config.load_format == "tuft_shared":
+            from . import shared_weight_loader  # noqa: F401
+
+        super().load_model(load_dummy_weights=load_dummy_weights)
+
+    def shared_weight_report(self) -> dict:
+        model = self.model_runner.model
+        report = dict(getattr(model, "_tuft_shared_weight_report", {}))
+        if not report:
+            raise RuntimeError("Shared-weight loader did not run")
+        params = {
+            name.replace(".base_layer.", "."): param
+            for name, param in model.named_parameters(remove_duplicate=False)
+            if ".lora_" not in name
+        }
+        aliases = model._tuft_shared_weights
+        # Compare storage in the consumer process, not virtual addresses between
+        # processes (CUDA IPC mappings can legitimately have different addresses).
+        actual = sum(
+            param.numel() * param.element_size()
+            for name, param in params.items()
+            if name in aliases and param.data_ptr() == aliases[name].data_ptr()
+        )
+        if actual != report["shared_parameter_bytes"]:
+            raise RuntimeError("vLLM transformed shared storage after loading")
+        report["verified_alias_bytes"] = actual
+        report["gpu_allocated_bytes"] = torch.cuda.memory_allocated()
+        report["gpu_free_bytes"] = torch.cuda.mem_get_info()[0]
+        return report
+
+    def base_weight_fingerprints(self) -> dict:
+        """Validation-only full hashes; never called on the serving hot path."""
+        from .shared_weights import tensor_fingerprint
+
+        model = self.model_runner.model
+        return {
+            name.replace(".base_layer.", "."): tensor_fingerprint(param)
+            for name, param in model.named_parameters(remove_duplicate=False)
+            if ".lora_" not in name
+        }
+
+    def model_buffer_fingerprints(self) -> dict:
+        from .shared_weights import tensor_fingerprint
+
+        return {
+            name.replace(".base_layer.", "."): tensor_fingerprint(value)
+            for name, value in self.model_runner.model.named_buffers()
+            if "lora" not in name
+        }
+
+    def adapter_weight_fingerprints(self) -> dict:
+        """Hash actual GPU LoRA slots, which vLLM stores outside named_buffers."""
+        from .shared_weights import tensor_fingerprint
+
+        result = {}
+        for name, module in self.model_runner.model.lora_manager.modules.items():
+            for kind in ("lora_a_stacked", "lora_b_stacked"):
+                values = getattr(module, kind, ())
+                if isinstance(values, torch.Tensor):
+                    values = (values,)
+                for index, value in enumerate(values):
+                    result[f"{name}.{kind}.{index}"] = tensor_fingerprint(value)
+        if not result:
+            raise RuntimeError("No GPU LoRA weight slots found")
+        return result

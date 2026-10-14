@@ -76,6 +76,36 @@ class SchedulingConfig(BaseModel):
     training_quiet_s: float = Field(default=0.05, ge=0, le=10, allow_inf_nan=False)
     # Allow a short training burst to finish before placing its next rollout.
     sampling_alignment_s: float = Field(default=0.05, ge=0, le=10, allow_inf_nan=False)
+    # A single hold for a complete rollout wave, based on completed update loops.
+    loop_max_delay_s: float = Field(default=0.25, ge=0, le=10, allow_inf_nan=False)
+    loop_delay_fraction: float = Field(default=0.05, ge=0, le=0.25, allow_inf_nan=False)
+    loop_lookahead_s: float = Field(default=2, ge=0, le=60, allow_inf_nan=False)
+    cost_aware_borrowing: bool = True
+    borrow_min_backlog_tokens: int = Field(default=1024, ge=1)
+    # None inherits the existing per-request Flex cap for the configured workload.
+    borrow_probe_tokens: int | None = Field(default=None, ge=1)
+    borrow_min_dwell_s: float = Field(default=0.1, ge=0, le=60, allow_inf_nan=False)
+    borrow_safety_factor: float = Field(default=1.5, ge=1, le=10, allow_inf_nan=False)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_shared_weights(cls, values):
+        # Accept old shared-mode configs, but never silently enable the retired
+        # duplicate-base mode or change an explicit request to disable sharing.
+        if isinstance(values, dict) and "share_base_weights" in values:
+            values = dict(values)
+            legacy = values.pop("share_base_weights")
+            if legacy is not (values.get("policy", "round_robin") == "loopweave"):
+                raise ValueError(
+                    "LoopWeave always shares frozen base weights; remove share_base_weights "
+                    "and use round_robin for static training/sampling"
+                )
+        return values
+
+    @property
+    def share_base_weights(self) -> bool:
+        """Internal storage requirement, derived from the selected policy."""
+        return self.policy == "loopweave"
 
 
 class ModelConfig(BaseModel):
@@ -176,6 +206,14 @@ class ModelConfig(BaseModel):
     # only for local testing purposes
     colocate: bool = False
     sampling_memory_fraction: float = 0.2  # fraction of GPU memory for sampling
+    # Explicit per-replica KV budget; required when weights are CUDA IPC aliases
+    # because process-local allocator accounting does not measure shared storage.
+    sampling_kv_cache_memory_bytes: int | None = Field(default=None, gt=0)
+    # Skip multimodal encoders when deployment serves text only.
+    sampling_language_model_only: bool = False
+    sampling_moe_backend: Literal["auto", "triton"] = "auto"
+    sampling_gdn_prefill_backend: Literal["flashinfer", "triton", "cutedsl"] | None = None
+    sampling_max_num_seqs: int | None = Field(default=None, gt=0)
     # Max context length for sampling (vLLM) only; if unset, max_model_len is used.
     # Can be set smaller (e.g. 2048) in testing to reduce GPU memory and startup time.
     sampling_max_model_len: int | None = None
@@ -210,7 +248,8 @@ class ModelConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_colocate(self) -> "ModelConfig":
-        if self.colocate and self.tensor_parallel_size != 1:
+        fsdp_flex = self.training_backend == "fsdp" and self.scheduling.policy == "loopweave"
+        if self.colocate and self.tensor_parallel_size != 1 and not fsdp_flex:
             raise ValueError("Colocate option is only supported for tensor_parallel_size=1.")
         if self.colocate and self.data_parallel_size > 1 and self.scheduling.policy != "loopweave":
             raise ValueError("Colocate option is not supported with data_parallel_size > 1.")
@@ -226,8 +265,14 @@ class ModelConfig(BaseModel):
         if self.data_parallel_size < 1:
             raise ValueError("data_parallel_size must be positive")
         if self.scheduling.policy == "loopweave":
-            if not self.colocate or self.training_backend != "hf":
-                raise ValueError("loopweave requires colocate=true and training_backend='hf'")
+            if self.quantization:
+                raise ValueError("loopweave requires unquantized shared base weights")
+            if self.sampling_kv_cache_memory_bytes is None:
+                raise ValueError("loopweave requires sampling_kv_cache_memory_bytes")
+            if not self.colocate or self.training_backend not in {"hf", "fsdp"}:
+                raise ValueError("loopweave requires colocate=true and an HF or FSDP trainer")
+            if self.training_backend == "fsdp" and self.fsdp_num_gpus != self.tensor_parallel_size:
+                raise ValueError("FSDP loopweave requires fsdp_num_gpus == tensor_parallel_size")
             if self.data_parallel_size < 2:
                 raise ValueError("loopweave requires at least one fixed and one flex sampler")
             if not 0 < self.sampling_memory_fraction < 1:
@@ -405,7 +450,17 @@ class AppConfig(BaseModel):
             exclude={
                 "persistence": True,
                 "authorized_users": True,
-                "supported_models": {"__all__": {"capabilities", "scheduling"}},
+                "supported_models": {
+                    "__all__": {
+                        "capabilities",
+                        "scheduling",
+                        "sampling_kv_cache_memory_bytes",
+                        "sampling_language_model_only",
+                        "sampling_moe_backend",
+                        "sampling_gdn_prefill_backend",
+                        "sampling_max_num_seqs",
+                    }
+                },
             },
         )
 

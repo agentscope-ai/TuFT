@@ -94,6 +94,82 @@ async def test_flex_drains_before_training_fixed_continues():
     await scheduler.close()
 
 
+async def test_memory_phase_transitions_wait_for_drain_and_wake_for_maintenance():
+    scheduler = ResourceScheduler(2, config(), flex_index=0)
+    release = asyncio.Event()
+    events = []
+
+    async def phase(training):
+        events.append("sleep" if training else "wake")
+        if training:
+            assert scheduler.snapshot()["active"][0] == 0
+
+    async def sample(index):
+        events.append(f"sample-{index}")
+        if index == 0:
+            await release.wait()
+
+    async def train():
+        events.append("train")
+
+    scheduler.set_phase_transition(phase)
+    pending = asyncio.create_task(scheduler.sample("a", "a", 1, True, sample))
+    await spin_until(lambda: "sample-0" in events)
+    update = asyncio.create_task(scheduler.training(train, reclaim_sampler_memory=True))
+    await spin_until(lambda: scheduler.snapshot()["training_pending"] == 1)
+    await scheduler.sample("b", "b", 1, True, sample)
+    assert events == ["wake", "sample-0", "sample-1"]
+    release.set()
+    await asyncio.gather(pending, update)
+    assert events[-2:] == ["sleep", "train"]
+    await scheduler.training(train)  # Adapter publication needs sampler allocations.
+    assert events[-2:] == ["wake", "train"]
+    await scheduler.close()
+
+
+async def test_failed_phase_transition_never_dispatches_operation():
+    scheduler = ResourceScheduler(2, config(), flex_index=0)
+
+    async def phase(training):
+        raise RuntimeError("transition failed")
+
+    async def forbidden(*args):
+        pytest.fail("GPU operation must not run after a failed transition")
+
+    scheduler.set_phase_transition(phase)
+    with pytest.raises(RuntimeError, match="transition failed"):
+        await scheduler.sample("a", "a", 1, True, forbidden)
+    with pytest.raises(RuntimeError, match="transition failed"):
+        await scheduler.training(forbidden, reclaim_sampler_memory=True)
+    assert scheduler.snapshot()["active"] == [0, 0]
+    assert scheduler.snapshot()["training_pending"] == 0
+    await scheduler.close()
+
+
+async def test_sampling_wave_wakes_shared_engine_once():
+    scheduler = ResourceScheduler(2, config(), flex_index=0)
+    phases = []
+    started = []
+    release = asyncio.Event()
+
+    async def phase(training):
+        phases.append(training)
+        await asyncio.sleep(0)
+
+    async def sample(index):
+        started.append(index)
+        await release.wait()
+
+    scheduler.set_phase_transition(phase)
+    tasks = [asyncio.create_task(scheduler.sample(str(i), None, 1, True, sample)) for i in range(4)]
+    await spin_until(lambda: len(started) == 4)
+    assert started.count(0) == 2
+    assert phases == [False]
+    release.set()
+    await asyncio.gather(*tasks)
+    await scheduler.close()
+
+
 async def test_cancelled_client_does_not_release_running_gpu_work():
     scheduler = ResourceScheduler(2, config(), flex_index=0)
     release = asyncio.Event()
@@ -339,7 +415,7 @@ async def test_alignment_budget_expires_to_fixed_during_long_training():
     "override",
     [
         {"colocate": False},
-        {"training_backend": "fsdp"},
+        {"training_backend": "fsdp", "fsdp_num_gpus": 2},
         {"data_parallel_size": 1},
         {"tensor_parallel_size": 2},
         {"sampling_memory_fraction": 1},
@@ -353,11 +429,39 @@ def test_reject_invalid_hybrid_layout(override):
         max_model_len=512,
         colocate=True,
         data_parallel_size=2,
+        sampling_kv_cache_memory_bytes=16 * 1024**3,
         scheduling={"policy": "loopweave"},
     )
     values.update(override)
     with pytest.raises(ValidationError):
         ModelConfig.model_validate(values)
+
+
+def test_shared_weights_require_explicit_cache_budget():
+    values = dict(
+        model_name="qwen",
+        model_path=Path("qwen"),
+        max_model_len=512,
+        colocate=True,
+        data_parallel_size=2,
+        scheduling={"policy": "loopweave"},
+    )
+    with pytest.raises(ValidationError, match="sampling_kv_cache_memory_bytes"):
+        ModelConfig.model_validate(values)
+    values["sampling_kv_cache_memory_bytes"] = 16 * 1024**3
+    assert ModelConfig.model_validate(values).scheduling.share_base_weights
+
+
+def test_loopweave_sharing_is_required_and_legacy_config_migrates():
+    for policy in ("round_robin", "balanced", "loopweave"):
+        expected = policy == "loopweave"
+        current = SchedulingConfig(policy=policy)
+        legacy = SchedulingConfig.model_validate({"policy": policy, "share_base_weights": expected})
+        assert current.share_base_weights is expected
+        assert current.model_dump() == legacy.model_dump()
+        assert "share_base_weights" not in current.model_dump()
+        with pytest.raises(ValidationError, match="always shares frozen base weights"):
+            SchedulingConfig.model_validate({"policy": policy, "share_base_weights": not expected})
 
 
 def test_legacy_persistence_signature_allows_scheduler_change_but_not_geometry(tmp_path):
@@ -375,7 +479,21 @@ def test_legacy_persistence_signature_allows_scheduler_change_but_not_geometry(t
         },
     )
     legacy_data["supported_models"][0].pop("scheduling")
+    legacy_data["supported_models"][0].pop("sampling_kv_cache_memory_bytes")
+    for field in (
+        "sampling_language_model_only",
+        "sampling_moe_backend",
+        "sampling_gdn_prefill_backend",
+        "sampling_max_num_seqs",
+    ):
+        legacy_data["supported_models"][0].pop(field)
     legacy = ConfigSignature(config_data=legacy_data)
+    assert legacy.matches(ConfigSignature.from_app_config(config))
+    model.sampling_kv_cache_memory_bytes = 16 * 1024**3
+    model.sampling_language_model_only = True
+    model.sampling_moe_backend = "triton"
+    model.sampling_gdn_prefill_backend = "triton"
+    model.sampling_max_num_seqs = 64
     assert legacy.matches(ConfigSignature.from_app_config(config))
     model.scheduling = SchedulingConfig(policy="balanced")
     assert legacy.matches(ConfigSignature.from_app_config(config))

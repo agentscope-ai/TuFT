@@ -142,6 +142,7 @@ class ServerState:
         self.sessions = SessionManager()
         self.training = TrainingController(self.config)
         self.sampling = SamplingController(self.config)
+        from .backends.fsdp_training_backend import FSDPTrainingBackend
         from .backends.sampling_backend import DPSamplingBackend
         from .backends.training_backend import HFTrainingBackend
 
@@ -151,7 +152,7 @@ class ServerState:
                 sampling_backend = self.sampling._base_backends[model.model_name]
                 # CPU dummy factories intentionally do not allocate the GPU pool.
                 if isinstance(sampling_backend, DPSamplingBackend) and isinstance(
-                    training_backend, HFTrainingBackend
+                    training_backend, (HFTrainingBackend, FSDPTrainingBackend)
                 ):
                     training_backend.scheduler = sampling_backend.scheduler
         self.auth_db = AuthenticationDB(self.config.authorized_users)
@@ -159,6 +160,7 @@ class ServerState:
 
     async def async_init(self) -> None:
         """Put any async initialization logic here"""
+        from .backends.fsdp_training_backend import FSDPTrainingBackend
         from .backends.sampling_backend import DPSamplingBackend
         from .backends.training_backend import HFTrainingBackend
 
@@ -166,6 +168,18 @@ class ServerState:
             if model.scheduling.policy == "loopweave":
                 training = self.training.training_backends[model.model_name]
                 sampling = self.sampling._base_backends[model.model_name]
+                if isinstance(training, FSDPTrainingBackend) and isinstance(
+                    sampling, DPSamplingBackend
+                ):
+                    await training.async_init()
+                    assignments = await asyncio.gather(
+                        *(actor.get_device_assignment.remote() for actor in training._actors)
+                    )
+                    sampling._instances[0].configure_fsdp_placement(assignments)
+                    descriptors = await asyncio.gather(
+                        *(actor.export_shared_base_weights.remote() for actor in training._actors)
+                    )
+                    await sampling._instances[0].engine.configure_shared_weights.remote(descriptors)
                 if isinstance(training, HFTrainingBackend) and isinstance(
                     sampling, DPSamplingBackend
                 ):
@@ -179,6 +193,22 @@ class ServerState:
                             f"got {trainer_device} and {sampler_device}. "
                             "Use an otherwise idle Ray cluster with the configured GPU count."
                         )
+                    engine = sampling._instances[0].engine
+                    descriptors = await training.model.export_shared_base_weights.remote()
+                    await engine.configure_shared_weights.remote(descriptors)
+
+                if isinstance(sampling, DPSamplingBackend):
+                    engine = sampling._instances[0].engine
+
+                    async def transition(
+                        training_phase: bool, target=engine, trainer=training
+                    ) -> None:
+                        if isinstance(trainer, FSDPTrainingBackend):
+                            trainer.check_execution_health()
+                        await target.set_training_phase.remote(training_phase)
+
+                    assert sampling.scheduler is not None
+                    sampling.scheduler.set_phase_transition(transition)
         await self.sampling.async_init()
         await self._restore_from_checkpoints()
 
@@ -190,13 +220,15 @@ class ServerState:
             if scheduler is not None:
                 await scheduler.close()
         try:
-            await self.training.shutdown()
-        except Exception:
-            logger.exception("Failed to shut down training backends")
-        try:
+            # CUDA IPC consumers must release their aliases before the trainer
+            # that owns the underlying allocations exits.
             await self.sampling.shutdown()
         except Exception:
             logger.exception("Failed to shut down sampling backends")
+        try:
+            await self.training.shutdown()
+        except Exception:
+            logger.exception("Failed to shut down training backends")
 
     async def _restore_from_checkpoints(self) -> None:
         """Restore server state from checkpoints after Redis restore.

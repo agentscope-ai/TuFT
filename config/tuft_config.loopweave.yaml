@@ -1,6 +1,6 @@
 # Two GPUs: one HF trainer + colocated sampler, and one persistent sampler.
-# Adjust model paths and the memory fraction for the deployment's GPU capacity.
-# The shared GPU retains two model copies; this is not the paper's CUDA-IPC path.
+# Set the model path and explicit KV budget for the deployment's GPU capacity.
+# LoopWeave aliases the trainer's frozen base and reclaims sampler KV memory for training.
 checkpoint_dir: /tmp/tuft-loopweave-checkpoints
 authorized_users:
   tml-local-dev-key: local-user
@@ -12,7 +12,7 @@ supported_models:
     tensor_parallel_size: 1
     data_parallel_size: 2
     colocate: true
-    sampling_memory_fraction: 0.45
+    sampling_kv_cache_memory_bytes: 17179869184
     max_lora_rank: 16
     max_loras: 4
     scheduling:

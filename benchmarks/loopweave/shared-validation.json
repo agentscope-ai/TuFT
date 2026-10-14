@@ -1,0 +1,131 @@
+{
+  "date_utc": "2026-10-11",
+  "cpu": {
+    "command": "TMPDIR=/tmp .venv/bin/pytest",
+    "passed": 625,
+    "skipped": 33,
+    "duration_s": 55.22
+  },
+  "code_checks": {
+    "ruff_pinned": "passed",
+    "ruff_format_pinned": "passed",
+    "pyright_pinned_including_new_modules": "passed",
+    "git_diff_check": "passed"
+  },
+  "gpu_integration": {
+    "artifact": "shared-weights-gpu-integration-Qwen3-4B.json",
+    "normal": "passed",
+    "batch_invariant": "passed",
+    "source_matches_final_checkout": false,
+    "harness_difference": "Final benchmark additionally rotates the order of three policies.",
+    "modal_run": "https://modal.com/apps/ekzhu67/main/ap-tCmn3F5rj3SY5WGkXeSixd",
+    "source_matches_validated_qwen3_hf_checkpoint": true
+  },
+  "performance": {
+    "artifact": "shared-weights-gpu-Qwen3-4B-512.json",
+    "runs": 9,
+    "policies": 3,
+    "repeats_per_policy": 3,
+    "source_and_harness_match_final_checkout": false,
+    "equal_work_and_finite_tenant_losses": true,
+    "mode": "normal",
+    "modal_run": "https://modal.com/apps/ekzhu67/main/ap-e9cToNRXuwohKzy7xLHcK9",
+    "source_and_harness_match_validated_qwen3_hf_checkpoint": true
+  },
+  "secret_scanning": {
+    "baseline_changed": false,
+    "status": "findings_remain",
+    "changed_file_findings": [
+      {
+        "file": "benchmarks/loopweave/diagnostic-ordinary-control.json",
+        "line": 335,
+        "type": "Hex High Entropy String",
+        "review": "Recorded source/harness or model-buffer SHA-256 digest"
+      },
+      {
+        "file": "benchmarks/loopweave/diagnostic-ordinary-control.json",
+        "line": 336,
+        "type": "Hex High Entropy String",
+        "review": "Recorded source/harness or model-buffer SHA-256 digest"
+      },
+      {
+        "file": "benchmarks/loopweave/diagnostic-shared-weights-gpu-Qwen3-4B-128.json",
+        "line": 9,
+        "type": "Hex High Entropy String",
+        "review": "Recorded source/harness or model-buffer SHA-256 digest"
+      },
+      {
+        "file": "benchmarks/loopweave/diagnostic-shared-weights-gpu-Qwen3-4B-128.json",
+        "line": 10,
+        "type": "Hex High Entropy String",
+        "review": "Recorded source/harness or model-buffer SHA-256 digest"
+      },
+      {
+        "file": "benchmarks/loopweave/diagnostic-shared-weights-gpu-Qwen3-4B-128.json",
+        "line": 346,
+        "type": "Hex High Entropy String",
+        "review": "Recorded source/harness or model-buffer SHA-256 digest"
+      },
+      {
+        "file": "benchmarks/loopweave/diagnostic-shared-weights-gpu-Qwen3-4B-128.json",
+        "line": 347,
+        "type": "Hex High Entropy String",
+        "review": "Recorded source/harness or model-buffer SHA-256 digest"
+      },
+      {
+        "file": "benchmarks/loopweave/eager-diagnostic-shared-weights-gpu-Qwen3-4B-128.json",
+        "line": 9,
+        "type": "Hex High Entropy String",
+        "review": "Recorded source/harness or model-buffer SHA-256 digest"
+      },
+      {
+        "file": "benchmarks/loopweave/eager-diagnostic-shared-weights-gpu-Qwen3-4B-128.json",
+        "line": 10,
+        "type": "Hex High Entropy String",
+        "review": "Recorded source/harness or model-buffer SHA-256 digest"
+      },
+      {
+        "file": "benchmarks/loopweave/eager-diagnostic-shared-weights-gpu-Qwen3-4B-128.json",
+        "line": 346,
+        "type": "Hex High Entropy String",
+        "review": "Recorded source/harness or model-buffer SHA-256 digest"
+      },
+      {
+        "file": "benchmarks/loopweave/eager-diagnostic-shared-weights-gpu-Qwen3-4B-128.json",
+        "line": 347,
+        "type": "Hex High Entropy String",
+        "review": "Recorded source/harness or model-buffer SHA-256 digest"
+      },
+      {
+        "file": "benchmarks/loopweave/shared-weights-gpu-Qwen3-4B-512.json",
+        "line": 9,
+        "type": "Hex High Entropy String",
+        "review": "Recorded source/harness or model-buffer SHA-256 digest"
+      },
+      {
+        "file": "benchmarks/loopweave/shared-weights-gpu-Qwen3-4B-512.json",
+        "line": 10,
+        "type": "Hex High Entropy String",
+        "review": "Recorded source/harness or model-buffer SHA-256 digest"
+      },
+      {
+        "file": "benchmarks/loopweave/shared-weights-gpu-integration-Qwen3-4B.json",
+        "line": 9,
+        "type": "Hex High Entropy String",
+        "review": "Recorded source/harness or model-buffer SHA-256 digest"
+      },
+      {
+        "file": "benchmarks/loopweave/shared-weights-gpu-integration-Qwen3-4B.json",
+        "line": 10,
+        "type": "Hex High Entropy String",
+        "review": "Recorded source/harness or model-buffer SHA-256 digest"
+      }
+    ],
+    "existing_repository_findings": "Three placeholder/checksum findings; automatic approval review rejected baseline suppression. No scanner exclusions or bypasses added."
+  },
+  "temporary_compiler_cache": {
+    "name": "tuft-shared-validation-20261011",
+    "deleted_after_completed_runs": true
+  },
+  "historical_scope": "Qwen3 HF validation before FSDP and hybrid extensions; recorded hashes identify the validated checkpoint."
+}
