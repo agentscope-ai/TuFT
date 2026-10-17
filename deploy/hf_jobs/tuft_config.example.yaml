@@ -27,7 +27,9 @@ supported_models:
     # Optional knobs (see src/tuft/config.py ModelConfig):
     # quantization: fp8              # fp8 | awq | gptq | bitsandbytes
     # sampling_max_model_len: 4096   # cap vLLM context to save KV-cache memory
-    # training_backend: fsdp         # multi-GPU training (also set --flavor a100x4 ...)
+    # Multi-GPU (e.g. --flavor l4x4): colocate: false, tensor_parallel_size: 2 for vLLM, and
+    # training_backend: fsdp         # FSDP training on the remaining GPUs
+    # fsdp_num_gpus: 2
     # temperature: 0.7
     # top_p: 0.9
 

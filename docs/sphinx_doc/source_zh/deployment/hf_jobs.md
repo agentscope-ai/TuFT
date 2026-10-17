@@ -28,7 +28,7 @@
    cd TuFT
    ```
 
-以 HF 仓库 id 指定的模型会**以只读方式从 Hub 挂载**，而不是下载，因此服务器启动时无需下载步骤。对于受限（gated）模型，请改为传入 `--no-mount-models --hf-token`，在 Job 内使用你的 token 下载。
+以 HF 仓库 id 指定的模型会**以只读方式从 Hub 挂载**，而不是下载，因此服务器启动时无需下载步骤。受限（gated）模型在你的账户获得访问权限后也以同样方式挂载；若没有访问权限，Job 会在提交时被拒绝，不会产生费用。如需改为在 Job 内下载，请传入 `--no-mount-models --hf-token`。
 
 ## 第 1 步 —— 配置服务器
 
@@ -165,6 +165,29 @@ python deploy/hf_jobs/launch.py --down --name tuft-yoda  # or --job-id <id>
 ```
 
 你的适配器会保留在 bucket 中，直到你将其删除。
+
+## 多 GPU 训练（FSDP）
+
+在多 GPU 规格上，请将 GPU 分配给 FSDP 训练和 vLLM 采样，而不是让二者共置（colocate）。以下布局使用 `l4x4` 的全部四块 GPU：
+
+```yaml
+supported_models:
+  - model_name: Qwen/Qwen3-4B
+    model_path: Qwen/Qwen3-4B
+    max_model_len: 4096
+    colocate: false
+    tensor_parallel_size: 2      # vLLM sampling on 2 GPUs
+    training_backend: fsdp
+    fsdp_num_gpus: 2             # FSDP training on the other 2
+    max_lora_rank: 16
+    max_loras: 8
+```
+
+```bash
+python deploy/hf_jobs/launch.py --config fsdp.yaml --flavor l4x4
+```
+
+FSDP 适配器以相同的目录结构写入同一个 bucket，并可用标准 PEFT 加载。L4 之间通过 PCIe 通信，因此在 `l4x4` 上对 `Qwen/Qwen3-4B` 执行一个 SFT 步骤需要数秒；如需更高吞吐量，请选择更大的规格。
 
 ## 后续步骤
 

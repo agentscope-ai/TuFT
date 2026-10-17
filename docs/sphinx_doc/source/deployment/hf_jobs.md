@@ -36,8 +36,9 @@ on your account.
    ```
 
 Models given as HF repo ids are **mounted read-only from the Hub** instead of downloaded, so
-the server starts without a download step. For gated models, pass
-`--no-mount-models --hf-token` to download them inside the Job with your token instead.
+the server starts without a download step. Gated models mount the same way once your account
+has been granted access; without access, the Job is rejected at submission, before it is
+billed. To download inside the Job instead, pass `--no-mount-models --hf-token`.
 
 ## Step 1 — Configure the server
 
@@ -189,6 +190,32 @@ python deploy/hf_jobs/launch.py --down --name tuft-yoda  # or --job-id <id>
 ```
 
 Your adapters remain in the bucket until you delete them.
+
+## Multi-GPU training (FSDP)
+
+On a multi-GPU flavor, split the GPUs between FSDP training and vLLM sampling instead of
+colocating them. This layout uses all four GPUs of `l4x4`:
+
+```yaml
+supported_models:
+  - model_name: Qwen/Qwen3-4B
+    model_path: Qwen/Qwen3-4B
+    max_model_len: 4096
+    colocate: false
+    tensor_parallel_size: 2      # vLLM sampling on 2 GPUs
+    training_backend: fsdp
+    fsdp_num_gpus: 2             # FSDP training on the other 2
+    max_lora_rank: 16
+    max_loras: 8
+```
+
+```bash
+python deploy/hf_jobs/launch.py --config fsdp.yaml --flavor l4x4
+```
+
+FSDP adapters land in the same bucket layout and load with stock PEFT. L4s talk over PCIe,
+so on `l4x4` an SFT step on `Qwen/Qwen3-4B` takes several seconds; pick a larger flavor for
+throughput.
 
 ## Next steps
 
