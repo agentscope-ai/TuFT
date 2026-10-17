@@ -72,8 +72,12 @@ DEFAULTS = {
 _BOOL_KEYS = {"mount_models", "public", "hf_token"}
 
 # Decode the config from the secret and run the standard server, bound to 0.0.0.0 so the
-# Jobs proxy can reach it; --checkpoint-dir pins checkpoints to the bucket mount.
+# Jobs proxy can reach it; --checkpoint-dir pins checkpoints to the bucket mount. Mounted
+# weights are read once sequentially first: vLLM's mmap reads on a cold Hub mount can take
+# minutes or stall (seen with tensor_parallel_size=2), while a warm page cache loads in seconds.
 SERVER_CMD = (
+    f"if [ -d {MODELS_DIR} ]; then echo 'prefetching mounted model weights'; "
+    f"find {MODELS_DIR} -name '*.safetensors' -exec cat {{}} + > /dev/null; fi; "
     f'echo "$TUFT_CONFIG_B64" | base64 -d > {REMOTE_CONFIG} && '
     f"exec {VENV_PY} -m tuft launch --host 0.0.0.0 --port {TUFT_PORT} "
     f"--config {REMOTE_CONFIG} --checkpoint-dir {CKPT_DIR}"
