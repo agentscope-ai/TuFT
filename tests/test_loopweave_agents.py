@@ -69,3 +69,20 @@ def test_direct_cli_import_does_not_depend_on_scripts_namespace():
     subprocess.run(
         [sys.executable, str(path), "--help"], check=True, capture_output=True, cwd="/tmp"
     )
+
+
+def test_chat_template_contract_with_real_transformers_tokenizer():
+    from tokenizers import Tokenizer
+    from tokenizers.models import WordLevel
+    from transformers import PreTrainedTokenizerFast
+
+    from scripts.benchmark_loopweave_agents import encode_prompt
+
+    tokenizer = PreTrainedTokenizerFast(
+        tokenizer_object=Tokenizer(WordLevel({"[UNK]": 0, "hello": 1}, unk_token="[UNK]")),
+        unk_token="[UNK]",
+        chat_template="{% for m in messages %}{{ m['content'] }}{% endfor %}",
+    )
+    tokens = encode_prompt(tokenizer, [{"role": "user", "content": "hello"}])
+    assert tokens == [1]
+    types.ModelInput.from_ints(tokens)

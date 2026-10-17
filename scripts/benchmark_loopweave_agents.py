@@ -13,6 +13,7 @@ import json
 import math
 import tempfile
 import time
+from importlib.metadata import version
 from pathlib import Path
 
 
@@ -95,6 +96,87 @@ def training_datum(prompt: list[int], tokens: list[int], logprobs: list[float], 
                 data=[0.0] * prefix + [(score - 0.5) / len(tokens)] * len(tokens), dtype="float32"
             ),
         },
+    )
+
+
+def initial_messages(spec: dict, tenant: int) -> list[dict]:
+    # Reference documents vary by tenant and contain meaningful tool
+    # instructions among distractor warehouse records (~2k/~4k tokens).
+    reference = "\n".join(
+        f"Archive {j}: warehouse region {j % 9}; reserve {j % 7}; "
+        "archived stock is not current. Use live lookup for decisions."
+        for j in range(65 if tenant % 2 == 0 else 130)
+    )
+    return [
+        dict(
+            role="system",
+            content="You are a warehouse agent. Use lookup tools to inspect live records. "
+            "Output only one JSON object per turn. "
+            'Tool syntax: {"tool":"lookup","key":"..."}. '
+            'Final syntax: {"decision":"ship"} or {"decision":"hold"}. '
+            "Do not guess live stock.\n" + reference,
+        ),
+        dict(
+            role="user",
+            content=f"Fulfill an order for {spec['requested']} units. "
+            f"First look up {spec['policy']}, then look up its stock_key, "
+            "then give the final decision.",
+        ),
+    ]
+
+
+def encode_prompt(tokenizer, messages: list[dict]) -> list[int]:
+    # Transformers 5 defaults to a BatchEncoding; Tinker needs flat token IDs.
+    tokens = tokenizer.apply_chat_template(
+        messages,
+        tokenize=True,
+        add_generation_prompt=True,
+        enable_thinking=False,
+        return_dict=False,
+    )
+    if not isinstance(tokens, list) or not all(isinstance(t, int) for t in tokens):
+        raise TypeError("Chat template must produce a flat list of integer token IDs")
+    if len(tokens) + 96 > 8192:
+        raise ValueError("Agent context exceeds configured model capacity")
+    return tokens
+
+
+def preflight(model_path: str) -> dict:
+    from tinker import types
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    lengths = []
+    for tenant in range(8):
+        spec = task_spec(tenant, 0, 0)
+        messages = initial_messages(spec, tenant)
+        for turn in range(3):
+            prompt = encode_prompt(tokenizer, messages)
+            lengths.append(len(prompt))
+            types.SampleRequest(
+                sampling_session_id="preflight",
+                seq_id=turn,
+                prompt=types.ModelInput.from_ints(prompt),
+                num_samples=1,
+                sampling_params=types.SamplingParams(max_tokens=96, temperature=0),
+            )
+            action = {"tool": "lookup", "key": spec["policy" if turn == 0 else "stock"]}
+            response = json.dumps(action)
+            tokens = tokenizer.encode(response, add_special_tokens=False)
+            datum = training_datum(prompt, tokens, [-1.0] * len(tokens), 1.0)
+            assert len(datum.model_input.to_ints()) == len(
+                datum.loss_fn_inputs["target_tokens"].data
+            )
+            messages.extend(
+                [
+                    dict(role="assistant", content=response),
+                    dict(role="user", content="Tool observation: " + tool_reply(spec, action)[0]),
+                ]
+            )
+    return dict(
+        validated_requests=len(lengths),
+        prompt_range=[min(lengths), max(lengths)],
+        gpu_allocated=False,
     )
 
 
@@ -214,37 +296,12 @@ async def run(policy: str, model_path: str, rounds: int, tenants: int, trajector
 
         async def episode(tenant, step, trajectory, sampler):
             spec = task_spec(tenant, step, trajectory)
-            # Reference documents vary by tenant and contain meaningful tool
-            # instructions among distractor warehouse records (~2k/~4k tokens).
-            reference = "\n".join(
-                f"Archive {j}: warehouse region {j % 9}; reserve {j % 7}; "
-                "archived stock is not current. Use live lookup for decisions."
-                for j in range(65 if tenant % 2 == 0 else 130)
-            )
-            messages = [
-                dict(
-                    role="system",
-                    content="You are a warehouse agent. Use lookup tools to inspect live records. "
-                    "Output only one JSON object per turn. "
-                    'Tool syntax: {"tool":"lookup","key":"..."}. '
-                    'Final syntax: {"decision":"ship"} or {"decision":"hold"}. '
-                    "Do not guess live stock.\n" + reference,
-                ),
-                dict(
-                    role="user",
-                    content=f"Fulfill an order for {spec['requested']} units. "
-                    f"First look up {spec['policy']}, then look up its stock_key, "
-                    "then give the final decision.",
-                ),
-            ]
+            messages = initial_messages(spec, tenant)
             outputs, valid = [], 0
             action = {}
             episode_start = time.perf_counter()
             for turn in range(3):
-                prompt = tokenizer.apply_chat_template(
-                    messages, tokenize=True, add_generation_prompt=True, enable_thinking=False
-                )
-                assert len(prompt) + 96 <= 8192
+                prompt = encode_prompt(tokenizer, messages)
                 begin = time.perf_counter()
                 result = await state.run_sample(
                     types.SampleRequest(
@@ -346,6 +403,7 @@ async def run(policy: str, model_path: str, rounds: int, tenants: int, trajector
                 )
                 if step + 1 < rounds:
                     sampler = await publish(record, f"step-{step}", step + 1)
+                print("UPDATE_DONE", policy, i, step, time.perf_counter() - started, flush=True)
             print("TENANT_DONE", policy, i, time.perf_counter() - started, flush=True)
 
         await asyncio.gather(*(tenant_loop(i) for i in range(tenants)))
@@ -373,6 +431,9 @@ async def run(policy: str, model_path: str, rounds: int, tenants: int, trajector
             shared=shared,
             frozen_base_unchanged=True,
             model_config=model.model_dump(mode="json"),
+            versions={
+                name: version(name) for name in ("torch", "vllm", "transformers", "tinker", "peft")
+            },
         )
     finally:
         if monitor is not None:
@@ -386,12 +447,17 @@ def main():
     parser.add_argument("--policy", choices=["balanced", "loopweave"], required=True)
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--preflight", action="store_true")
     parser.add_argument("--rounds", type=int, default=6)
     parser.add_argument("--tenants", type=int, default=8)
     parser.add_argument("--trajectories", type=int, default=4)
     args = parser.parse_args()
-    result = asyncio.run(
-        run(args.policy, args.model_path, args.rounds, args.tenants, args.trajectories)
+    result = (
+        preflight(args.model_path)
+        if args.preflight
+        else asyncio.run(
+            run(args.policy, args.model_path, args.rounds, args.tenants, args.trajectories)
+        )
     )
     args.output.write_text(json.dumps(result, indent=2) + "\n")
 

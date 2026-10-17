@@ -1,0 +1,14 @@
+{
+  "runs": [],
+  "requested_resources": {
+    "h100": 2,
+    "cpu": 16,
+    "memory_gib": 64
+  },
+  "function_timeout_s": 1200,
+  "returncode": 1,
+  "timed_out": false,
+  "hardware": "name, memory.total [MiB], driver_version\nNVIDIA H100 80GB HBM3, 81559 MiB, 610.57.04\nNVIDIA H100 80GB HBM3, 81559 MiB, 610.57.04\n",
+  "function_elapsed_s": 162.712084464,
+  "client_elapsed_s": 171.39255413413048
+}

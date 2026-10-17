@@ -848,3 +848,42 @@ does not attempt to reproduce every paper claim or add probability calibration.
   remains local because the existing secret scanner flags its public provenance
   hashes; the scanner baseline is unchanged. The FSDP raw artifact and summaries
   pass scanning and are included with the branch.
+
+### Scheduling corrections and causal agent workload (2026-10-17)
+
+- Fixed the diagnosed admission defects: every Flex request rechecks marginal
+  cost including reserved work; calibrated routing uses completion estimates;
+  reactive alignment cannot idle available Fixed capacity. Unpredicted admissions
+  include observed drain cost. Publication-only wakes no longer reset training dwell.
+- Planner groups separated beyond their natural serialized finish are independent,
+  so a distant infeasible group cannot veto a local feasible plan. Checkpoint and
+  colocated registration service estimates contribute to predicted lane occupancy.
+- Added separate queue, drain, phase, and service counters, profile eligibility
+  reasons, and opt-in bounded identifier-free event traces. Queue waits are sums
+  across callers, not wall time. Detailed successful-operation records exclude
+  failed operations; exclusive occupancy still includes them.
+- Moved persistent-sampler adapter registration outside the training gate. Shared
+  registration and rollback still reserve the GPU group. The complete transaction
+  drains on cancellation and shutdown. No FSDP storage or collective layout changed.
+- Targeted CPU validation: 162 passed, one skipped, including existing FSDP
+  reservation/sharding checks. Full repository commit hooks passed at `8a2de3f`.
+  Additional tokenizer/CLI preflight regressions: four passed. Saved JUnit and
+  actual pinned-tokenizer CPU request-shape results under `benchmarks/loopweave/`.
+- New benchmark uses Qwen3-4B, eight adapters/tenants, six updates each, four
+  trajectories per update, and three conversational turns. Live allowlisted lookup
+  results feed later prompts; sampled token log probabilities and terminal reward
+  feed actual importance-sampling LoRA updates, followed by versioned publication.
+  Reference context is approximately 1.8k/3.5k tokens and grows with conversation.
+  Tool delays vary from 50 ms to 1.6 s. This validates systems behavior rather than
+  learning convergence, production tool latencies, or numerical calibration.
+- Static control uses `balanced` admission with the same Fixed limit, batching,
+  model, cache budget and workload seeds. LoopWeave has no duplicate-base borrowing
+  arm. Natural generated lengths can differ; equal episode/update counts do not
+  mean identical token work. Each arm uses a fresh process and independent adapter
+  initialization; a single ordered pair cannot establish statistical significance.
+- Two startup attempts failed before measured work: an installed `scripts` package
+  shadowed the helper import; then Transformers 5's default `BatchEncoding` return
+  violated Tinker's flat-token contract. Fixed both, added regressions and a real
+  tokenizer preflight before model initialization. Their raw artifacts and compute
+  time remain included in the experiment accounting. No completed experiment was
+  repeated to select a favorable result.

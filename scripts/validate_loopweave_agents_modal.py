@@ -65,6 +65,25 @@ def compare():
             .strip()
             .splitlines()[-1]
         )
+        preflight_path = Path("/tmp/agents-preflight.json")
+        subprocess.run(
+            [
+                python,
+                "/validation/scripts/benchmark_loopweave_agents.py",
+                "--preflight",
+                "--policy",
+                "balanced",
+                "--model-path",
+                model_path,
+                "--output",
+                str(preflight_path),
+            ],
+            env=env,
+            cwd="/validation",
+            timeout=60,
+            check=True,
+        )
+        result["preflight"] = json.loads(preflight_path.read_text())
         for policy in ("balanced", "loopweave"):
             destination = Path(f"/tmp/agents-{policy}.json")
             command = [
@@ -90,6 +109,8 @@ def compare():
                 result["runs"].append(json.loads(destination.read_text()))
             if completed.returncode:
                 break
+    except subprocess.CalledProcessError as exc:
+        result["returncode"] = exc.returncode
     except subprocess.TimeoutExpired:
         result.update(returncode=124, timed_out=True)
     result["function_elapsed_s"] = time.monotonic() - started
