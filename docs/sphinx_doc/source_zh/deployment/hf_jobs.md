@@ -160,11 +160,11 @@ hf buckets sync hf://buckets/<you>/tuft-checkpoints/<run_id> ./weights/<run_id>
 HF Jobs **不会缩容至零**：Job 会一直计费，直到达到其 `timeout` 或被你取消。
 
 ```bash
-python deploy/hf_jobs/launch.py --status                 # list TuFT Jobs
-python deploy/hf_jobs/launch.py --down --name tuft-yoda  # or --job-id <id>
+python deploy/hf_jobs/launch.py --status --config yoda_hf_jobs.yaml   # list TuFT Jobs
+python deploy/hf_jobs/launch.py --down --config yoda_hf_jobs.yaml     # or --job-id <id> --namespace <ns>
 ```
 
-你的适配器会保留在 bucket 中，直到你将其删除。
+传入 `--config` 时，`--down` 和 `--status` 会使用其中的 `hf_jobs.name` 和 `hf_jobs.namespace`，因此在组织下启动的 Job 也能被找到。你的适配器会保留在 bucket 中，直到你将其删除。
 
 ## 多 GPU 训练（FSDP）
 

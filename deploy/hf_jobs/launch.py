@@ -192,7 +192,7 @@ def wait_healthy(api, job_id: str, namespace: str, url: str, headers: dict, time
     return False
 
 
-def banner(url: str, model: str, public: bool, job_id: str, namespace: str, cmd: str) -> None:
+def banner(url: str, model: str, public: bool, job_id: str, namespace: str, stop: str) -> None:
     headers, note = "", ""
     if not public:
         headers = '\n        default_headers={"Authorization": f"Bearer {HF_TOKEN}"},'
@@ -209,36 +209,43 @@ def banner(url: str, model: str, public: bool, job_id: str, namespace: str, cmd:
    # api_key: your authorized_users key
 {note}
    logs:  hf jobs logs -f {namespace}/{job_id}
-   stop:  {cmd} --down --job-id {job_id}   (billed until then, or until --timeout)
+   stop:  {stop}   (billed until then, or until --timeout)
 """)
 
 
+def file_infra(config: str | None) -> dict:
+    """The `hf_jobs:` section of --config, so --down/--status find Jobs where launch put them."""
+    if not config:
+        return {}
+    try:
+        import yaml
+
+        doc = yaml.safe_load(Path(config).expanduser().read_text()) or {}
+    except Exception:
+        return {}
+    return doc.get("hf_jobs") or {}
+
+
 def down(api, args: argparse.Namespace) -> None:
-    namespace = args.namespace or None
+    infra = file_infra(args.config)
+    namespace = args.namespace or infra.get("namespace") or None
     if args.job_id:
         ids = [args.job_id]
     else:
-        name = args.name
-        if not name and args.config:
-            try:
-                import yaml
-
-                doc = yaml.safe_load(Path(args.config).read_text()) or {}
-                name = (doc.get("hf_jobs") or {}).get("name")
-            except Exception:
-                pass
-        name = name or DEFAULTS["name"]
+        name = args.name or infra.get("name") or DEFAULTS["name"]
         jobs = api.list_jobs(labels={**JOB_LABELS, "name": name}, namespace=namespace)
         ids = [j.id for j in jobs if str(j.status.stage).rsplit(".", 1)[-1] not in _TERMINAL]
         if not ids:
-            sys.exit(f"no running TuFT Job named '{name}' — see `--status`")
+            where = namespace or "your namespace"
+            sys.exit(f"no running TuFT Job named '{name}' in {where} — see `--status`")
     for job_id in ids:
         api.cancel_job(job_id=job_id, namespace=namespace)
         print(f"== canceled Job {job_id} ==")
 
 
 def status(api, args: argparse.Namespace) -> None:
-    jobs = list(api.list_jobs(labels=JOB_LABELS, namespace=args.namespace or None))
+    namespace = args.namespace or file_infra(args.config).get("namespace") or None
+    jobs = list(api.list_jobs(labels=JOB_LABELS, namespace=namespace))
     if not jobs:
         print("no TuFT Jobs")
     for j in jobs:
@@ -368,18 +375,19 @@ def main() -> None:
         sys.exit(f"Job submission failed: {e}\n(gated model? request access on its Hub page)")
     url = f"https://{job.id}--{TUFT_PORT}.hf.jobs"
     model = data["supported_models"][0].get("model_name", "?")
-    cmd = f"python {Path(sys.argv[0]).as_posix()}"
+    stop = f"python {Path(sys.argv[0]).as_posix()} --down --job-id {job.id} --namespace {namespace}"
     print(f"[job] submitted {job.id}: {job.url}")
     if args.no_wait:
         print(f"[job] TuFT will be at {url} once healthy — `hf jobs logs -f {namespace}/{job.id}`")
+        print(f"[job] stop it with `{stop}`")
         return
     headers = {} if infra["public"] else {"Authorization": f"Bearer {get_hf_token()}"}
     if not wait_healthy(api, job.id, namespace, url, headers, infra["startup_timeout"]):
         sys.exit(
             f"TuFT did not become healthy — check `hf jobs logs {namespace}/{job.id}`, then "
-            f"`{cmd} --down --job-id {job.id}`"
+            f"`{stop}`"
         )
-    banner(url, model, infra["public"], job.id, namespace, cmd)
+    banner(url, model, infra["public"], job.id, namespace, stop)
 
 
 if __name__ == "__main__":

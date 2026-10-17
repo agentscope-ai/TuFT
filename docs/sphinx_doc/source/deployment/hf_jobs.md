@@ -185,11 +185,12 @@ HF Jobs **do not scale to zero**: the Job is billed until it reaches its `timeou
 cancel it.
 
 ```bash
-python deploy/hf_jobs/launch.py --status                 # list TuFT Jobs
-python deploy/hf_jobs/launch.py --down --name tuft-yoda  # or --job-id <id>
+python deploy/hf_jobs/launch.py --status --config yoda_hf_jobs.yaml   # list TuFT Jobs
+python deploy/hf_jobs/launch.py --down --config yoda_hf_jobs.yaml     # or --job-id <id> --namespace <ns>
 ```
 
-Your adapters remain in the bucket until you delete them.
+With `--config`, `--down` and `--status` use its `hf_jobs.name` and `hf_jobs.namespace`, so Jobs
+started in an organization are found there. Your adapters remain in the bucket until you delete them.
 
 ## Multi-GPU training (FSDP)
 
