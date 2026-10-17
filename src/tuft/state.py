@@ -183,10 +183,11 @@ class ServerState:
                 if isinstance(training, HFTrainingBackend) and isinstance(
                     sampling, DPSamplingBackend
                 ):
-                    trainer_device, sampler_device = await asyncio.gather(
-                        training.model.get_device_assignment.remote(),
-                        sampling._instances[0].engine.get_device_assignment.remote(),
-                    )
+                    trainer_device = await training.model.get_device_assignment.remote()
+                    sampling._instances[0].configure_shared_placement([trainer_device])
+                    sampler_device = await sampling._instances[
+                        0
+                    ].engine.get_device_assignment.remote()
                     if not trainer_device["gpus"] or trainer_device != sampler_device:
                         raise RuntimeError(
                             "LoopWeave requires trainer and flex sampler on the same GPU; "

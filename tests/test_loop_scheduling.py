@@ -222,7 +222,9 @@ async def test_cold_probe_is_bounded_and_only_runs_with_fixed_backlog():
 
 
 async def test_switch_back_reserve_rejects_deadline_crossing():
-    s = ResourceScheduler(2, SchedulingConfig(cost_aware_borrowing=False), flex_index=0)
+    s = ResourceScheduler(
+        2, SchedulingConfig(cost_aware_borrowing=False, adapter_batch_window_s=0), flex_index=0
+    )
     now = time.monotonic()
     history(s.profiler, "a", now - 0.8)
     s._seconds_per_token = 0.001
@@ -398,7 +400,9 @@ async def test_sampling_service_rate_excludes_wakeup(monkeypatch):
 
     now = [100.0]
     monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: now[0]))
-    s = ResourceScheduler(2, SchedulingConfig(cost_aware_borrowing=False), flex_index=0)
+    s = ResourceScheduler(
+        2, SchedulingConfig(cost_aware_borrowing=False, adapter_batch_window_s=0), flex_index=0
+    )
 
     async def phase(training):
         now[0] += 10

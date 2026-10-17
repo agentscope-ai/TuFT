@@ -1,0 +1,46 @@
+{
+  "status": "passed",
+  "scope": "CPU validation: bounded adapter batching, explicit trainer-owned placement, multi-base isolation",
+  "source_base_commit": "c190c06",
+  "source_note": "Validation covers the implementation committed alongside this report, after the base commit.",
+  "cpu": {
+    "tests": "714",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "37",
+    "time": "54.630",
+    "timestamp": "2026-10-17T09:46:01.349200+00:00",
+    "passed": 677
+  },
+  "static_checks": {
+    "ruff": "0.14.14 lint and format passed",
+    "pyright": "1.1.408: zero errors/warnings",
+    "secret_scan_findings": 0
+  },
+  "deterministic_dispatch_test": {
+    "requests": 8,
+    "fifo_adapter_transitions": 7,
+    "grouped_adapter_transitions": 1,
+    "same_requests_and_results": true,
+    "gpu_performance_claim": false
+  },
+  "controller_integration": {
+    "base_models": 2,
+    "published_adapters": 16,
+    "completed_samples": 64,
+    "training_on_first_base_blocks_only_its_flex_sampler": true,
+    "second_base_borrows_while_first_trains": true
+  },
+  "gpu_experiments_run": false,
+  "remaining_validation": [
+    "GPU validation of revised HF trainer-owned placement",
+    "GPU throughput/latency evaluation of adapter batching"
+  ],
+  "remaining_scope": [
+    "HTTP streaming admission",
+    "Cross-model elastic GPU allocation",
+    "Cross-session snapshot deduplication",
+    "Training adapter/optimizer offload",
+    "Numerical calibration and explicit policy-lag contracts"
+  ]
+}

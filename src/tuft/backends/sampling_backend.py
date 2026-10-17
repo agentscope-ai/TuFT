@@ -95,11 +95,12 @@ class VLLMSamplingBackend(BaseSamplingBackend):
         super().__init__(config)
         self._worker_venv_path = worker_venv_path
         self._instance_index = instance_index
-        # FSDP owns the full GPU group. Its colocated TP actor is created only
-        # after rank placement is known, on the same node and ordered devices.
+        # The trainer owns full GPUs. Create the sharing actor only after its
+        # placement is known, avoiding fractional packing across base models.
         self.engine = (
             None
-            if config.colocate and config.training_backend == "fsdp"
+            if config.colocate
+            and (config.training_backend == "fsdp" or config.scheduling.share_base_weights)
             else self._create_engine(config)
         )
         self.lora_adapters: dict[str, LoRARequest] = {}
@@ -115,15 +116,18 @@ class VLLMSamplingBackend(BaseSamplingBackend):
             return self._create_standalone_engine(config)
 
     def configure_fsdp_placement(self, assignments: list[dict]) -> None:
+        self.configure_shared_placement(assignments)
+
+    def configure_shared_placement(self, assignments: list[dict]) -> None:
         import ray
         from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 
         if self.engine is not None or len(assignments) != self.config.tensor_parallel_size:
-            raise RuntimeError("Invalid FSDP sampling placement initialization")
+            raise RuntimeError("Invalid shared sampling placement initialization")
         nodes = {a["node"] for a in assignments}
         gpus = [str(int(float(a["gpus"][0]))) for a in assignments if len(a["gpus"]) == 1]
         if len(nodes) != 1 or len(set(gpus)) != len(assignments):
-            raise ValueError("FSDP sharing requires distinct GPUs on one node")
+            raise ValueError("Weight sharing requires distinct GPUs on one node")
         engine_config = self._build_engine_config(
             self.config,
             tensor_parallel_size=len(gpus),
@@ -170,6 +174,7 @@ class VLLMSamplingBackend(BaseSamplingBackend):
             enable_lora=True,
             max_lora_rank=config.max_lora_rank,
             max_loras=config.max_loras,
+            max_cpu_loras=config.max_cpu_loras,
             quantization=config.quantization,
             enable_runtime_lora_updating=True,
             # Only the scheduler may submit GPU work to a flex replica.

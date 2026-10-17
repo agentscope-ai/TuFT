@@ -89,6 +89,7 @@ class ResourceScheduler:
         self._busy_failed = [False] * replicas
         self._probe_active = False
         self._borrowing = False
+        self._last_dispatched: dict[int, str | None] = {}
 
     def set_phase_transition(self, callback: Callable[[bool], Awaitable[None]]) -> None:
         """Install before serving; True releases sampler memory for training."""
@@ -378,10 +379,23 @@ class ResourceScheduler:
         if self._closed or not self._tenants:
             return
         now = time.monotonic()
+        if self._queued < self.config.adapter_batch_max_requests:
+            # Anchor to the oldest queued arrival: new arrivals cannot prolong
+            # the window. Loop holds run concurrently with this wait.
+            oldest = min(queue[0].submitted for queue in self._queues.values())
+            remaining = oldest + self.config.adapter_batch_window_s - now
+            if remaining > 0:
+                self._schedule_wake(remaining)
+                return
         horizon = self.profiler.horizon(now) if self.flex_index is not None else None
+        dispatch: list[tuple[_Request, int]] = []
         # Round-robin tenant heads: one tenant cannot monopolize pending slots.
         stalled = 0
-        while self._tenants and stalled < len(self._tenants):
+        while (
+            self._tenants
+            and stalled < len(self._tenants)
+            and len(dispatch) < self.config.adapter_batch_max_requests
+        ):
             # Do not scan every queued tenant on every submission to a full pool.
             if not any(
                 active
@@ -442,7 +456,27 @@ class ResourceScheduler:
             request.admitted.set()
             self._stats["queue_wait_s"] += time.monotonic() - request.submitted
             self._stats["admitted"] += 1
-            self._track(self._execute(request, index))
+            dispatch.append((request, index))
+        # Select and reserve in fair tenant order first. Only reorder the
+        # selected set, so adapter locality cannot buy extra admission slots.
+        # Each group retains FIFO order and every group starts concurrently;
+        # never wait for a long generation to finish before starting another.
+        groups: dict[tuple[int, str | None], list[_Request]] = {}
+        for request, index in dispatch:
+            groups.setdefault((index, request.adapter), []).append(request)
+        if dispatch:
+            self._stats["adapter_dispatch_batches"] += 1
+            self._stats["adapter_dispatch_groups"] += len(groups)
+            self._stats["adapter_grouped_requests"] += len(dispatch) - len(groups)
+        for (index, adapter), requests in groups.items():
+            if index in self._last_dispatched and self._last_dispatched[index] != adapter:
+                self._stats["adapter_dispatch_switches"] += 1
+            self._last_dispatched[index] = adapter
+            self._adapter[index] = adapter
+            for request in requests:
+                self._track(self._execute(request, index))
+        if self._tenants and len(dispatch) == self.config.adapter_batch_max_requests:
+            self._schedule_wake(0)
 
     async def _execute(self, request: _Request, index: int) -> None:
         started = time.monotonic()
@@ -493,7 +527,11 @@ class ResourceScheduler:
                         else 0.2 * rate + 0.8 * self._seconds_per_token
                     )
                 self._flex_drained.set()
-            self._pump()
+            # Collect slots released by the same completion wave before making
+            # another fair admission set; otherwise each callback dispatches a
+            # singleton and defeats grouping under sustained load.
+            if not self._closed:
+                self._schedule_wake(0)
 
     async def training(
         self,

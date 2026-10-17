@@ -61,6 +61,7 @@ class VLLMEngineConfig:
     enable_lora: bool = True
     max_lora_rank: int = 16
     max_loras: int = 1
+    max_cpu_loras: int | None = None
     quantization: Optional[str] = None
     # Gates vLLM's /v1/load_lora_adapter HTTP endpoint (used by tuft.oai to
     # serve trained adapters by name through the OpenAI API).
@@ -202,6 +203,7 @@ class VLLMEngine:
                 enable_lora=self.config.enable_lora,
                 max_lora_rank=self.config.max_lora_rank,  # type: ignore[arg-type]
                 max_loras=self.config.max_loras,
+                max_cpu_loras=self.config.max_cpu_loras,
                 # Return logprobs of the actual sampling distribution (after
                 # temperature scaling) -- required for RL importance ratios.
                 logprobs_mode="processed_logprobs",
@@ -346,7 +348,12 @@ class VLLMEngine:
         """Ray's physical GPU assignment, before starting the engine workers."""
         import ray
 
-        return {"node": ray.get_runtime_context().get_node_id(), "gpus": ray.get_gpu_ids()}
+        gpus = (
+            [float(gpu) for gpu in self.config.shared_gpu_ids]
+            if self.config.shared_gpu_ids is not None
+            else ray.get_gpu_ids()
+        )
+        return {"node": ray.get_runtime_context().get_node_id(), "gpus": gpus}
 
     async def generate(self, prompt: Any, lora_request: Any = None, **kwargs: Any) -> Any:
         """Generate and return the raw vLLM ``RequestOutput``.

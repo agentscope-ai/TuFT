@@ -163,3 +163,13 @@ Recreate either comparison from its raw JSON with:
 uv run --no-project --with matplotlib python scripts/plot_loopweave.py RESULTS.json --output FIGURE.png
 python scripts/summarize_loopweave.py RESULTS.json --output SUMMARY.json
 ```
+
+## Many-adapter CPU validation
+
+`many-adapter-cpu-validation.json` and `many-adapter-cpu-junit.xml` record the
+677-pass CPU suite for bounded adapter batching and explicit multi-model
+placement. The controller integration covers two base models, sixteen published
+adapters, and sixty-four sampling requests. The deterministic dispatch test
+reduces seven adapter transitions to one for the same eight requests. These are
+functional results, not measured GPU speedups; the GPU figures above predate
+this change and the revised HF placement still needs GPU validation.

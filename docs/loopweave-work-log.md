@@ -759,3 +759,50 @@ does not attempt to reproduce every paper claim or add probability calibration.
   validation. No GPU experiments were launched for this review. PR #118 was
   inspected but not merged or adapted in this checkpoint; the next useful
   change would be bounded snapshot grouping with fairness/lifecycle tests.
+
+### Many-adapter batching and multiple base models (2026-10-17)
+
+- Numerical training/inference agreement remains a separate workstream. This
+  change preserves snapshot selection, returned inference probabilities, and
+  storage/ownership invariants; it does not add probability calibration or a
+  policy-lag contract.
+- Added a bounded adapter collection window (2 ms by default, at most 32
+  admissions per dispatch set). Tenant round-robin/FIFO admission and token
+  reservations happen before grouping by replica and adapter. Groups execute
+  concurrently, and new arrivals cannot extend the oldest request's window.
+  Completions coalesce for one event-loop turn so a wave of freed slots can
+  form a useful batch under sustained load. Added aggregate grouping/switch
+  counters without adapter-label cardinality.
+- Self-review found that configuration still rejected multiple colocated bases,
+  and fractional HF actors could be packed onto the wrong training device when
+  more than one base was configured. HF LoopWeave trainers now reserve full
+  GPUs. Borrowing samplers are created after trainer placement is known, using
+  the same strict node/device binding already used by FSDP. The FSDP shard layout,
+  TP mapping, collectives, and optimizer semantics are unchanged. Legacy
+  fractional colocation is still rejected in a multi-model configuration.
+- Exposed `max_cpu_loras` independently of active GPU `max_loras`, validated at
+  configuration load. Added a two-base/four-GPU deployment example; it is a
+  sizing example, not a new measured GPU configuration.
+- Added CPU tests for fair grouping, fixed batching deadlines, cancellation and
+  shutdown during collection, training priority, configuration validation, full
+  trainer reservations, strict sampler node/device binding, and two-model
+  controller/checkpoint/sampling integration with 16 adapters and 64 requests.
+- The deterministic eight-request dispatch test reduces adapter transitions
+  from seven (FIFO order) to one while returning every original request's
+  result. This is queue behavior, not evidence of GPU speedup. The two-model
+  integration test holds training on the first base while the second continues
+  borrowing and checks that all published adapter identities remain isolated.
+- Test iterations corrected a fake-clock fixture that did not advance the new
+  collection timer and a Ray fixture that used an invalid node ID. CPU tests
+  involving threaded persistence run outside the restricted socket sandbox.
+- No GPU experiments were launched. This iteration still needs GPU validation,
+  especially for the revised HF placement. Cross-model elastic reallocation,
+  HTTP streaming admission, cross-session snapshot deduplication, and training
+  adapter/optimizer offload remain outside this change.
+- Final CPU regression: 677 passed, 37 skipped, no failures/errors (54.66 s
+  reported by pytest). Pinned Ruff 0.14.14 lint/format and Pyright 1.1.408 pass;
+  read-only secret scanning of changed code/config/docs finds no secrets.
+  Reports: `benchmarks/loopweave/many-adapter-cpu-validation.json` and
+  `benchmarks/loopweave/many-adapter-cpu-junit.xml`. The multi-model test uses an
+  ingress barrier after sequence persistence so batching assertions are
+  independent of filesystem/thread timing.

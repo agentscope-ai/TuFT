@@ -70,6 +70,9 @@ class SchedulingConfig(BaseModel):
     # Affinity only wins when its extra queued token work fits this fraction.
     locality_slack: float = Field(default=0.1, ge=0, le=1, allow_inf_nan=False)
     merge_zero_adapters: bool = True
+    # One bounded window, shared with loop holds rather than added after them.
+    adapter_batch_window_s: float = Field(default=0.002, ge=0, le=0.1, allow_inf_nan=False)
+    adapter_batch_max_requests: int = Field(default=32, ge=1, le=4096)
     flex_max_inflight: int = Field(default=4, ge=1)
     flex_max_tokens: int = Field(default=256, ge=1)
     # Briefly keep the training lane open for an arriving optim_step/checkpoint.
@@ -145,6 +148,9 @@ class ModelConfig(BaseModel):
     # default lora setting
     max_lora_rank: int = 16  # maximum rank for LoRA adapters
     max_loras: int = 1  # maximum number of LoRA adapters that can be applied simultaneously
+    # Host cache capacity per sampler; independent of GPU-active adapter slots.
+    # None preserves vLLM's default (max_loras). Evicted adapters reload on use.
+    max_cpu_loras: int | None = Field(default=None, ge=1)
     # Multiplier from a LoRA adapter's rank to its lora_alpha:
     # lora_alpha = rank * lora_alpha_ratio. Shared by the "hf" and "fsdp" training
     # backends so the same rank produces the same update scaling on both.
@@ -244,6 +250,12 @@ class ModelConfig(BaseModel):
         # Canonical order with duplicates removed, so equal capability sets
         # always serialize identically in API responses.
         self.capabilities = [c for c in ALL_MODEL_CAPABILITIES if c in self.capabilities]
+        return self
+
+    @model_validator(mode="after")
+    def validate_adapter_cache(self) -> "ModelConfig":
+        if self.max_cpu_loras is not None and self.max_cpu_loras < self.max_loras:
+            raise ValueError("max_cpu_loras must be >= max_loras")
         return self
 
     @model_validator(mode="after")
@@ -409,10 +421,11 @@ class AppConfig(BaseModel):
         model_names = {model.model_name for model in self.supported_models}
         if len(model_names) != len(self.supported_models):
             raise ValueError("Model names in supported_models must be unique.")
-        if len(model_names) > 1 and any(model.colocate for model in self.supported_models):
-            raise ValueError(
-                "Colocate option is only allowed when there is a single supported model."
-            )
+        if len(model_names) > 1 and any(
+            model.colocate and model.scheduling.policy != "loopweave"
+            for model in self.supported_models
+        ):
+            raise ValueError("Multiple models require loopweave for colocated training/sampling.")
 
     def with_supported_models(self, models: Iterable[ModelConfig]) -> "AppConfig":
         updated = list(models)

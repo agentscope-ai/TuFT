@@ -22,14 +22,15 @@ fixed/shared in-flight limits to 128/64. The conservative defaults bound smaller
 drain batches; they are not a universal throughput optimum. Short eager-mode
 pilots regressed, so keep this policy opt-in and measure the intended workload.
 
-`loopweave` requires one configured base model, `colocate: true`, both capabilities,
+`loopweave` requires `colocate: true` and both capabilities for each base model,
 and `data_parallel_size >= 2`. HF requires `tensor_parallel_size: 1`; FSDP requires
 `fsdp_num_gpus == tensor_parallel_size`. The DP count includes the shared sampler.
 HF with DP=2 uses **two total GPUs**. Two FSDP ranks with TP=2 and DP=2 use **four
 total GPUs**, versus six for separate training and two samplers. Startup verifies
-physical placement. HF fractional actors require an otherwise idle Ray cluster;
-FSDP owns full GPU reservations and starts its colocated sampler on those exact
-rank-ordered devices. The FSDP group must fit on one node for CUDA IPC sharing.
+physical placement. HF and FSDP trainers own full GPU reservations, and each
+borrowing sampler starts on its trainer's exact node and rank-ordered devices.
+Distinct base models therefore reserve distinct training groups. The FSDP group
+must fit on one node for CUDA IPC sharing.
 
 LoopWeave always shares the frozen base. Set an explicit
 `sampling_kv_cache_memory_bytes` budget per sampler rank, sized together with
@@ -56,8 +57,9 @@ Set `sampling_kv_cache_memory_bytes` explicitly (per sampling GPU/TP rank). For 
 two-H100 Qwen3-4B validation profile this is `17179869184` (16 GiB). IPC storage
 and released loader allocations make automatic process-local memory profiling
 unreliable for this mode; an explicit KV budget also makes comparisons reproducible.
-It overrides vLLM's fractional cache sizing. HF Ray placement uses fractional
-GPU reservations; FSDP owns full GPU reservations. Size the KV budget together with model, graph,
+It overrides vLLM's fractional cache sizing. Both HF and FSDP trainers reserve
+full GPUs; their borrowing samplers request no additional GPU reservation.
+Size the KV budget together with model, graph,
 training activation and optimizer memory for the intended hardware.
 
 The HF trainer packs frozen q/k/v and gate/up tensors into contiguous slabs once,
@@ -322,7 +324,7 @@ A bounded fast-loop planner, completed-update telemetry and a borrowing benefit
 gate now supplement the original reactive alignment. This preserves the existing
 HF/FSDP execution contract and FSDP shard layout. Slow-loop Fixed/Flex conversion,
 multi-group training allocation, consumed-version freshness enforcement,
-same-snapshot queue grouping and learned probability correction remain absent.
+cross-session snapshot deduplication and learned probability correction remain absent.
 The repository's `docs/loopweave-functionality-audit.md` records the pre-change
 audit. The follow-up implements the first scheduling priorities without claiming
 full paper parity. Existing GPU figures predate this policy change; only CPU
@@ -393,3 +395,52 @@ completion and timing data. Summed request seconds overlap under concurrency and
 must not be interpreted as GPU utilization. `exclusive_busy_s` includes training
 and adapter/checkpoint maintenance. See `docs/loopweave-work-log.md` and
 `benchmarks/loopweave/` for the validation record.
+
+### Many adapters and several base models
+
+Balanced and LoopWeave admission collect requests for at most
+`adapter_batch_window_s` (default 0.002 seconds), anchored to the oldest queued
+arrival. New arrivals cannot extend that window; reaching
+`adapter_batch_max_requests` (default 32) dispatches immediately. The window
+runs concurrently with loop holds. A zero window disables deliberate collection.
+
+The scheduler reserves capacity in round-robin user order, with FIFO admission
+within each user, then groups the admitted set by replica and adapter ID. Groups
+start concurrently rather than waiting for the preceding group's generations to
+finish. This bounds reordering to one dispatch set, maintains training drain
+reservations, and preserves each request's snapshot and result. Cancellation
+before admission removes the request; after admission, execution retains its
+reservation until completion. Submission contiguity helps the engine batch
+adapters, but is not a guarantee of vLLM's internal batch composition.
+
+`adapter_dispatch_batches`, `adapter_dispatch_groups`,
+`adapter_grouped_requests`, and `adapter_dispatch_switches` are aggregate
+scheduler counters. They describe submitted work, not device cache misses or
+measured GPU utilization. Distinct sessions referencing the same checkpoint
+still have distinct adapter IDs; this change does not deduplicate those engine
+registrations or combine their tenant identities.
+
+Each configured base model has its own scheduler, training lane, Fixed/Flex
+replicas, and telemetry. Training on one model does not close another model's
+borrowing window. See `config/tuft_config.loopweave.multi_model.yaml` for a
+four-GPU HF example. FSDP retains its existing per-model sharded group and matching
+TP sampler. This is static placement of model groups, not cross-model GPU
+reallocation. OpenAI HTTP requests still bypass this queue and use Fixed replicas;
+agentic RL clients must use the scheduled sampling API to benefit from admission.
+
+Set `max_cpu_loras` to budget vLLM's host adapter cache separately from
+`max_loras`, which controls active GPU slots. It must be at least `max_loras`.
+Unset preserves vLLM's default. Cache eviction can reload published adapters from
+their checkpoint paths, so keep snapshots available while sessions reference
+them. Host cache capacity is per replica and does not limit the number of
+registered sessions. Training adapter/optimizer residency and FSDP rank slots
+remain separately sized resources; a larger inference cache does not make those
+unbounded.
+
+Training/inference numerical agreement is a separate validation and RL-algorithm
+concern. This scheduler does not calibrate probabilities or promise identical
+HF/vLLM outputs. It must preserve immutable snapshot identity, tenant isolation,
+base weights, and ownership barriers regardless of numerical tolerance. Existing
+behavior-policy logprobs remain those returned by inference; sampling delays do
+not silently switch a rollout to a newer adapter. Explicit policy-lag contracts
+and numerical calibration remain future work.

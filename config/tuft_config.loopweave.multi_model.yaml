@@ -1,0 +1,42 @@
+# Four GPUs: two independently scheduled HF model groups, two GPUs per model.
+# Example sizing only: adjust KV budgets, paths, and adapter caches to your hardware.
+checkpoint_dir: /tmp/tuft-loopweave-multi-checkpoints
+authorized_users:
+  tml-local-dev-key: local-user
+supported_models:
+  - model_name: Qwen/Qwen3-0.6B
+    model_path: Qwen/Qwen3-0.6B
+    max_model_len: 2048
+    training_backend: hf
+    tensor_parallel_size: 1
+    data_parallel_size: 2
+    colocate: true
+    sampling_kv_cache_memory_bytes: 4294967296
+    max_lora_rank: 16
+    max_loras: 4
+    max_cpu_loras: 128
+    scheduling:
+      policy: loopweave
+      max_inflight_per_replica: 32
+      max_queued_requests: 1024
+      adapter_batch_window_s: 0.002
+      adapter_batch_max_requests: 32
+      flex_max_tokens: 256
+  - model_name: Qwen/Qwen3-4B
+    model_path: Qwen/Qwen3-4B
+    max_model_len: 2048
+    training_backend: hf
+    tensor_parallel_size: 1
+    data_parallel_size: 2
+    colocate: true
+    sampling_kv_cache_memory_bytes: 4294967296
+    max_lora_rank: 16
+    max_loras: 4
+    max_cpu_loras: 128
+    scheduling:
+      policy: loopweave
+      max_inflight_per_replica: 32
+      max_queued_requests: 1024
+      adapter_batch_window_s: 0.002
+      adapter_batch_max_requests: 32
+      flex_max_tokens: 256

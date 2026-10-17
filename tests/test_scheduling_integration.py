@@ -28,6 +28,7 @@ class Replica:
         self.config = config
         self.index = instance_index
         self.samples = []
+        self.sample_release: asyncio.Event | None = None
         self.adapters = {}
         self.closed = False
         self.shared_weights = None
@@ -46,15 +47,21 @@ class Replica:
         assert self.config.colocate and not self.shared_weights
         self.shared_weights = descriptors
 
+    def configure_shared_placement(self, assignments):
+        assert len(assignments) == 1 and self.config.colocate
+
     async def set_training_phase(self, training):
         assert self.shared_weights is not None
         self.phases.append(training)
 
     async def get_device_assignment(self):
-        return {"node": "test-node", "gpus": [self.index]}
+        offset = 2 if self.config.model_name.endswith("-second") else 0
+        return {"node": "test-node", "gpus": [self.index + offset]}
 
     async def sample(self, **kwargs):
         self.samples.append(kwargs)
+        if self.sample_release is not None:
+            await self.sample_release.wait()
         return types.SampleResponse(
             sequences=[
                 types.SampledSequence(
@@ -77,7 +84,7 @@ class Replica:
 
 
 @pytest.fixture
-def state(tmp_path, monkeypatch):
+def state(tmp_path, monkeypatch, request):
     import tuft.backends.sampling_backend as sampling_module
 
     Replica.instances = []
@@ -126,7 +133,10 @@ def state(tmp_path, monkeypatch):
         export_shared_base_weights=SimpleNamespace(remote=export),
     )
     monkeypatch.setattr(backend, "shutdown", noop)
-    monkeypatch.setattr(BaseTrainingBackend, "create_backend", lambda *a, **kw: backend)
+    backends = {"Qwen/Qwen3-0.6B": backend}
+    monkeypatch.setattr(
+        BaseTrainingBackend, "create_backend", lambda c, **kw: backends[c.model_name]
+    )
     monkeypatch.setattr(BaseSamplingBackend, "create_backend", lambda c, **kw: DPSamplingBackend(c))
     model = ModelConfig(
         model_name="Qwen/Qwen3-0.6B",
@@ -137,18 +147,30 @@ def state(tmp_path, monkeypatch):
         sampling_kv_cache_memory_bytes=16 * 1024**3,
         scheduling=SchedulingConfig(policy="loopweave", training_quiet_s=0),
     )
-    server = ServerState(AppConfig(supported_models=[model], checkpoint_dir=tmp_path))
+    models = [model]
+    if getattr(request, "param", 1) == 2:
+        import copy
+
+        other = model.model_copy(deep=True, update={"model_name": model.model_name + "-second"})
+        models.append(other)
+        other_backend = copy.copy(backend)
+        other_backend.model = SimpleNamespace(**vars(backend.model))
+
+        async def other_placement():
+            return {"node": "test-node", "gpus": [2]}
+
+        other_backend.model.get_device_assignment = SimpleNamespace(remote=other_placement)
+        backends[other.model_name] = other_backend
+    server = ServerState(AppConfig(supported_models=models, checkpoint_dir=tmp_path))
     return server, updates, entered, release
 
 
-async def create_run(state, user):
+async def create_run(state, user, model="Qwen/Qwen3-0.6B"):
     session = state.create_session(
         types.CreateSessionRequest(sdk_version="test", tags=[], user_metadata=None),
         User(user_id=user),
     )
-    run = await state.create_model(
-        session.session_id, "Qwen/Qwen3-0.6B", types.LoraConfig(rank=8), user, None
-    )
+    run = await state.create_model(session.session_id, model, types.LoraConfig(rank=8), user, None)
     return session.session_id, run.training_run_id
 
 
@@ -292,3 +314,109 @@ async def test_foreign_public_snapshot_does_not_join_owners_training_loop(state)
     )
     assert server.sampling.sampling_sessions[sampler].training_run_id is None
     await server.shutdown()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("state", [2], indirect=True)
+async def test_many_adapters_on_two_bases_keep_publications_and_training_isolated(
+    state, record_property
+):
+    server, _, training_entered, training_release = state
+    await server.async_init()
+    pools = server.sampling._base_backends
+    assert len(pools) == 2
+    samplers = {}
+    runs = []
+    sampling_release = asyncio.Event()
+    for model, pool in pools.items():
+        pool.scheduler.config.cost_aware_borrowing = False
+        pool.scheduler.config.max_inflight_per_replica = 16
+        for replica in pool._instances:
+            replica.sample_release = sampling_release
+        for i in range(8):
+            user = f"user-{i}"
+            session, run = await create_run(server, user, model)
+            runs.append((run, user))
+            checkpoint = await server.save_checkpoint(run, user, "published-v1", "sampler")
+            sampler = await server.create_sampling_session(
+                session, None, checkpoint.tinker_path, user, session_seq_id=0
+            )
+            samplers[sampler] = (model, user, run)
+    schedulers = [pool.scheduler for pool in pools.values()]
+    assert schedulers[0] is not schedulers[1]
+    training_entered.clear()
+    training_release.clear()
+    run, user = runs[0]
+    training = asyncio.create_task(server.run_optim_step(run, user, types.AdamParams(), None))
+    await training_entered.wait()
+    assert schedulers[0].snapshot()["training_pending"] == 1
+    assert schedulers[1].snapshot()["training_pending"] == 0
+    tasks = []
+    for repeat in range(4):
+        for sampler, (_, owner, _) in samplers.items():
+            tasks.append(
+                asyncio.create_task(
+                    server.run_sample(
+                        types.SampleRequest(
+                            sampling_session_id=sampler,
+                            seq_id=repeat + 1,
+                            prompt=types.ModelInput.from_ints([1, 2]),
+                            num_samples=1,
+                            sampling_params=types.SamplingParams(max_tokens=2),
+                        ),
+                        owner,
+                    )
+                )
+            )
+    async with asyncio.timeout(20):
+        # Wait for all controller persistence/sequence work to reach admission;
+        # thread timing must not determine whether a complete wave can group.
+        while not all(
+            s.snapshot().get("admitted", 0) + s.snapshot()["queued"] == 32 for s in schedulers
+        ):
+            await asyncio.sleep(0.001)
+        sampling_release.set()
+        await asyncio.gather(*tasks)
+    first, second = pools.values()
+    assert not first._instances[0].samples  # This base's training lane is occupied.
+    assert second._instances[0].samples  # The other base can still borrow.
+    for model, pool in pools.items():
+        seen = [s["lora_id"] for replica in pool._instances for s in replica.samples]
+        expected = {s for s, (base, _, _) in samplers.items() if base == model}
+        assert set(seen) == expected
+        assert all(seen.count(s) == 4 for s in expected)
+        assert pool.scheduler.snapshot()["active"] == [0, 0]
+    assert sum(s.snapshot()["adapter_grouped_requests"] for s in schedulers) > 0
+    record_property("base_models", len(pools))
+    record_property("published_adapters", len(samplers))
+    record_property("completed_samples", len(tasks))
+    training_release.set()
+    await training
+    await server.shutdown()
+    assert all(replica.closed for replica in Replica.instances)
+
+
+def test_host_adapter_cache_capacity_is_independent_of_gpu_slots():
+    from pydantic import ValidationError
+
+    from tuft.backends.sampling_backend import VLLMSamplingBackend
+
+    model = ModelConfig(
+        model_name="qwen",
+        model_path=Path("qwen"),
+        max_model_len=512,
+        max_loras=4,
+        max_cpu_loras=128,
+    )
+    backend = VLLMSamplingBackend.__new__(VLLMSamplingBackend)
+    engine = backend._build_engine_config(model, tensor_parallel_size=1, gpu_memory_utilization=0.5)
+    assert engine.max_loras == 4
+    assert engine.max_cpu_loras == 128
+    with pytest.raises(ValidationError, match="max_cpu_loras"):
+        ModelConfig(
+            model_name="qwen",
+            model_path=Path("qwen"),
+            max_model_len=512,
+            max_loras=4,
+            max_cpu_loras=2,
+        )

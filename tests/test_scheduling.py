@@ -20,6 +20,7 @@ async def spin_until(predicate):
 
 def config(**kwargs):
     kwargs.setdefault("sampling_alignment_s", 0)
+    kwargs.setdefault("adapter_batch_window_s", 0)
     return SchedulingConfig(policy="balanced", training_quiet_s=0, **kwargs)
 
 
@@ -542,3 +543,156 @@ async def test_window_service_estimate_counts_concurrent_gpu_interval_once(monke
     fixed_release.set()
     await fixed_task
     await scheduler.close()
+
+
+async def test_adapter_batch_groups_only_fairly_admitted_requests():
+    scheduler = ResourceScheduler(
+        1,
+        config(
+            adapter_batch_window_s=0.1, adapter_batch_max_requests=8, max_inflight_per_replica=8
+        ),
+    )
+    release = asyncio.Event()
+    seen = []
+
+    async def operation(label, index):
+        seen.append(label)
+        await release.wait()
+        return label
+
+    tasks = []
+    for i in range(8):
+        adapter = f"snapshot-{i % 2}"
+        label = (adapter, i)
+        tasks.append(
+            asyncio.create_task(
+                scheduler.sample(
+                    f"user-{i % 4}",
+                    adapter,
+                    1,
+                    False,
+                    lambda index, label=label: operation(label, index),
+                )
+            )
+        )
+    await spin_until(lambda: len(seen) == 8)
+    assert seen == [("snapshot-0", i) for i in (0, 2, 4, 6)] + [
+        ("snapshot-1", i) for i in (1, 3, 5, 7)
+    ]
+    stats = scheduler.snapshot()
+    assert stats["adapter_dispatch_switches"] == 1  # FIFO would switch seven times.
+    assert stats["adapter_grouped_requests"] == 6
+    assert stats["active"] == [8]
+    release.set()
+    results = await asyncio.gather(*tasks)
+    assert results == [(f"snapshot-{i % 2}", i) for i in range(8)]
+    await scheduler.close()
+
+
+async def test_batching_keeps_hot_tenant_from_taking_other_tenants_slots():
+    scheduler = ResourceScheduler(
+        1,
+        config(
+            adapter_batch_window_s=0.1, adapter_batch_max_requests=8, max_inflight_per_replica=4
+        ),
+    )
+    release = asyncio.Event()
+    seen = []
+
+    async def operation(user, index):
+        seen.append(user)
+        await release.wait()
+
+    users = ["hot"] * 5 + ["cold-a", "cold-b", "cold-c"]
+    tasks = [
+        asyncio.create_task(
+            scheduler.sample(user, user, 1, False, lambda index, user=user: operation(user, index))
+        )
+        for user in users
+    ]
+    await spin_until(lambda: len(seen) == 4)
+    assert seen == ["hot", "cold-a", "cold-b", "cold-c"]
+    assert scheduler.snapshot()["queued"] == 4
+    release.set()
+    await asyncio.gather(*tasks)
+    await scheduler.close()
+
+
+async def test_batch_window_cancellation_and_shutdown_do_not_dispatch():
+    scheduler = ResourceScheduler(1, config(adapter_batch_window_s=0.1))
+
+    async def forbidden(index):
+        pytest.fail("unadmitted request executed")
+
+    cancelled = asyncio.create_task(scheduler.sample("a", "v1", 1, False, forbidden))
+    pending = asyncio.create_task(scheduler.sample("b", "v2", 1, False, forbidden))
+    await spin_until(lambda: scheduler.snapshot()["queued"] == 2)
+    cancelled.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await cancelled
+    await scheduler.close()
+    with pytest.raises(RuntimeError, match="closed"):
+        await pending
+    assert scheduler.snapshot()["active"] == [0]
+    assert scheduler.snapshot()["queued"] == 0
+
+
+async def test_batch_deadline_is_not_extended_by_new_arrivals(monkeypatch):
+    import tuft.scheduling as module
+
+    now = [10.0]
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    scheduler = ResourceScheduler(1, config(adapter_batch_window_s=0.1))
+    seen = []
+
+    async def operation(index):
+        seen.append(index)
+
+    first = asyncio.create_task(scheduler.sample("a", "v1", 1, False, operation))
+    await spin_until(lambda: scheduler.snapshot()["queued"] == 1)
+    now[0] = 10.09
+    second = asyncio.create_task(scheduler.sample("b", "v2", 1, False, operation))
+    await spin_until(lambda: scheduler.snapshot()["queued"] == 2)
+    assert not seen
+    now[0] = 10.101
+    scheduler._pump()
+    await asyncio.gather(first, second)
+    assert len(seen) == 2
+    await scheduler.close()
+
+
+async def test_batch_rechecks_training_before_borrowing():
+    scheduler = ResourceScheduler(2, config(adapter_batch_window_s=0.1), flex_index=0)
+    training_started, training_release = asyncio.Event(), asyncio.Event()
+    indices = []
+
+    async def sample(index):
+        indices.append(index)
+
+    async def train():
+        training_started.set()
+        await training_release.wait()
+
+    request = asyncio.create_task(scheduler.sample("a", "v1", 1, True, sample))
+    await spin_until(lambda: scheduler.snapshot()["queued"] == 1)
+    update = asyncio.create_task(scheduler.training(train))
+    await training_started.wait()
+    await request
+    assert indices == [1]
+    training_release.set()
+    await update
+    await scheduler.close()
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"adapter_batch_window_s": float("nan")},
+        {"adapter_batch_window_s": -1},
+        {"adapter_batch_max_requests": 0},
+        {"adapter_batch_max_requests": 4097},
+    ],
+)
+def test_invalid_adapter_batching_config(kwargs):
+    with pytest.raises(ValidationError):
+        config(**kwargs)
