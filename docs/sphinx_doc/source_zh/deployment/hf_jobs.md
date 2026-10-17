@@ -187,7 +187,7 @@ supported_models:
 python deploy/hf_jobs/launch.py --config fsdp.yaml --flavor l4x4
 ```
 
-FSDP 适配器以相同的目录结构写入同一个 bucket，并可用标准 PEFT 加载。L4 之间通过 PCIe 通信，因此在 `l4x4` 上对 `Qwen/Qwen3-4B` 执行一个 SFT 步骤需要数秒；如需更高吞吐量，请选择更大的规格。
+在该布局下，vLLM 运行在 GPU 0–1 上，FSDP worker 运行在 GPU 2–3 上。FSDP 适配器以相同的目录结构写入同一个 bucket，并可用标准 PEFT 加载。L4 之间通过 PCIe 通信，因此在 `l4x4` 上对 `Qwen/Qwen3-4B` 执行一个 SFT 步骤需要数秒；如需更高吞吐量，请选择更大的规格。
 
 ## 后续步骤
 

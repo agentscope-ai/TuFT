@@ -213,7 +213,8 @@ supported_models:
 python deploy/hf_jobs/launch.py --config fsdp.yaml --flavor l4x4
 ```
 
-FSDP adapters land in the same bucket layout and load with stock PEFT. L4s talk over PCIe,
+In this layout vLLM runs on GPUs 0–1 and the FSDP workers on GPUs 2–3. FSDP adapters land in
+the same bucket layout and load with stock PEFT. L4s talk over PCIe,
 so on `l4x4` an SFT step on `Qwen/Qwen3-4B` takes several seconds; pick a larger flavor for
 throughput.
 
