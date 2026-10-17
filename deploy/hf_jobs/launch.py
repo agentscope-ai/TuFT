@@ -343,19 +343,25 @@ def main() -> None:
         return
 
     api.create_bucket(bucket, private=True, exist_ok=True)
-    job = api.run_job(
-        image=infra["image"],
-        command=["bash", "-c", SERVER_CMD],
-        secrets=secrets,
-        flavor=infra["flavor"],
-        timeout=infra["timeout"],
-        name=infra["name"],
-        labels=JOB_LABELS,
-        volumes=volumes,
-        namespace=namespace,
-        **port_kwargs,
-        **net_kwargs,
-    )
+    from huggingface_hub.errors import HfHubHTTPError
+
+    try:
+        job = api.run_job(
+            image=infra["image"],
+            command=["bash", "-c", SERVER_CMD],
+            secrets=secrets,
+            flavor=infra["flavor"],
+            timeout=infra["timeout"],
+            name=infra["name"],
+            labels=JOB_LABELS,
+            volumes=volumes,
+            namespace=namespace,
+            **port_kwargs,
+            **net_kwargs,
+        )
+    except HfHubHTTPError as e:
+        # Mounting a gated model you haven't been granted is rejected here, before billing.
+        sys.exit(f"Job submission failed: {e}\n(gated model? request access on its Hub page)")
     url = f"https://{job.id}--{TUFT_PORT}.hf.jobs"
     model = data["supported_models"][0].get("model_name", "?")
     cmd = f"python {Path(sys.argv[0]).as_posix()}"
