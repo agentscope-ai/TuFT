@@ -16,10 +16,6 @@
 
 TuFT (**T**enant-**u**nified **F**ine**T**uning) is a multi-tenant platform that lets multiple users fine-tune LLMs on shared infrastructure through a unified API. Access it via the Tinker SDK or compatible clients.
 
-<div align="center">
-  <img src="docs/sphinx_doc/_static/images/tuft-overview.png" alt="TuFT Overview" width="800"/>
-</div>
-
 > [!TIP]
 > **🚀 No GPU? No problem!** You can deploy TuFT to a pay-as-you-go cloud provider — **Modal** (serverless, scale-to-zero), **Lambda Cloud** or **Hugging Face Jobs** — and fine-tune from your laptop with no local GPU. See [Deployment](#deployment).
 
