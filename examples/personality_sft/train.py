@@ -15,7 +15,8 @@ you like, then point this at it:
         --base-url https://<workspace>--tuft-server-tuftserver-serve.modal.run \
         --api-key tml-... --model Qwen/Qwen3-4B
 
-    # or as a Hugging Face Job (sends your HF token to the *.hf.jobs URL automatically):
+    # or as a Hugging Face Job (sends your HF token, if any, to the *.hf.jobs URL; a --public
+    # Job needs only the tml- key):
     python deploy/hf_jobs/launch.py --config your_config.yaml --flavor l4x1
     python examples/personality_sft/train.py \
         --base-url https://<job_id>--10610.hf.jobs --api-key tml-...
@@ -45,15 +46,14 @@ from transformers import AutoTokenizer
 
 
 def proxy_headers(base_url: str) -> dict[str, str]:
-    """HF Jobs exposed ports sit behind a proxy that wants an HF token as a Bearer token."""
+    """HF Jobs exposed ports sit behind a proxy that wants an HF token as a Bearer token, unless
+    the Job was launched with --public. Without a token, send none and let the proxy decide."""
     if not (urlparse(base_url).hostname or "").endswith(".hf.jobs"):
         return {}
     from huggingface_hub import get_token
 
     token = get_token()
-    if not token:
-        raise SystemExit("HF Jobs URL needs an HF token: run `hf auth login` or set HF_TOKEN")
-    return {"Authorization": f"Bearer {token}"}
+    return {"Authorization": f"Bearer {token}"} if token else {}
 
 
 def wait_healthy(base_url: str, headers: dict[str, str], timeout: float = 900.0) -> None:
@@ -68,6 +68,13 @@ def wait_healthy(base_url: str, headers: dict[str, str], timeout: float = 900.0)
                 if r.status == 200:
                     print("[wait] server healthy", flush=True)
                     return
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                raise SystemExit(
+                    f"{url} returned {e.code}: this HF Jobs port needs an HF token with read "
+                    "access to the Job's namespace (`hf auth login`), unless the Job was "
+                    "launched with --public"
+                ) from None
         except (urllib.error.URLError, OSError):
             pass
         time.sleep(3)
