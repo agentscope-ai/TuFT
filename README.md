@@ -17,7 +17,7 @@
 TuFT (**T**enant-**u**nified **F**ine**T**uning) is a multi-tenant platform that lets multiple users fine-tune LLMs on shared infrastructure through a unified API. Access it via the Tinker SDK or compatible clients.
 
 <div align="center">
-  <img src="https://img.alicdn.com/imgextra/i3/O1CN01M7FlDa1LkOf90UsHk_!!6000000001337-2-tps-4000-2250.png" alt="TuFT Overview" width="800"/>
+  <img src="docs/sphinx_doc/_static/images/tuft-overview.png" alt="TuFT Overview" width="800"/>
 </div>
 
 > [!TIP]
