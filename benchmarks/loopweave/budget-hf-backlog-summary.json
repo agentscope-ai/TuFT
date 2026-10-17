@@ -1,0 +1,48 @@
+{
+  "round_robin": {
+    "runs": 1,
+    "elapsed_median_s": 26.07592415100001,
+    "steps_per_s_median": 2.45437130547665,
+    "gpu_seconds_per_step": 0.8148726297187503,
+    "sample_latency_mean_s": 1.375913582563477,
+    "sample_latency_p95_s": 3.126516855999995,
+    "train_latency_mean_s": 1.2821873865000004,
+    "total_output_tokens": 131072,
+    "peak_total_memory_gib": 11.14007568359375,
+    "mean_total_memory_gib": 10.74036114032452,
+    "gpu_sm_percent_mean": 25.526923076923076,
+    "peak_memory_gib_per_gpu": [
+      3.939208984375,
+      7.20281982421875
+    ]
+  },
+  "loopweave": {
+    "runs": 1,
+    "elapsed_median_s": 29.98654425000001,
+    "steps_per_s_median": 2.1342906160318886,
+    "gpu_seconds_per_step": 0.9370795078125003,
+    "sample_latency_mean_s": 1.2658370285556635,
+    "sample_latency_p95_s": 2.2055391259999624,
+    "train_latency_mean_s": 1.5123739611093745,
+    "total_output_tokens": 131072,
+    "peak_total_memory_gib": 16.27642822265625,
+    "mean_total_memory_gib": 13.903368239434773,
+    "gpu_sm_percent_mean": 32.35906040268456,
+    "peak_memory_gib_per_gpu": [
+      8.87042236328125,
+      7.406005859375
+    ],
+    "shared_base_storage_gib": 1.1102294921875,
+    "reclaimed_sampler_memory_gib": 4.12890625,
+    "sleep_mean_ms": 27.505636571427367,
+    "wake_mean_ms": 36.927772999998105
+  },
+  "loopweave_vs_static": {
+    "values": [
+      0.8695875034349784
+    ],
+    "median": 0.8695875034349784,
+    "min": 0.8695875034349784,
+    "max": 0.8695875034349784
+  }
+}

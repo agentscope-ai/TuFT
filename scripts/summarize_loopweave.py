@@ -6,6 +6,13 @@ import statistics
 from pathlib import Path
 
 
+def performance_data(data):
+    """Unwrap a bounded job without reporting partial/failed pairs as success."""
+    if data.get("returncode", 0) or data.get("timed_out", False):
+        raise ValueError("Successful performance runs are required")
+    return data.get("benchmark", data)
+
+
 def comparison_runs(data):
     """Select static and physical LoopWeave runs, including historical artifacts.
 
@@ -25,6 +32,7 @@ def comparison_runs(data):
 
 
 def summarize(data):
+    data = performance_data(data)
     if data.get("returncode", 0) or not data["runs"]:
         raise ValueError("Successful performance runs are required")
     if any(row.get("diagnostic_only") for row in data["runs"]):

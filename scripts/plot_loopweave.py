@@ -11,7 +11,7 @@ import statistics
 from pathlib import Path
 
 import matplotlib
-from summarize_loopweave import comparison_runs
+from summarize_loopweave import comparison_runs, performance_data
 
 
 matplotlib.use("Agg")
@@ -23,7 +23,7 @@ def main():
     parser.add_argument("input", type=Path)
     parser.add_argument("--output", type=Path, default=Path("benchmarks/loopweave/performance.png"))
     args = parser.parse_args()
-    data = json.loads(args.input.read_text())
+    data = performance_data(json.loads(args.input.read_text()))
     if data.get("returncode", 0) or not data["runs"]:
         raise ValueError("Successful performance runs are required")
     runs = comparison_runs(data)

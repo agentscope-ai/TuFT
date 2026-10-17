@@ -35,3 +35,4 @@ altered for publication.
 - `shared-weights-gpu-Qwen3-4B-512.json`
 - `shared-weights-gpu-integration-Qwen3-0.6B.json`
 - `shared-weights-gpu-integration-Qwen3-4B.json`
+- `budget-hf-backlog-20261017.json`

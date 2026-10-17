@@ -62,6 +62,22 @@ class GPUMonitor:
         return self.samples
 
 
+def workload_scheduling(policy: str, tenants: int, samples_per_tenant: int, output_tokens: int):
+    """Leave a ready backlog so cold-start borrowing can be exercised.
+
+    Match the engine's 64-sequence capacity for performance workloads. Small
+    correctness tests scale the admission limit down to half their request wave.
+    Admitting an entire wave to Fixed prevents any cost-aware probe from running.
+    """
+    return {
+        "policy": policy,
+        "flex_max_tokens": 32 + output_tokens,
+        "flex_max_inflight": max(4, tenants * samples_per_tenant // 2),
+        "max_inflight_per_replica": min(64, max(1, tenants * samples_per_tenant // 2)),
+        "sampling_alignment_s": 0.25,
+    }
+
+
 async def run(
     policy: str,
     model_path: str,
@@ -104,6 +120,7 @@ async def run(
         sampling_max_num_seqs=64,
         max_lora_rank=8,
         max_loras=4,
+        max_cpu_loras=max(128, tenants * rounds + 2),
         micro_batch_size=4,
         colocate=policy == "loopweave",
         data_parallel_size=2 if policy == "loopweave" else 1,
@@ -112,13 +129,7 @@ async def run(
         sampling_enforce_eager=enforce_eager,
         min_response_tokens=output_tokens,
         scheduling=SchedulingConfig.model_validate(
-            {
-                "policy": policy,
-                "flex_max_tokens": 32 + output_tokens,
-                "flex_max_inflight": max(4, tenants * samples_per_tenant // 2),
-                "max_inflight_per_replica": tenants * samples_per_tenant,
-                "sampling_alignment_s": 0.25,
-            }
+            workload_scheduling(policy, tenants, samples_per_tenant, output_tokens)
         ),
     )
     state = ServerState(
@@ -738,6 +749,9 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--repeats", type=int, default=3)
+    parser.add_argument("--rounds", type=int, default=3)
+    parser.add_argument("--tenants", type=int, default=4)
+    parser.add_argument("--samples-per-tenant", type=int, default=32)
     parser.add_argument("--output-tokens", type=int, default=512, choices=[128, 512])
     parser.add_argument("--diagnostics", action="store_true")
     parser.add_argument("--enforce-eager", action="store_true")
@@ -748,6 +762,10 @@ def main():
     parser.add_argument("--kv-cache-gib", type=int, default=16)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    if args.rounds < 1 or args.tenants < 2 or args.samples_per_tenant < 1:
+        parser.error(
+            "rounds and samples must be positive; verification requires at least two tenants"
+        )
     revisions = {
         "Qwen/Qwen3-0.6B": "c1899de289a04d12100db370d81485cdf75e47ca",  # pragma: allowlist secret
         "Qwen/Qwen3-4B": "1cfa9a7208912126459214e8b04321603b3df60c",  # pragma: allowlist secret
@@ -803,9 +821,9 @@ def main():
                     enforce_eager=args.enforce_eager,
                     training_backend=args.training_backend,
                     training_gpus=args.training_gpus,
-                    rounds=1 if args.diagnostics else 3,
-                    tenants=2 if args.diagnostics else 4,
-                    samples_per_tenant=8 if args.diagnostics else 32,
+                    rounds=1 if args.diagnostics else args.rounds,
+                    tenants=2 if args.diagnostics else args.tenants,
+                    samples_per_tenant=8 if args.diagnostics else args.samples_per_tenant,
                 )
             )
             row["repeat"] = repeat

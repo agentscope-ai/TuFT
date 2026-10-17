@@ -806,3 +806,45 @@ does not attempt to reproduce every paper claim or add probability calibration.
   `benchmarks/loopweave/many-adapter-cpu-junit.xml`. The multi-model test uses an
   ingress barrier after sequence persistence so batching assertions are
   independent of filesystem/thread timing.
+
+### Bounded GPU validation (2026-10-17)
+
+- User authorized small GPU checks while avoiding repeated experiments. Added a
+  launcher with no retries, unique result filenames, a 19-minute subprocess
+  limit and 20-minute function limit. It preserves partial results and reporting
+  rejects failed or timed-out jobs. Extended the benchmark CLI to support enough
+  rounds for loop telemetry and a host cache for many published snapshots.
+- Stopped the first HF/FSDP starts before measured work: inspection showed the
+  old harness admitted the entire request wave to Fixed, preventing the new
+  cold borrowing probe. Corrected the performance admission limit to match the
+  engine's 64 active sequences; small correctness fixtures scale it to half
+  their wave. New CPU preflights demonstrate ready backlog and exactly one
+  bounded probe. Targeted CPU suite: 20 passed.
+- Ran one corrected HF pair and one distinct two-rank FSDP integration; no
+  successful run was repeated. Both real shared-weight paths passed alias,
+  unchanged-base, adapter update/isolation, publication, checkpoint restore,
+  switching and final-drain checks. The FSDP test passed in 393.91 s; ten updates,
+  eight publications, and 10,240 output tokens. Per-rank frozen storage remains
+  596,115,456 bytes, with no copied base parameters.
+- HF used the same two H200s (Modal upgraded requested H100s at the same price),
+  Qwen3-0.6B, eight tenants, eight rounds, 64 updates and 131,072 output tokens.
+  Static: 26.076 s. LoopWeave: 29.987 s, **15.0% more allocated GPU time**.
+  Sampling p95 improved 29.5%, but mean training latency rose 18.0%; aggregate
+  peak memory increased from 11.140 to 16.276 GiB. This is a measured regression,
+  not achievement of the resource-efficiency objective.
+- Flex completed 293 of 1,024 measured HF requests; 64 loop observations were
+  recorded. The planner applied no holds and rejected 15 infeasible plans.
+  Sleep/wake consumed 0.902 s, insufficient by itself to explain the 3.911 s
+  regression. Existing telemetry does not separate training queueing from Flex
+  drain time. Next policy work should add that distinction and account for
+  effects on whole-loop progress before another paid comparison.
+- Estimated requested-resource compute: **$3.347**, including $0.559 for the
+  canceled starts. Used container-start to app-stop windows, not only measured
+  generation time. All four ephemeral apps stopped. CPU/RAM actual usage and
+  credits can change the invoice. No additional large-model or numerical-control
+  sweeps were run; multi-base GPU placement remains a separate coverage gap.
+- Saved raw results, PNG/SVG figures, summaries, JUnit reports and a cost ledger.
+  See `benchmarks/loopweave/budget-validation-20261017.md`. The HF raw artifact
+  remains local because the existing secret scanner flags its public provenance
+  hashes; the scanner baseline is unchanged. The FSDP raw artifact and summaries
+  pass scanning and are included with the branch.
