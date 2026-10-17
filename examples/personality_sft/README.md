@@ -39,13 +39,22 @@ python deploy/lambda/launch.py --config examples/personality_sft/config.yaml
 #   python deploy/lambda/launch.py --down --instance-id <id>
 ```
 
+**On Hugging Face Jobs** (a GPU container on the Hub, billed per minute). Needs
+`hf auth login`:
+```bash
+python deploy/hf_jobs/launch.py --config examples/personality_sft/config.yaml --flavor l4x1
+# prints a URL like https://<job_id>--10610.hf.jobs; train.py adds your HF token for it.
+# HF Jobs have NO scale-to-zero — cancel when done (or let --timeout, default 2h, stop it):
+#   python deploy/hf_jobs/launch.py --down --job-id <id>
+```
+
 ## 2. Run the training
 
 ```bash
 pip install tinker transformers          # local deps, no GPU
 
 python examples/personality_sft/train.py \
-    --base-url http://localhost:10610 \   # or the Modal URL from step 1
+    --base-url http://localhost:10610 \   # or the Modal / HF Jobs URL from step 1
     --api-key tml-...                     # the key you put in config.yaml
 # --model defaults to Qwen/Qwen3-1.7B (matches config.yaml); pass --model for others
 ```
@@ -63,6 +72,12 @@ that's a Volume — download the standard PEFT adapter (the `run_id` is printed 
 ```bash
 modal volume get tuft-checkpoints <run_id> ./weights/
 # -> ./weights/<run_id>/yoda-final/adapter/{adapter_config.json, adapter_model.safetensors}
+```
+
+On HF Jobs it's a Storage Bucket:
+
+```bash
+hf buckets sync hf://buckets/<namespace>/tuft-checkpoints/<run_id> ./weights/<run_id>
 ```
 
 **Merge into full model weights** (optional; needs `torch`, `peft`, `transformers`):

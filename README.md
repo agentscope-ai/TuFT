@@ -21,7 +21,7 @@ TuFT (**T**enant-**u**nified **F**ine**T**uning) is a multi-tenant platform that
 </div>
 
 > [!TIP]
-> **🚀 No GPU? No problem!** You can deploy TuFT to a pay-as-you-go cloud provider — **Modal** (serverless, scale-to-zero) or **Lambda Cloud** — and fine-tune from your laptop with no local GPU. See [Deployment](#deployment).
+> **🚀 No GPU? No problem!** You can deploy TuFT to a pay-as-you-go cloud provider — **Modal** (serverless, scale-to-zero), **Lambda Cloud** or **Hugging Face Jobs** — and fine-tune from your laptop with no local GPU. See [Deployment](#deployment).
 
 We're open source and welcome contributions! Join the community:
 - [DingTalk Group](https://qr.dingtalk.com/action/joingroup?code=v1,k1,UWvzO6HHSeuvRQ5WXCOMJEijadQV+hDjhMIpiVr8qCs=&_dt_no_comment=1&origin=11?)
@@ -360,6 +360,7 @@ Don't have a GPU? Run TuFT on **pay-as-you-go cloud compute** — rent a GPU on 
 |---|---|
 | [Modal](https://agentscope-ai.github.io/TuFT/en/latest/deployment/modal.html) | Serverless GPUs with **scale-to-zero** and per-second billing. |
 | [Lambda Cloud](https://agentscope-ai.github.io/TuFT/en/latest/deployment/lambda.html) | A plain on-demand GPU VM, billed per minute until you terminate. |
+| [Hugging Face Jobs](https://agentscope-ai.github.io/TuFT/en/latest/deployment/hf_jobs.html) | A GPU container on the Hub, billed per minute; models mounted from the Hub, checkpoints in a Storage Bucket. |
 
 See the full [Deployment guides](https://agentscope-ai.github.io/TuFT/en/latest/deployment/index.html) in the documentation.
 
