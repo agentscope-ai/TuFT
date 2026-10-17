@@ -29,6 +29,14 @@ Reinforcement learning with GRPO-style training on verifiable tasks.
 Distill a teacher into a student on the student's own samples, via per-token reverse-KL.
 :::
 
+:::{grid-item-card} Open Character Training
+:link: open-character-training
+:link-type: doc
+:shadow: none
+
+Distill a written constitution with DPO, then reinforce the learned character through introspection.
+:::
+
 :::{grid-item-card} Custom Losses
 :link: custom-losses
 :link-type: doc
@@ -77,6 +85,7 @@ Dashboard for monitoring training runs, checkpoints, and sampling playground.
 chat-sft
 countdown-rl
 on-policy-distillation
+open-character-training
 custom-losses
 lora-target-modules
 persistence
