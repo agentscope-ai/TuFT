@@ -6,8 +6,9 @@
 :class: tip
 
 下面的说明假设你的机器配有 GPU。**没有 GPU？** 你可以将 TuFT 部署到按量付费的云服务商——
-**[Modal](../deployment/modal.md)**（无服务器，缩容至零）或
-**[Lambda Cloud](../deployment/lambda.md)**——然后在本地（笔记本）驱动微调。
+**[Modal](../deployment/modal.md)**（无服务器，缩容至零）、
+**[Lambda Cloud](../deployment/lambda.md)** 或
+**[Hugging Face Jobs](../deployment/hf_jobs.md)**——然后在本地（笔记本）驱动微调。
 参阅 **[部署指南](../deployment/index.md)**。
 ```
 

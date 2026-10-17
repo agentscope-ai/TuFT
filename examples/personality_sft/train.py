@@ -15,6 +15,12 @@ you like, then point this at it:
         --base-url https://<workspace>--tuft-server-tuftserver-serve.modal.run \
         --api-key tml-... --model Qwen/Qwen3-4B
 
+    # or as a Hugging Face Job (sends your HF token, if any, to the *.hf.jobs URL; a --public
+    # Job needs only the tml- key):
+    python deploy/hf_jobs/launch.py --config your_config.yaml --flavor l4x1
+    python examples/personality_sft/train.py \
+        --base-url https://<job_id>--10610.hf.jobs --api-key tml-...
+
 Local deps (no GPU): pip install tinker transformers
 
 It samples the base model (before), trains a LoRA on the synthetic Yoda dataset, then
@@ -31,6 +37,7 @@ import random
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import urlparse
 
 import tinker
 from dataset import TEST_PROMPTS, YODA_PAIRS, conversation_to_datum
@@ -38,17 +45,36 @@ from tinker import types
 from transformers import AutoTokenizer
 
 
-def wait_healthy(base_url: str, timeout: float = 900.0) -> None:
+def proxy_headers(base_url: str) -> dict[str, str]:
+    """HF Jobs exposed ports sit behind a proxy that wants an HF token as a Bearer token, unless
+    the Job was launched with --public. Without a token, send none and let the proxy decide."""
+    if not (urlparse(base_url).hostname or "").endswith(".hf.jobs"):
+        return {}
+    from huggingface_hub import get_token
+
+    token = get_token()
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
+def wait_healthy(base_url: str, headers: dict[str, str], timeout: float = 900.0) -> None:
     """Block until GET /api/v1/healthz returns 200 (cold starts can take minutes)."""
     url = base_url.rstrip("/") + "/api/v1/healthz"
     deadline = time.time() + timeout
     print(f"[wait] health-gating {url} ...", flush=True)
     while time.time() < deadline:
         try:
-            with urllib.request.urlopen(url, timeout=10) as r:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=10) as r:
                 if r.status == 200:
                     print("[wait] server healthy", flush=True)
                     return
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403):
+                raise SystemExit(
+                    f"{url} returned {e.code}: this HF Jobs port needs an HF token with read "
+                    "access to the Job's namespace (`hf auth login`), unless the Job was "
+                    "launched with --public"
+                ) from None
         except (urllib.error.URLError, OSError):
             pass
         time.sleep(3)
@@ -99,11 +125,14 @@ def main() -> None:
         raise SystemExit("--api-key (or TINKER_API_KEY) must be set and start with 'tml-'")
 
     random.seed(42)
+    headers = proxy_headers(args.base_url)
     if not args.no_health_gate:
-        wait_healthy(args.base_url)
+        wait_healthy(args.base_url, headers)
 
     print(f"[connect] {args.base_url}  model={args.model}", flush=True)
-    client = tinker.ServiceClient(base_url=args.base_url, api_key=args.api_key)
+    client = tinker.ServiceClient(
+        base_url=args.base_url, api_key=args.api_key, default_headers=headers
+    )
     tok = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
 
     if not args.no_before:
@@ -170,6 +199,9 @@ def main() -> None:
     print("\n✅ Done. The LoRA adapter + sampler weights live on the server's checkpoint_dir.")
     print("   On Modal, download the adapter with:")
     print(f"       modal volume get tuft-checkpoints {run_id} ./weights/")
+    print("   On HF Jobs, sync it from the checkpoint bucket with:")
+    bucket_dir = f"hf://buckets/<namespace>/tuft-checkpoints/{run_id}"
+    print(f"       hf buckets sync {bucket_dir} ./weights/{run_id}")
     print("   (see examples/personality_sft/README.md to merge it into full model weights)")
 
 

@@ -1,0 +1,61 @@
+# TuFT config for a Hugging Face Jobs deployment — edit this, then:
+#   python deploy/hf_jobs/launch.py --config deploy/hf_jobs/tuft_config.example.yaml
+#
+# This is a STANDARD tuft_config.yaml (the same schema `tuft launch --config` reads
+# locally / in Docker), so the file stays portable across all deploy targets.
+# launch.py reads it, passes it to the Job as a secret, and starts the stock TuFT image.
+#
+# HF Jobs-specific notes:
+#   - launch.py PINS checkpoint_dir to a private Storage Bucket mounted at /data/checkpoints
+#     via --checkpoint-dir, so the value below is just a portable default.
+#   - A model_path that is an HF repo id is mounted read-only from the Hub (no download).
+#   - Single GPU? keep ONE model with `colocate: true`. Multiple models need
+#     `colocate: false` + a multi-GPU flavor.
+
+checkpoint_dir: /data/checkpoints
+model_owner: hf-jobs-user
+
+supported_models:
+  - model_name: Qwen/Qwen3-4B
+    model_path: Qwen/Qwen3-4B        # HF id (mounted from the Hub) OR a local path in the image
+    max_model_len: 32768
+    tensor_parallel_size: 1          # >1 needs a multi-GPU flavor: --flavor a100x4
+    colocate: true                   # one GPU: training + vLLM share it (single model only)
+    sampling_memory_fraction: 0.4    # vLLM's share of the GPU in colocate mode
+    max_lora_rank: 16
+    max_loras: 1
+    # Optional knobs (see src/tuft/config.py ModelConfig):
+    # quantization: fp8              # fp8 | awq | gptq | bitsandbytes
+    # sampling_max_model_len: 4096   # cap vLLM context to save KV-cache memory
+    # Multi-GPU (e.g. --flavor l4x4): colocate: false, tensor_parallel_size: 2 for vLLM, and
+    # training_backend: fsdp         # FSDP training on the remaining GPUs
+    # fsdp_num_gpus: 2
+    # temperature: 0.7
+    # top_p: 0.9
+
+authorized_users:
+  # API keys MUST start with "tml-" (Tinker SDK requirement). Generate a strong one:
+  #   python -c "import secrets; print('tml-' + secrets.token_urlsafe(24))"
+  tml-CHANGE-ME-to-a-strong-key: hf-jobs-user
+
+persistence:
+  mode: DISABLE                      # checkpoints (in the bucket) are the durable artifact
+
+telemetry:
+  enabled: false
+
+# Optional HF Jobs infra for launch.py. With this section, `python deploy/hf_jobs/launch.py
+# --config <this file>` needs NO other flags. CLI flags override these; TuFT ignores this
+# whole section (launch.py strips it before the server sees the config), so the file still
+# works with `tuft launch --config` locally. Keys mirror launch.py's flags:
+# hf_jobs:
+#   flavor: a100-large               # `hf jobs hardware` lists flavors; l4x1 fits Qwen3-1.7B
+#   name: tuft-server
+#   timeout: 2h                      # hard stop; no scale-to-zero, billed until then or --down
+#   namespace: my-org                # default: the logged-in user
+#   ckpt_bucket: tuft-checkpoints    # private bucket for checkpoint_dir, created if missing
+#   mount_models: true               # false = download models at startup instead
+#   public: false                    # true drops the HF token layer (tml- key only)
+#   network_group: ""                # set to let other Jobs reach TuFT privately
+#   hf_token: false                  # true forwards your HF token (gated models, no mount)
+#   image: ghcr.io/agentscope-ai/tuft:latest
