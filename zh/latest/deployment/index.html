@@ -101,6 +101,7 @@
 <li class="toctree-l1 current" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="current reference internal expandable" href="#">部署<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
 <li class="toctree-l2"><a class="reference internal" href="modal.html">在 Modal 上部署</a></li>
 <li class="toctree-l2"><a class="reference internal" href="lambda.html">在 Lambda Cloud 上部署</a></li>
+<li class="toctree-l2"><a class="reference internal" href="hf_jobs.html">在 Hugging Face Jobs 上部署</a></li>
 </ul>
 </li>
 <li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="../user-guide/index.html">用户指南<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
@@ -174,6 +175,16 @@ Lambda Cloud</div>
 </div>
 <a class="sd-stretched-link sd-hide-link-text reference internal" href="lambda.html"><span class="doc">在 Lambda Cloud 上部署</span></a></div>
 </div>
+<div class="sd-col sd-d-flex-row docutils">
+<div class="sd-card sd-sphinx-override sd-w-100 sd-shadow-none sd-card-hover docutils">
+<div class="sd-card-body docutils">
+<div class="sd-card-title sd-font-weight-bold docutils">
+Hugging Face Jobs</div>
+<p class="sd-card-text"><strong>运行在 Hub 上的 GPU 容器</strong>，按分钟计费，直到达到超时时间或你将其取消。
+模型从 Hub 挂载；检查点保存到 Storage Bucket。</p>
+</div>
+<a class="sd-stretched-link sd-hide-link-text reference internal" href="hf_jobs.html"><span class="doc">在 Hugging Face Jobs 上部署</span></a></div>
+</div>
 </div>
 </div>
 <section id="id2">
@@ -194,6 +205,10 @@ Lambda Cloud</div>
 <td><p><strong><a class="reference internal" href="lambda.html"><span class="std std-doc">Lambda Cloud</span></a></strong></p></td>
 <td><p>按需、按分钟计费，直到你将其终止；没有编排层，也没有抢占。</p></td>
 </tr>
+<tr class="row-even"><td><p>留在 Hugging Face Hub 上</p></td>
+<td><p><strong><a class="reference internal" href="hf_jobs.html"><span class="std std-doc">HF Jobs</span></a></strong></p></td>
+<td><p>按分钟计费，直到 Job 超时或被取消；模型从 Hub 挂载，检查点存放在 Storage Bucket，URL 需要 HF token。</p></td>
+</tr>
 </tbody>
 </table>
 </section>
@@ -203,10 +218,10 @@ Lambda Cloud</div>
 构建批次，并在多次 GPU 计算突发之间等待 HTTP 往返，因此 GPU 在大部分运行时间里都处于空闲状态。由于 TuFT 是
 <strong>多租户</strong>的，一个已部署的服务器可以在同一块 GPU 上承载<strong>多个并发的任务或用户</strong>——
 在 <code class="docutils literal notranslate"><span class="pre">authorized_users</span></code> 下为每个人分配各自的密钥，并调高 <code class="docutils literal notranslate"><span class="pre">max_loras</span></code>，使多个 LoRA 适配器可以同时训练。以这种方式共享
-能提升利用率并分摊成本。这在 <strong>Lambda</strong> 上最为重要（无论 GPU 是否在工作都会持续计费），
+能提升利用率并分摊成本。这在 <strong>Lambda</strong> 和 <strong>HF Jobs</strong> 上最为重要（无论 GPU 是否在工作都会持续计费），
 在活跃的 <strong>Modal</strong> 会话期间也很重要（容器处于热状态，但 GPU 的使用是突发的）。</p>
-<p>两份指南都会带你走完<strong>同一个端到端示例</strong>：配置服务器、
-部署服务器、在本地（笔记本）上为 <code class="docutils literal notranslate"><span class="pre">Qwen/Qwen3-0.6B</span></code> 训练一个“像 Yoda 一样说话”的 LoRA，并
+<p>所有指南都会带你走完<strong>同一个端到端示例</strong>：配置服务器、
+部署服务器、在本地（笔记本）上为一个小型 Qwen3 模型训练一个“像 Yoda 一样说话”的 LoRA，并
 下载训练好的适配器——全部复用
 <a class="reference external" href="https://github.com/agentscope-ai/TuFT/tree/main/examples/personality_sft"><code class="docutils literal notranslate"><span class="pre">examples/personality_sft/</span></code></a> 中可直接运行的代码。</p>
 

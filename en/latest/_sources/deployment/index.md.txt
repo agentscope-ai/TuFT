@@ -34,6 +34,15 @@ billed per second. Suited to bursty or intermittent use.
 **A plain on-demand GPU VM**, billed per minute until you terminate it. No orchestration
 layer; the instance runs until you stop it.
 :::
+
+:::{grid-item-card} Hugging Face Jobs
+:link: hf_jobs
+:link-type: doc
+:shadow: none
+
+**A GPU container on the Hub**, billed per minute until its timeout or until you cancel it.
+Models mount from the Hub; checkpoints go to a Storage Bucket.
+:::
 ```
 
 ## Which one should I pick?
@@ -42,6 +51,7 @@ layer; the instance runs until you stop it.
 |---|---|---|
 | To scale to zero when idle | **[Modal](modal.md)** | Serverless; scale-to-zero, per-second billing, managed proxy and volumes. |
 | A single dedicated GPU instance | **[Lambda Cloud](lambda.md)** | On-demand, billed per minute until you terminate; no orchestration layer, no preemption. |
+| To stay on the Hugging Face Hub | **[HF Jobs](hf_jobs.md)** | Billed per minute until the Job's timeout or cancel; models mounted from the Hub, checkpoints in a Storage Bucket, HF-token-gated URL. |
 
 ## Keeping the GPU busy
 
@@ -50,12 +60,12 @@ tokenizes data, builds batches, and waits on HTTP round-trips between GPU bursts
 sits idle for much of the run. Because TuFT is **multi-tenant**, one deployed server can host
 **several concurrent jobs or users** on the same GPU — give each their own key under
 `authorized_users`, and raise `max_loras` so multiple LoRA adapters can train at once. Sharing
-this way improves utilization and splits the cost. It matters most on **Lambda** (billed
+this way improves utilization and splits the cost. It matters most on **Lambda** and **HF Jobs** (billed
 continuously whether or not the GPU is working) and during active **Modal** sessions (the
 container is warm but the GPU is bursty).
 
-Both guides walk through the **same end-to-end example**: configuring the server,
-deploying it, training a "talk like Yoda" LoRA on `Qwen/Qwen3-0.6B` from your laptop, and
+All guides walk through the **same end-to-end example**: configuring the server,
+deploying it, training a "talk like Yoda" LoRA on a small Qwen3 model from your laptop, and
 downloading the trained adapter — all reusing the runnable code in
 [`examples/personality_sft/`](https://github.com/agentscope-ai/TuFT/tree/main/examples/personality_sft).
 
@@ -65,4 +75,5 @@ downloading the trained adapter — all reusing the runnable code in
 
 modal
 lambda
+hf_jobs
 ```

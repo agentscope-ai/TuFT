@@ -36,8 +36,9 @@ sd_hide_title: true
 :class: tip
 
 You don't need to own a GPU to run TuFT. Deploy it to a pay-as-you-go cloud provider —
-**[Modal](deployment/modal.md)** (serverless, scale-to-zero) or
-**[Lambda Cloud](deployment/lambda.md)**, then fine-tune from your laptop.
+**[Modal](deployment/modal.md)** (serverless, scale-to-zero),
+**[Lambda Cloud](deployment/lambda.md)** or
+**[Hugging Face Jobs](deployment/hf_jobs.md)**, then fine-tune from your laptop.
 See the **[Deployment guides](deployment/index.md)**.
 ```
 

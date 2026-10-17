@@ -101,6 +101,7 @@
 <li class="toctree-l1 current" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="current reference internal expandable" href="#">Deployment<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
 <li class="toctree-l2"><a class="reference internal" href="modal.html">Deploy on Modal</a></li>
 <li class="toctree-l2"><a class="reference internal" href="lambda.html">Deploy on Lambda Cloud</a></li>
+<li class="toctree-l2"><a class="reference internal" href="hf_jobs.html">Deploy on Hugging Face Jobs</a></li>
 </ul>
 </li>
 <li class="toctree-l1" x-data="{ expanded: $el.classList.contains('current') ? true : false }"><a :class="{ 'expanded' : expanded }" @click="expanded = !expanded" class="reference internal expandable" href="../user-guide/index.html">User Guide<button @click.prevent.stop="expanded = !expanded" type="button" x-cloak=""><span class="sr-only"></span><svg fill="currentColor" height="18px" stroke="none" viewbox="0 0 24 24" width="18px" xmlns="http://www.w3.org/2000/svg"><path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"></path></svg></button></a><ul x-cloak="" x-show="expanded">
@@ -175,6 +176,16 @@ layer; the instance runs until you stop it.</p>
 </div>
 <a class="sd-stretched-link sd-hide-link-text reference internal" href="lambda.html"><span class="doc">Deploy on Lambda Cloud</span></a></div>
 </div>
+<div class="sd-col sd-d-flex-row docutils">
+<div class="sd-card sd-sphinx-override sd-w-100 sd-shadow-none sd-card-hover docutils">
+<div class="sd-card-body docutils">
+<div class="sd-card-title sd-font-weight-bold docutils">
+Hugging Face Jobs</div>
+<p class="sd-card-text"><strong>A GPU container on the Hub</strong>, billed per minute until its timeout or until you cancel it.
+Models mount from the Hub; checkpoints go to a Storage Bucket.</p>
+</div>
+<a class="sd-stretched-link sd-hide-link-text reference internal" href="hf_jobs.html"><span class="doc">Deploy on Hugging Face Jobs</span></a></div>
+</div>
 </div>
 </div>
 <section id="which-one-should-i-pick">
@@ -195,6 +206,10 @@ layer; the instance runs until you stop it.</p>
 <td><p><strong><a class="reference internal" href="lambda.html"><span class="std std-doc">Lambda Cloud</span></a></strong></p></td>
 <td><p>On-demand, billed per minute until you terminate; no orchestration layer, no preemption.</p></td>
 </tr>
+<tr class="row-even"><td><p>To stay on the Hugging Face Hub</p></td>
+<td><p><strong><a class="reference internal" href="hf_jobs.html"><span class="std std-doc">HF Jobs</span></a></strong></p></td>
+<td><p>Billed per minute until the Job’s timeout or cancel; models mounted from the Hub, checkpoints in a Storage Bucket, HF-token-gated URL.</p></td>
+</tr>
 </tbody>
 </table>
 </section>
@@ -205,11 +220,11 @@ tokenizes data, builds batches, and waits on HTTP round-trips between GPU bursts
 sits idle for much of the run. Because TuFT is <strong>multi-tenant</strong>, one deployed server can host
 <strong>several concurrent jobs or users</strong> on the same GPU — give each their own key under
 <code class="docutils literal notranslate"><span class="pre">authorized_users</span></code>, and raise <code class="docutils literal notranslate"><span class="pre">max_loras</span></code> so multiple LoRA adapters can train at once. Sharing
-this way improves utilization and splits the cost. It matters most on <strong>Lambda</strong> (billed
+this way improves utilization and splits the cost. It matters most on <strong>Lambda</strong> and <strong>HF Jobs</strong> (billed
 continuously whether or not the GPU is working) and during active <strong>Modal</strong> sessions (the
 container is warm but the GPU is bursty).</p>
-<p>Both guides walk through the <strong>same end-to-end example</strong>: configuring the server,
-deploying it, training a “talk like Yoda” LoRA on <code class="docutils literal notranslate"><span class="pre">Qwen/Qwen3-0.6B</span></code> from your laptop, and
+<p>All guides walk through the <strong>same end-to-end example</strong>: configuring the server,
+deploying it, training a “talk like Yoda” LoRA on a small Qwen3 model from your laptop, and
 downloading the trained adapter — all reusing the runnable code in
 <a class="reference external" href="https://github.com/agentscope-ai/TuFT/tree/main/examples/personality_sft"><code class="docutils literal notranslate"><span class="pre">examples/personality_sft/</span></code></a>.</p>
 
