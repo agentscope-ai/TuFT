@@ -119,10 +119,10 @@ client = tinker.ServiceClient(
 ## 第 3 步 —— 在本地（笔记本）训练 Yoda LoRA
 
 训练脚本 [`examples/personality_sft/train.py`](https://github.com/agentscope-ai/TuFT/tree/main/examples/personality_sft/train.py)
-是一个**客户端**，通过 Tinker SDK 以 HTTP 方式连接到正在运行的服务器。当 URL 是 `*.hf.jobs` 地址时，它会自动附加你的 HF token（来自 `hf auth login` 或 `HF_TOKEN`）：
+是一个**客户端**，通过 Tinker SDK 以 HTTP 方式连接到正在运行的服务器。当 URL 是 `*.hf.jobs` 地址时，它会自动附加你的 HF token（来自 `hf auth login` 或 `HF_TOKEN`）；使用 `--public` 启动的 Job 只需要 `tml-` 密钥。聊天模板需要 `jinja2`：
 
 ```bash
-pip install tinker transformers
+pip install tinker transformers jinja2
 
 python examples/personality_sft/train.py \
     --base-url https://<job_id>--10610.hf.jobs \

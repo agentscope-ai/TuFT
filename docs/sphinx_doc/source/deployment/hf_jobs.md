@@ -140,10 +140,10 @@ useful when the training loop itself runs as a Job.
 The training script [`examples/personality_sft/train.py`](https://github.com/agentscope-ai/TuFT/tree/main/examples/personality_sft/train.py)
 is a **client** that connects to the running server over HTTP via the Tinker SDK. When the
 URL is a `*.hf.jobs` address it adds your HF token (from `hf auth login` or `HF_TOKEN`)
-automatically:
+automatically; a `--public` Job needs only the `tml-` key. `jinja2` is needed for the chat template:
 
 ```bash
-pip install tinker transformers
+pip install tinker transformers jinja2
 
 python examples/personality_sft/train.py \
     --base-url https://<job_id>--10610.hf.jobs \
