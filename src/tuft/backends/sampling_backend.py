@@ -596,15 +596,24 @@ class DPSamplingBackend(BaseSamplingBackend):
         sampling to intermittently fail with an unknown lora_id.
         """
         if self.scheduler is not None and self.scheduler.flex_index is not None:
-            # Registration can allocate/copy device memory; share the same
-            # drain boundary as training mutations on the colocated replica.
-            await self.scheduler.training(lambda: self._add_adapter(lora_id, adapter_path))
+            # Complete the transaction even if its caller disconnects. Only the
+            # colocated replica's GPU mutation needs the training exclusion gate.
+            await self.scheduler.transaction(lambda: self._add_adapter(lora_id, adapter_path))
             return
         await self._add_adapter(lora_id, adapter_path)
 
+    async def _adapter_mutation(self, index: int, operation) -> None:
+        if self.scheduler is not None and index == self.scheduler.flex_index:
+            await self.scheduler.training(operation, kind="publication")
+        else:
+            await operation()
+
     async def _add_adapter(self, lora_id: str, adapter_path: Path) -> None:
         results = await asyncio.gather(
-            *[inst.add_adapter(lora_id, adapter_path) for inst in self._instances],
+            *[
+                self._adapter_mutation(i, lambda inst=inst: inst.add_adapter(lora_id, adapter_path))
+                for i, inst in enumerate(self._instances)
+            ],
             return_exceptions=True,
         )
         failures = [i for i, res in enumerate(results) if isinstance(res, BaseException)]
@@ -613,7 +622,9 @@ class DPSamplingBackend(BaseSamplingBackend):
             for i, res in enumerate(results):
                 if not isinstance(res, BaseException):
                     try:
-                        await self._instances[i].remove_adapter(lora_id)
+                        await self._adapter_mutation(
+                            i, lambda i=i: self._instances[i].remove_adapter(lora_id)
+                        )
                     except Exception:  # pylint: disable=broad-except
                         logger.warning("Failed to roll back adapter %s on instance %d", lora_id, i)
             first_error = results[failures[0]]

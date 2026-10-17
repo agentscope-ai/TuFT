@@ -89,6 +89,8 @@ class SchedulingConfig(BaseModel):
     borrow_probe_tokens: int | None = Field(default=None, ge=1)
     borrow_min_dwell_s: float = Field(default=0.1, ge=0, le=60, allow_inf_nan=False)
     borrow_safety_factor: float = Field(default=1.5, ge=1, le=10, allow_inf_nan=False)
+    # Optional bounded diagnostic ring; no tenant IDs or prompt contents.
+    scheduling_trace_capacity: int = Field(default=0, ge=0, le=4096)
 
     @model_validator(mode="before")
     @classmethod

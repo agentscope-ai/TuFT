@@ -417,3 +417,112 @@ async def test_sampling_service_rate_excludes_wakeup(monkeypatch):
     assert s._rates[0] == pytest.approx(0.2)
     assert s._switch_cost[False] == 10
     await s.close()
+
+
+def test_distant_infeasible_group_does_not_veto_local_plan():
+    profiles = [
+        LoopProfile("a", 10, 0.1, 0.2),
+        LoopProfile("b", 10.25, 0.1, 0.2),
+        LoopProfile("c", 20, 1, 0.1),
+        LoopProfile("d", 20.2, 1, 0.1),
+    ]
+    slots = plan_training(profiles, 2)
+    assert slots is not None
+    assert [s.run for s in slots] == ["a", "b"]
+    assert slots[0].delay == pytest.approx(0.15)
+
+
+def test_profile_status_and_publication_occupancy():
+    p = LoopProfiler()
+    history(p, "regular", 9, duration=0.1)
+    p.overhead_s = 0.3
+    p.observe("new", 9)
+    history(p, "late", 5)
+    history(p, "pending", 9)
+    p.training_ready("pending", 9.1)
+    history(p, "irregular", 7)
+    p.observe("irregular", 9)
+    assert p.status(9.5) == dict(warming=1, overdue=1, pending=1, irregular=1, eligible=1)
+    assert p.profiles(9.5, 1, 0.1)[0].duration == pytest.approx(0.4)
+
+
+async def test_borrowing_rechecks_profit_after_and_during_borrow():
+    s = ResourceScheduler(
+        2, SchedulingConfig(policy="loopweave", adapter_batch_window_s=0), flex_index=0
+    )
+    s._switch_cost = {True: 0.03, False: 0.04}
+    s._phase_state = False
+    s._rates = [0.00066, 0.00021]
+    s._seconds_per_token = 0.00066
+    s._borrowing = True
+    seen = []
+
+    async def sample(index):
+        seen.append(index)
+
+    await s.sample("a", None, 320, True, sample)
+    assert seen == [1]
+    s._active[0] = 1
+    s._work[0] = 320
+    await s.sample("a", None, 320, True, sample)
+    assert seen == [1, 1]
+    s._active[0] = s._work[0] = 0
+    await s.close()
+
+
+async def test_exclusive_trace_separates_drain_queue_phase_service(monkeypatch):
+    import tuft.scheduling as module
+
+    now = [100.0]
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    s = ResourceScheduler(2, SchedulingConfig(scheduling_trace_capacity=2), flex_index=0)
+    s._flex_drained.clear()
+
+    async def phase(training):
+        now[0] += 3
+
+    async def operation():
+        now[0] += 5
+
+    s.set_phase_transition(phase)
+    first = asyncio.create_task(
+        s.training(operation, tenant="private", reclaim_sampler_memory=True)
+    )
+    second = asyncio.create_task(
+        s.training(operation, kind="checkpoint", reclaim_sampler_memory=True)
+    )
+    for _ in range(5):
+        await asyncio.sleep(0)
+    now[0] += 2
+    s._flex_drained.set()
+    await asyncio.gather(first, second)
+    snap = s.snapshot()
+    assert snap["training_drain_wait_s"] == 2
+    assert snap["training_phase_s"] == 3
+    assert snap["training_execution_s"] == 5
+    assert snap["maintenance_queue_wait_s"] == 10
+    assert snap["maintenance_drain_wait_s"] == 0
+    assert snap["publication_estimate_s"] == 5
+    assert len(snap["decision_trace"]) == 2
+    assert "private" not in str(snap)
+    await s.close()
+
+
+async def test_compound_mutation_drains_on_disconnect_and_shutdown():
+    s = ResourceScheduler(1, SchedulingConfig(policy="balanced"))
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def operation():
+        entered.set()
+        await release.wait()
+        return "committed"
+
+    mutation = asyncio.create_task(s.transaction(operation))
+    await entered.wait()
+    mutation.cancel()
+    closing = asyncio.create_task(s.close())
+    await asyncio.sleep(0)
+    assert not closing.done()
+    release.set()
+    assert await mutation == "committed"
+    await closing

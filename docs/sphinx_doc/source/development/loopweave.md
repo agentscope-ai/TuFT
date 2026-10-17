@@ -192,8 +192,10 @@ tracking are bounded; four consistent completed updates are needed for a median
 arrival prediction. Irregular and expired predictions fall back to reactive
 scheduling.
 
-The fast-loop planner uses predicted arrivals and recent training durations to
-pack nearby bursts. Each run's scheduling budget is the smaller of
+The fast-loop planner uses predicted arrivals and recent training durations plus
+measured checkpoint/publication overhead to pack nearby bursts. Groups separated
+by more than `loop_lookahead_s` after their natural serialized finish are planned
+independently; an overloaded distant group cannot veto a feasible local group. Each run's scheduling budget is the smaller of
 `loop_max_delay_s` (default 0.25 seconds) and `loop_delay_fraction` (default 0.05)
 times its observed period. Total shift, including predicted lane contention,
 must fit the budget. Infeasible plans add no hold. The first sampling request
@@ -210,13 +212,14 @@ loop holds. This is best-effort alignment for regular loops, not a policy-lag
 guarantee or automatic publication of newer adapters. The operator-configured
 budget bounds deliberate holds; it does not bound ordinary queueing or GPU time.
 
-Borrowing is cost-aware by default. On entry to Flex sampling it compares the
+Borrowing is cost-aware by default. Every Flex admission compares the
 estimated Fixed completion time against Flex service plus a measured round-trip
 switch, multiplied by `borrow_safety_factor` (default 1.5). It also checks the
 earliest natural predicted training arrival, reserving switch-back time. The
 admission deadline deliberately does not assume that the client's update will
-respect a planned shift. Once a borrowing window is approved, window checks and
-drain safety still apply to subsequent admissions. A sampler awake solely for
+respect a planned shift. Reserved Flex work is included in the estimate, and
+unknown-horizon admissions include observed drain cost. Calibrated routing uses
+estimated completion time rather than assuming identical replica throughput. A sampler awake solely for
 adapter publication must still pass the benefit gate, with its already-paid
 wake cost excluded from the comparison.
 
@@ -256,11 +259,10 @@ Any arriving training operation immediately closes shared sampling admission.
 Already admitted requests drain; fixed samplers continue serving. Training
 mutations execute one at a time, with a configurable short quiet interval after
 completion to allow the following optimizer/checkpoint request to arrive without
-reopening sampling. Eligible rollouts can wait up to `sampling_alignment_s` for
-this training burst/quiet interval to end. This prevents an entire next-round
-wave from being sent to fixed replicas just before shared capacity becomes free.
-The budget is a per-request maximum; when it expires, the fixed route is eligible
-even if training is still running. Long requests are not deliberately delayed.
+reopening sampling. Reactive alignment never holds a request when a persistent
+sampler has admission capacity. When Fixed is full, eligible rollouts may wait up
+to `sampling_alignment_s` for shared capacity. Long requests are not deliberately
+aligned. A publication-only wake does not restart the post-training dwell timer.
 An unexpected update can wait for the bounded admitted batch;
 the scheduler does not preempt tokens or claim an absolute time bound.
 
@@ -272,6 +274,34 @@ until actual backend completion. Admitted training mutations finish along with
 their sequence bookkeeping even if the caller cancels, avoiding duplicate
 optimizer updates on retries. Shutdown rejects pending samples and drains
 admitted work before killing either backend.
+
+### Publication and diagnostics
+
+Adapter registration on persistent samplers proceeds outside the training gate.
+Only registration or rollback on the colocated sampler takes the shared GPU
+reservation and wakes it. The complete publication transaction still drains on
+caller cancellation and shutdown; a partial failure rolls back successful replicas.
+
+Scheduler snapshots separate `training_queue_wait_s`, `training_drain_wait_s`,
+`training_phase_s`, and `training_execution_s`, with matching `maintenance_*`
+fields. Queue waits sum across callers and therefore can exceed wall time;
+drain time counts waiting for admitted Flex work after acquiring the training
+lock. `publication_estimate_s` is the sum of recent checkpoint and colocated
+registration service estimates used by the planner. `loop_profile_status`
+counts warming, irregular, pending, overdue, and eligible histories.
+
+Set `scheduling_trace_capacity` to a positive value (up to 4096, default 0) to
+retain bounded admission and exclusive-operation timing records in snapshots.
+These records omit tenant, adapter and prompt identifiers. Counters are cumulative;
+subtract snapshots around a measured interval and do not sum overlapping queue
+waits as GPU utilization. Failed operations still contribute to exclusive occupancy,
+but successful-service counters and detailed exclusive records exclude failures.
+
+For long contexts, configure `flex_max_tokens` and the cold-probe cap explicitly:
+work includes **prompt tokens plus the maximum output**, multiplied by sample
+count. The default short-request cap will intentionally route long contexts to
+persistent samplers. Token rates are aggregate busy-interval estimates; they are
+not yet conditioned on concurrency, prefix-cache reuse, or prefill/decode mix.
 
 ## OpenAI and compatibility
 

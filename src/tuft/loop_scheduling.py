@@ -28,7 +28,7 @@ class TrainingSlot:
     delay: float
 
 
-def plan_training(profiles: list[LoopProfile], lookahead_s: float) -> list[TrainingSlot] | None:
+def _plan_group(profiles: list[LoopProfile], lookahead_s: float) -> list[TrainingSlot] | None:
     """Pack nearby bursts; reject any plan whose *total* shift exceeds a budget.
 
     Moving an early burst to end at the next release consolidates an idle gap
@@ -68,6 +68,29 @@ def plan_training(profiles: list[LoopProfile], lookahead_s: float) -> list[Train
     return result
 
 
+def plan_training(profiles: list[LoopProfile], lookahead_s: float) -> list[TrainingSlot] | None:
+    """Plan independent nearby groups; a distant overload cannot veto local work.
+
+    Split only beyond the natural serialized finish, including infeasible work.
+    Failed groups retain their natural dispatch behavior and receive no holds.
+    """
+    groups: list[list[LoopProfile]] = []
+    end = float("-inf")
+    for profile in sorted(profiles, key=lambda p: (p.ready, p.run)):
+        if not groups or profile.ready - end > lookahead_s:
+            groups.append([])
+        groups[-1].append(profile)
+        end = max(end, profile.ready) + profile.duration
+    slots = []
+    feasible = not groups
+    for group in groups:
+        plan = _plan_group(group, lookahead_s)
+        if plan is not None:
+            feasible = True
+            slots.extend(plan)
+    return slots if feasible else None
+
+
 @dataclass
 class LoopState:
     durations: deque[float] = field(default_factory=lambda: deque(maxlen=8))
@@ -87,6 +110,7 @@ class LoopProfiler:
 
     def __init__(self, max_tenants: int = 1024) -> None:
         self.max_tenants = max_tenants
+        self.overhead_s = 0.0
         self.arrivals: OrderedDict[str, deque[float]] = OrderedDict()
         self.states: dict[str, LoopState] = {}
 
@@ -162,8 +186,27 @@ class LoopProfiler:
             if ready <= now:
                 continue
             budget = min(max_delay, fraction * period) if state.sampling_started is None else 0.0
-            profiles.append(LoopProfile(run, ready, max(state.durations), budget))
+            profiles.append(LoopProfile(run, ready, max(state.durations) + self.overhead_s, budget))
         return profiles
+
+    def status(self, now: float) -> dict[str, int]:
+        """Explain eligibility without exposing run identifiers or changing history."""
+        counts = dict(warming=0, irregular=0, pending=0, overdue=0, eligible=0)
+        for run, history in self.arrivals.items():
+            state = self.states[run]
+            period = self.period(run)
+            if state.ready is not None:
+                reason = "pending"
+            elif len(history) < 4 or not state.durations:
+                reason = "warming"
+            elif period is None:
+                reason = "irregular"
+            elif history[-1] + period + state.planned_delay <= now:
+                reason = "overdue"
+            else:
+                reason = "eligible"
+            counts[reason] += 1
+        return counts
 
     def horizon(self, now: float) -> float | None:
         predictions = []
@@ -188,8 +231,11 @@ class LoopProfiler:
         state = self._state(run)
         infeasible = False
         if state.sampling_started is None:
-            plan = plan_training(self.profiles(now, max_delay, fraction), lookahead)
-            infeasible = plan is None
+            profiles = self.profiles(now, max_delay, fraction)
+            plan = plan_training(profiles, lookahead)
+            infeasible = any(p.run == run for p in profiles) and not any(
+                s.run == run for s in plan or []
+            )
             delay = next((s.delay for s in plan or [] if s.run == run), 0.0)
             state.sampling_started = now
             state.hold_until = now + delay

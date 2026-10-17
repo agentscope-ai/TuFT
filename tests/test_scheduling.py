@@ -365,7 +365,7 @@ async def test_predicted_training_horizon_keeps_long_estimate_on_fixed():
     await scheduler.close()
 
 
-async def test_alignment_keeps_next_rollout_available_for_reclaimed_gpu():
+async def test_alignment_never_idles_available_fixed_sampler():
     scheduler = ResourceScheduler(2, config(sampling_alignment_s=1), flex_index=0)
     training_started = asyncio.Event()
     release = asyncio.Event()
@@ -381,11 +381,11 @@ async def test_alignment_keeps_next_rollout_available_for_reclaimed_gpu():
     training = asyncio.create_task(scheduler.training(train))
     await training_started.wait()
     sampling = asyncio.create_task(scheduler.sample("a", None, 1, True, sample))
-    await spin_until(lambda: scheduler.snapshot()["queued"] == 1)
-    assert not indices
+    await asyncio.wait_for(sampling, 1)
+    assert indices == [1]
+    assert scheduler.snapshot()["training_active"]
     release.set()
-    await asyncio.gather(training, sampling)
-    assert indices == [0]
+    await training
     await scheduler.close()
 
 

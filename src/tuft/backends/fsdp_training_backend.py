@@ -84,6 +84,8 @@ def _scheduled_fsdp(method):
             if method.__name__ in {"load_state", "remove_adapter"}
             else "backward"
             if arguments.get("backward")
+            else "checkpoint"
+            if method.__name__ == "save_state"
             else "maintenance"
         )
         tenant = arguments.get("lora_id") if kind != "maintenance" else None

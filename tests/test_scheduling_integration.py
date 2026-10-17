@@ -267,12 +267,13 @@ async def test_hf_complete_update_provenance_and_wave_planning(state):
     assert record.model_id == sampler
     assert scheduler.profiler.states[run_id].observations == 1
 
-    # Seed histories rather than waiting for four natural RL loops.
+    # Seed histories and maintenance cost rather than timing tiny fake operations.
+    scheduler.profiler.overhead_s = 0.005
     scheduler.profiler.forget(run_id)
     now = time.monotonic()
     for run, offset in [(run_id, 0), (other_id, 0.045)]:
         for j in range(4):
-            scheduler.profiler.training_ready(run, now - 3.8 + j + offset)
+            scheduler.profiler.training_ready(run, now - 35 + 10 * j + offset)
             scheduler.profiler.executed(run, 0.01, commit=True)
     request = types.SampleRequest(
         sampling_session_id=sampler,
@@ -420,3 +421,65 @@ def test_host_adapter_cache_capacity_is_independent_of_gpu_slots():
             max_loras=4,
             max_cpu_loras=2,
         )
+
+
+@pytest.mark.integration
+async def test_publication_fixed_io_does_not_hold_training_gate(state, tmp_path):
+    server, _, _, _ = state
+    await server.async_init()
+    pool = next(iter(server.sampling._base_backends.values()))
+    scheduler = pool.scheduler
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = pool._instances[1].add_adapter
+
+    async def slow_fixed(adapter, path):
+        entered.set()
+        await release.wait()
+        await original(adapter, path)
+
+    pool._instances[1].add_adapter = slow_fixed
+    publication = asyncio.create_task(pool.add_adapter("published", tmp_path))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        for _ in range(10):
+            await asyncio.sleep(0)
+        publication.cancel()
+        trained = []
+
+        async def train():
+            trained.append(True)
+
+        await asyncio.wait_for(scheduler.training(train, reclaim_sampler_memory=True), 2)
+        assert trained and not publication.done()
+        release.set()
+        await publication
+        assert all("published" in replica.adapters for replica in pool._instances)
+        assert scheduler.snapshot()["publication_estimate_s"] >= 0
+    finally:
+        release.set()
+        await publication
+        await server.shutdown()
+
+
+@pytest.mark.integration
+async def test_publication_partial_failure_rolls_back_under_gate(state, tmp_path):
+    server, _, _, _ = state
+    await server.async_init()
+    pool = next(iter(server.sampling._base_backends.values()))
+    original = pool._instances[0].remove_adapter
+
+    async def rollback(adapter):
+        assert pool.scheduler.snapshot()["training_active"]
+        await original(adapter)
+
+    async def fail(*args):
+        raise RuntimeError("fixed registration failed")
+
+    pool._instances[0].remove_adapter = rollback
+    pool._instances[1].add_adapter = fail
+    try:
+        with pytest.raises(RuntimeError, match="fixed registration failed"):
+            await pool.add_adapter("published", tmp_path)
+        assert all("published" not in replica.adapters for replica in pool._instances)
+    finally:
+        await server.shutdown()

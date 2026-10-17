@@ -90,6 +90,15 @@ class ResourceScheduler:
         self._probe_active = False
         self._borrowing = False
         self._last_dispatched: dict[int, str | None] = {}
+        self._trace: deque[dict[str, Any]] = deque(maxlen=config.scheduling_trace_capacity)
+        self._drain_cost = 0.0
+        self._maintenance_cost: dict[str, float] = {}
+
+    def _record(self, event: str, **fields: Any) -> None:
+        if self._trace.maxlen:
+            self._trace.append(
+                {"event": event, "elapsed_s": time.monotonic() - self._started, **fields}
+            )
 
     def set_phase_transition(self, callback: Callable[[bool], Awaitable[None]]) -> None:
         """Install before serving; True releases sampler memory for training."""
@@ -130,6 +139,10 @@ class ResourceScheduler:
             "sampling_seconds_per_token": list(self._rates),
             "switch_to_training_estimate_s": self._switch_cost.get(True),
             "switch_to_sampling_estimate_s": self._switch_cost.get(False),
+            "training_drain_estimate_s": self._drain_cost,
+            "publication_estimate_s": sum(self._maintenance_cost.values()),
+            "loop_profile_status": self.profiler.status(time.monotonic()),
+            "decision_trace": list(self._trace),
         }
 
     def _track(self, coro: Awaitable) -> asyncio.Task:
@@ -233,15 +246,13 @@ class ResourceScheduler:
                 self._tenants.remove(request.tenant)
 
     def _borrow_worthwhile(self, request: _Request, now: float, horizon: float | None) -> bool:
-        """Entry gate; draining and training priority never depend on this model."""
+        """Admission gate; draining and training priority never depend on this model."""
         if not self.config.cost_aware_borrowing or self.config.policy != "loopweave":
             return True
         index = self.flex_index
         assert index is not None
         if self._probe_active:
             return False  # At most one bounded cold-start request, not a whole wave.
-        if self._active[index] or self._borrowing:
-            return True  # Wake cost is already paid; the deadline guard still applies.
         if now - self._last_training_end < self.config.borrow_min_dwell_s:
             self._stats["borrow_dwell_rejections"] += 1
             self._schedule_wake(self.config.borrow_min_dwell_s - (now - self._last_training_end))
@@ -285,7 +296,9 @@ class ResourceScheduler:
             return probe
         fixed_finish = min((self._work[i] + request.work) * (self._rates[i] or 0.0) for i in fixed)
         flex_finish = self.config.borrow_safety_factor * (
-            round_trip + request.work * self._seconds_per_token
+            round_trip
+            + (self._work[index] + request.work) * self._seconds_per_token
+            + (self._drain_cost if horizon is None else 0.0)
         )
         if fixed_finish <= flex_finish or (horizon is not None and now + flex_finish >= horizon):
             self._stats["borrow_cost_rejections"] += 1
@@ -310,10 +323,14 @@ class ResourceScheduler:
             and request.flex_eligible
             and (self._training_pending or self._training_active or now < self._quiet_until)
             and now < request.alignment_until
+            and all(
+                active >= self.config.max_inflight_per_replica
+                for i, active in enumerate(self._active)
+                if i != self.flex_index
+            )
         ):
-            # Without this bounded delay, the next rollout wave is irrevocably
-            # sent to fixed replicas during the post-update quiet interval, and
-            # the training GPU remains idle once that interval ends.
+            # Only wait for Flex when persistent capacity is already full.
+            # Alignment must never strand an available dedicated sampler.
             if not request.aligned:
                 request.aligned = True
                 self._stats["aligned_requests"] += 1
@@ -350,15 +367,29 @@ class ResourceScheduler:
         if not candidates:
             return None
         # Rotate ties; prefer locality only within a bounded extra-work budget.
-        best = min(candidates, key=lambda i: (self._work[i], (i - self._cursor) % len(self._work)))
+        calibrated = (
+            self.config.policy == "loopweave"
+            and self.config.cost_aware_borrowing
+            and all(self._rates[i] is not None for i in candidates)
+        )
+        scores = {
+            i: (self._work[i] + request.work) * (self._rates[i] or 0.0)
+            if calibrated
+            else self._work[i]
+            for i in candidates
+        }
+        best = min(candidates, key=lambda i: (scores[i], (i - self._cursor) % len(self._work)))
         local = [
             i
             for i in candidates
             if self._adapter[i] == request.adapter
-            and self._work[i] <= self._work[best] + request.work * self.config.locality_slack
+            and scores[i]
+            <= scores[best]
+            + (request.work * (self._rates[best] or 0.0) if calibrated else request.work)
+            * self.config.locality_slack
         ]
         if local:
-            best = min(local, key=lambda i: (self._work[i], (i - self._cursor) % len(self._work)))
+            best = min(local, key=lambda i: (scores[i], (i - self._cursor) % len(self._work)))
         self._cursor = (best + 1) % len(self._work)
         return best
 
@@ -456,6 +487,13 @@ class ResourceScheduler:
             request.admitted.set()
             self._stats["queue_wait_s"] += time.monotonic() - request.submitted
             self._stats["admitted"] += 1
+            self._record(
+                "admit",
+                replica=index,
+                work=request.work,
+                reserved_work=self._work[index],
+                horizon_s=None if horizon is None else horizon - now,
+            )
             dispatch.append((request, index))
         # Select and reserve in fair tenant order first. Only reorder the
         # selected set, so adapter locality cannot buy extra admission slots.
@@ -514,8 +552,7 @@ class ResourceScheduler:
                 self._rates[index] = rate if previous is None else 0.2 * rate + 0.8 * previous
             if index == self.flex_index and not self._active[index]:
                 self._probe_active = False
-                if self._flex_busy_failed:
-                    self._borrowing = False
+                self._borrowing = False
                 # Concurrent requests share a decode batch. Summing individual
                 # latencies counts the same GPU interval repeatedly and makes
                 # a learned window reject useful work as concurrency increases.
@@ -532,6 +569,18 @@ class ResourceScheduler:
             # singleton and defeats grouping under sustained load.
             if not self._closed:
                 self._schedule_wake(0)
+
+    async def transaction(self, operation: Callable[[], Awaitable[T]]) -> T:
+        """Drain a compound mutation on disconnect/shutdown without holding the GPU gate."""
+        if self._closed:
+            raise RuntimeError("Scheduler is closed")
+        task = self._track(operation())
+        while True:
+            try:
+                return await asyncio.shield(task)
+            except asyncio.CancelledError:
+                if task.done():
+                    return task.result()
 
     async def training(
         self,
@@ -569,7 +618,21 @@ class ResourceScheduler:
         waiting = time.monotonic()
         try:
             async with self._training_lock:
+                acquired = time.monotonic()
+                had_flex = not self._flex_drained.is_set()
                 await self._flex_drained.wait()
+                drained = time.monotonic()
+                category = (
+                    "training"
+                    if tenant is not None and kind in {"backward", "optimizer"}
+                    else "maintenance"
+                )
+                queue_s, drain_s = acquired - waiting, drained - acquired
+                self._stats[category + "_queue_wait_s"] += queue_s
+                self._stats[category + "_drain_wait_s"] += drain_s
+                if had_flex:
+                    self._drain_cost = 0.2 * drain_s + 0.8 * self._drain_cost
+                    self._stats[category + "_drain_events"] += 1
                 self._training_active = True
                 self._borrowing = False
                 started = time.monotonic()
@@ -577,6 +640,7 @@ class ResourceScheduler:
                 try:
                     await self._enter_phase(reclaim_sampler_memory)
                     executing = time.monotonic()
+                    self._stats[category + "_phase_s"] += executing - started
                     try:
                         result = await operation()
                     except BaseException:
@@ -584,6 +648,20 @@ class ResourceScheduler:
                             self.profiler.forget(tenant)
                         raise
                     busy = time.monotonic() - executing
+                    self._record(
+                        "exclusive",
+                        kind=kind,
+                        category=category,
+                        queue_s=queue_s,
+                        drain_s=drain_s,
+                        phase_s=executing - started,
+                        service_s=busy,
+                    )
+                    if kind in {"checkpoint", "publication"}:
+                        self._maintenance_cost[kind] = (
+                            0.2 * busy + 0.8 * self._maintenance_cost.get(kind, busy)
+                        )
+                        self.profiler.overhead_s = sum(self._maintenance_cost.values())
                     self._stats[
                         "training_execution_s"
                         if tenant is not None and kind in {"backward", "optimizer"}
@@ -599,8 +677,9 @@ class ResourceScheduler:
                 finally:
                     self._stats["exclusive_busy_s"] += time.monotonic() - started
                     self._training_active = False
-                    self._last_training_end = time.monotonic()
-                    self._quiet_until = time.monotonic() + self.config.training_quiet_s
+                    if reclaim_sampler_memory:
+                        self._last_training_end = time.monotonic()
+                        self._quiet_until = time.monotonic() + self.config.training_quiet_s
         except BaseException:
             if tenant is not None:
                 self.profiler.forget(tenant)
