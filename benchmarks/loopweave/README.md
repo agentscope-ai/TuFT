@@ -1,5 +1,11 @@
 # Practical LoopWeave validation
 
+**Latest agent validation (2026-10-17/18):** scheduling corrections plus a
+long-context, eight-tenant tool-agent pair completed with 6.98% less allocated GPU
+time/update, identical token work and 100% task success. Full-run sampling p95
+worsened 24.62%; one ordered pair and lower training service time limit causal
+attribution. [Results, figures, telemetry and $2.64 cost ledger](agents-validation-20261017.md).
+
 Publication note: see [LOCAL_ARTIFACTS.md](LOCAL_ARTIFACTS.md) for raw result
 files retained locally because the commit scanner flags their provenance hashes.
 

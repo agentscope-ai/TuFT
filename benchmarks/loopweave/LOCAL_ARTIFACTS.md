@@ -36,3 +36,17 @@ altered for publication.
 - `shared-weights-gpu-integration-Qwen3-0.6B.json`
 - `shared-weights-gpu-integration-Qwen3-4B.json`
 - `budget-hf-backlog-20261017.json`
+
+Agent validation (started 2026-10-17, finished 2026-10-18 UTC): the successful
+raw pair, summaries and figures are checked in. The following remain local:
+
+- `agents-multiturn-20261017-provenance.json`
+- `agents-multiturn-retry-20261017-provenance.json`
+- `agents-multiturn-final-20261017-provenance.json`
+- `agents-import-failure-20261017.log`
+- `agents-tokenizer-failure-20261017.log`
+- `agents-multiturn-final-20261017.log`
+
+Provenance files contain public source SHA-256 digests; the existing secret
+scanner flags the digest in the final manifest. Logs are retained as local
+runtime diagnostics. No scanner baseline or exclusions were changed.

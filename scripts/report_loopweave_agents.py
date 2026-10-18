@@ -124,12 +124,59 @@ def main():
     for ax in axes.flat:
         ax.legend(fontsize=8)
         ax.grid(alpha=0.2, axis="y")
+    matched = all(rows[0][k] == rows[1][k] for k in ("prompt_tokens", "output_tokens"))
+    reference = data["runs"][0]
     fig.suptitle(
-        "Qwen3-4B · 8 tenants · 3-turn tool tasks · 6 updates/tenant\n"
-        "One paired run; causal generations can produce different token counts"
+        f"Qwen3-4B · {reference['tenants']} tenants · 3-turn tool tasks · "
+        f"{reference['rounds']} updates/tenant\nOne ordered pair · "
+        + ("identical token counts" if matched else "different generated token counts")
+        + " · eager sampling"
     )
     for extension in ("png", "svg"):
         fig.savefig(str(target) + "." + extension, dpi=180)
+    # Keep the full-run CDF primary; show the first-wave sensitivity explicitly.
+    extra, ax = plt.subplots(1, 2, figsize=(10, 4), constrained_layout=True)
+    sensitivity = []
+    for i, run in enumerate(data["runs"]):
+        rounds = range(run["rounds"])
+        samples = [
+            [r["duration_s"] for r in run["requests"] if r["step"] == step] for step in rounds
+        ]
+        ax[0].plot(
+            list(rounds),
+            [statistics.mean(v) for v in samples],
+            "o-",
+            color=colors[i],
+            label=labels[i],
+        )
+        ax[1].plot(
+            list(rounds),
+            [percentile(v, 0.95) for v in samples],
+            "o-",
+            color=colors[i],
+            label=labels[i],
+        )
+        later = [r["duration_s"] for r in run["requests"] if r["step"] > 0]
+        first = max(u["finished_s"] for u in run["updates"] if u["step"] == 0)
+        sensitivity.append(
+            dict(
+                policy=run["policy"],
+                after_first_update_milestone_s=run["elapsed_s"] - first,
+                later_rounds_sample_mean_s=statistics.mean(later) if later else None,
+                later_rounds_sample_p95_s=percentile(later, 0.95) if later else None,
+            )
+        )
+    for panel, metric in zip(ax, ("Mean", "p95"), strict=True):
+        panel.set(
+            xlabel="Update round (0 is the first measured wave)",
+            ylabel=f"{metric} sampling latency (s)",
+        )
+        panel.legend(fontsize=8)
+        panel.grid(alpha=0.2)
+    extra.suptitle("First-wave sensitivity · full-run metrics remain primary")
+    for extension in ("png", "svg"):
+        extra.savefig(str(target) + "-latency-rounds." + extension, dpi=180)
+    Path(str(target) + "-sensitivity.json").write_text(json.dumps(sensitivity, indent=2) + "\n")
     print(json.dumps(rows, indent=2))
 
 

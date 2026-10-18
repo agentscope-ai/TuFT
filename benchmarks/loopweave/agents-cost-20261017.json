@@ -1,0 +1,45 @@
+{
+  "pricing_url": "https://modal.com/pricing",
+  "usd_per_s": 0.0025456800000000003,
+  "requested_resources": {
+    "gpu": "H100",
+    "count": 2,
+    "cpu": 16,
+    "memory_gib": 64
+  },
+  "attempts": [
+    {
+      "label": "multiturn",
+      "app_id": "ap-u1E6DgJlv1w4752TdHvYZq",
+      "allocation_upper_window_s": 39,
+      "function_elapsed_s": 30.867949279,
+      "estimated_requested_resource_usd": 0.09928152000000001,
+      "status": "failed before measured workload"
+    },
+    {
+      "label": "multiturn-retry",
+      "app_id": "ap-OjmcBuPNlV0XiHVopYX7Er",
+      "allocation_upper_window_s": 166,
+      "function_elapsed_s": 162.712084464,
+      "estimated_requested_resource_usd": 0.42258288000000005,
+      "status": "failed before measured workload",
+      "container_started_utc": "2026-10-17 23:47:25+00:00",
+      "app_stopped_utc": "2026-10-17 23:50:11+00:00"
+    },
+    {
+      "app_id": "ap-qLsfu99eysINbdVQClHWeK",
+      "container_id": "ta-01M564HWRRC9SJ2B34ZXGRAKQR",
+      "container_started_utc": "2026-10-17 23:53:39+00:00",
+      "label": "multiturn-final",
+      "app_stopped_utc": "2026-10-18 00:07:31+00:00",
+      "allocation_upper_window_s": 832,
+      "function_elapsed_s": 826.551764191,
+      "estimated_requested_resource_usd": 2.1180057600000004,
+      "status": "passed: one static/LoopWeave causal-agent pair"
+    }
+  ],
+  "complete": true,
+  "estimated_total_usd": 2.6398701600000005,
+  "all_validation_apps_stopped": true,
+  "caveat": "Requested GPU/CPU/RAM estimate, not invoice. First failed attempt uses app-create/app-stop upper window; others use container-start/app-stop. Actual CPU/RAM above requests, credits and egress can change billing."
+}

@@ -887,3 +887,21 @@ does not attempt to reproduce every paper claim or add probability calibration.
   tokenizer preflight before model initialization. Their raw artifacts and compute
   time remain included in the experiment accounting. No completed experiment was
   repeated to select a favorable result.
+- Corrected pair passed on two H100 80GB GPUs: static 254.052 s, LoopWeave
+  236.319 s, 48 updates each, identical 1,552,480 prompt / 6,472 output tokens,
+  and 100% tool/decision success. Observed allocated GPU time/update fell 6.98%.
+  Full-run sampling mean improved 30.28%, but p95 worsened 24.62%. No Flex-induced
+  training/publication drain events occurred. Flex served 90 requests; no planned
+  holds were applied. Frozen hashes stayed unchanged, unique shared base storage
+  was 8,044,936,192 bytes, and no base parameters were copied.
+- Training service was also 11.948 s lower, so the full wall-time gain cannot be
+  attributed solely to scheduling. Both arms used eager sampling. Small-shape
+  warmup, one fixed run order, per-turn repeated training contexts, and this
+  training-heavy synthetic tool task limit generalization. Primary results retain
+  the first measured wave; a separately labeled post-hoc latency-by-round figure
+  documents its effect rather than replacing the full-run p95 result.
+- Saved successful raw data, summaries, two PNG/SVG figures and an inclusive cost
+  ledger. Estimated requested-resource compute was $2.640, including $0.522 for
+  failed starts. All validation apps stopped and the final container list was
+  empty. See `benchmarks/loopweave/agents-validation-20261017.md`. Source-digest
+  manifests and runtime logs remain local; the paper remains locally ignored.

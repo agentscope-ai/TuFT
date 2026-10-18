@@ -1,0 +1,14 @@
+[
+  {
+    "policy": "balanced",
+    "after_first_update_milestone_s": 203.69033642099998,
+    "later_rounds_sample_mean_s": 1.7783630669625008,
+    "later_rounds_sample_p95_s": 2.8127741925000387
+  },
+  {
+    "policy": "loopweave",
+    "after_first_update_milestone_s": 192.08154216100002,
+    "later_rounds_sample_mean_s": 1.0526705519458337,
+    "later_rounds_sample_p95_s": 1.9371937823999872
+  }
+]
