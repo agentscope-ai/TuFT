@@ -34,6 +34,7 @@ else:
         f"FSDP v2 requires PyTorch >= 2.4, but got {torch.__version__}. "
         "Please upgrade PyTorch or use training_backend='hf' instead."
     )
+from tuft.backends.attention import validate_attn_implementation
 from tuft.backends.base_backend import BaseTrainingBackend
 from tuft.backends.fsdp_engine import (
     FSDPModelConfig,
@@ -1100,10 +1101,13 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         # one dict, so they cannot disagree on rank slots, lora_alpha_ratio, or
         # target modules.
         self._config_dict = _config_to_worker_dict(config)
-        _, self._slot_config = _worker_dict_to_configs(self._config_dict)
+        model_config, self._slot_config = _worker_dict_to_configs(self._config_dict)
         # A fsdp_target_modules list no client can match should stop the
         # server here, before any create_training_run arrives.
         _validate_explicit_target_modules(config)
+        # Likewise an attention backend that cannot load: the workers only
+        # build the model on the first training request.
+        validate_attn_implementation(model_config.attn_implementation)
         self.logger = logging.getLogger(f"{__name__}.FSDPTrainingBackend")
 
     async def shutdown(self) -> None:
