@@ -208,7 +208,7 @@ def main() -> int:
             kernel = fetch_modelscope(args.kernels_dir, tuft_home)
         else:
             kernel = fetch_huggingface(tuft_home)
-        print(f"Loaded {FLASH_ATTN2_KERNEL} from {Path(kernel.__file__).parent}")
+        print(f"Loaded {FLASH_ATTN2_KERNEL} from {Path(kernel.__file__ or '.').parent}")
         smoke_test(kernel)
     except Exception as exc:
         other = "huggingface" if args.source == "modelscope" else "modelscope"

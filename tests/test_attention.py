@@ -145,13 +145,15 @@ def test_fsdp_backend_rejects_unloadable_attention_at_startup(
 
     flash_attn_installed(False)
     hub_kernel(False)
-    attn = {"attn_implementation": "flash_attention_2"}
     config = ModelConfig(
         model_name="qwen",
         model_path=Path("/tmp/Qwen3-0.6B"),
         max_model_len=1024,
         training_backend="fsdp",
-        **({"fsdp_override_config": attn} if via_override else attn),
+        attn_implementation=None if via_override else "flash_attention_2",
+        fsdp_override_config=(
+            {"attn_implementation": "flash_attention_2"} if via_override else None
+        ),
     )
     with pytest.raises(ValueError, match="flash_attention_2"):
         FSDPTrainingBackend(config)
