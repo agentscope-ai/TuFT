@@ -56,9 +56,12 @@ def environment() -> str:
 def fetch_huggingface(tuft_home: Path):
     from kernels import get_kernel
 
-    # A ModelScope override from an earlier run would shadow the Hub kernel.
+    # A ModelScope override from an earlier run would shadow the Hub kernel,
+    # including the copy the `tuft` wrapper exported before `tuft upgrade`.
     stale = tuft_home / "local-kernels"
     if stale.exists():
+        if os.environ.get("LOCAL_KERNELS") == stale.read_text().strip():
+            del os.environ["LOCAL_KERNELS"]
         stale.unlink()
         print(f"Removed the ModelScope kernel override {stale}")
     pinned = f"{FLASH_ATTN2_KERNEL}@{FLASH_ATTN2_KERNEL_REVISION}"
