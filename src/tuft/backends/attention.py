@@ -9,9 +9,10 @@ package. This module resolves the same way when the backend is constructed,
 so a missing backend stops the server at startup instead.
 
 For flash_attention_2 TuFT pins the Hub kernel to a commit instead of taking
-transformers' default kernel version: the version 3 builds (torch stable ABI)
-fail the backward pass with grouped-query attention on torch 2.11, which every
-Qwen3/Qwen3.5 model uses.
+transformers' default kernel version (3). Its CUDA 12.8 torch-stable-ABI build,
+which cu128/cu129 torch resolves to, still ships the binary from before the fix
+for huggingface/kernels-community#1085, so the backward pass fails with
+grouped-query attention, which every Qwen3/Qwen3.5 model uses.
 """
 
 from __future__ import annotations
@@ -25,10 +26,10 @@ logger = logging.getLogger(__name__)
 
 FLASH_ATTN2_KERNEL = "kernels-community/flash-attn2"
 # A main-branch commit with per-torch builds (torch210/torch211, cu126/cu128/
-# cu130) whose GQA backward passes on torch 2.11; a cu129 torch uses the cu128
-# build. Its torch211 builds are byte-identical to the ModelScope mirror.
-# Revalidate (scripts/install_flash_attn.py runs a GQA backward) when the
-# torch pin changes.
+# cu130) whose GQA backward passes on torch 2.11 with cu128, cu129 (which uses
+# the cu128 build) and cu130. Its torch211 builds are byte-identical to the
+# ModelScope mirror. Revalidate (scripts/install_flash_attn.py runs a GQA
+# backward) when the torch pin changes.
 FLASH_ATTN2_KERNEL_REVISION = "569b9719d0c8c45561cfcbfff6095ffddf87881c"
 
 _FLASH_ATTENTION = re.compile(r"^flash_attention_(\d+)$")
