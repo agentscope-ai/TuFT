@@ -260,9 +260,8 @@ We recommend using [uv](https://github.com/astral-sh/uv) for dependency manageme
     # If you want to run the full feature set (e.g., model serving, persistence),
     # please install all dependencies
     uv sync --all-extras
+    # Fetch the FlashAttention-2 kernel (add --source modelscope to use the ModelScope mirror)
     python scripts/install_flash_attn.py
-    # If you face issues with flash-attn installation, you can try installing it manually:
-    # uv pip install flash-attn --no-build-isolation
     ```
 
 

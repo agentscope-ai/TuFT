@@ -1074,7 +1074,7 @@ main() {
     echo -e "${BLUE}============================================${NC}"
     echo ""
 
-    print_step "Installing with full backend support (GPU, persistence, flash-attn)"
+    print_step "Installing with full backend support (GPU, persistence, FlashAttention-2)"
 
     if [ -n "$LOCAL_SOURCE_PATH" ]; then
         print_step "Installing from local source: $LOCAL_SOURCE_PATH"

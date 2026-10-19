@@ -146,7 +146,8 @@ class ModelConfig(BaseModel):
     # Attention implementation passed to AutoModelForCausalLM.from_pretrained for the
     # HF training backend (and used as default for FSDP backend if fsdp_override_config
     # does not specify one). Common values: "flash_attention_2", "sdpa", "eager".
-    # If None, transformers picks its own default (usually "sdpa").
+    # Without the flash_attn package, "flash_attention_2" loads a pinned Hugging Face
+    # Hub kernel (see tuft.backends.attention). If None, the FSDP backend uses "sdpa".
     attn_implementation: str | None = None
     # Quantization method for the sampling (vLLM) engine.
     # Supported values: "fp8", "awq", "gptq", "bitsandbytes", etc.
