@@ -18,6 +18,7 @@ from torch.autograd.function import once_differentiable
 from torch.nn.utils.rnn import pad_sequence
 from transformers import AutoConfig, AutoModelForCausalLM
 
+from tuft.backends.attention import resolve_attn_implementation
 from tuft.backends.loss_inputs import (
     FSDP_BACKEND_OWNED_LOSS_INPUTS,
     batch_loss_fn_input,
@@ -84,6 +85,9 @@ def build_base_model(config: FSDPModelConfig) -> Any:
         "low_cpu_mem_usage": True,
         "trust_remote_code": config.trust_remote_code,
     }
+    # Resolved here, on the worker's node, because flash_attn may be
+    # installed on some nodes and not others.
+    attn_implementation = resolve_attn_implementation(attn_implementation)
     if attn_implementation is not None:
         model_kwargs["attn_implementation"] = attn_implementation
 

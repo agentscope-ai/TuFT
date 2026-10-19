@@ -1,4 +1,4 @@
-"""Startup check for the attention implementation an FSDP model requests.
+"""Resolve and check the attention implementation an FSDP model requests.
 
 FSDP workers build the model lazily, on the first training request, so an
 attention backend that cannot load used to fail long after the server
@@ -7,6 +7,11 @@ is installed; otherwise transformers falls back to the matching Hugging Face
 kernel (e.g. ``kernels-community/flash-attn2``) through the ``kernels``
 package. This module resolves the same way when the backend is constructed,
 so a missing backend stops the server at startup instead.
+
+For flash_attention_2 TuFT pins the Hub kernel to a commit instead of taking
+transformers' default kernel version: the version 3 builds (torch stable ABI)
+fail the backward pass with grouped-query attention on torch 2.11, which every
+Qwen3/Qwen3.5 model uses.
 """
 
 from __future__ import annotations
@@ -18,9 +23,38 @@ import sys
 
 logger = logging.getLogger(__name__)
 
+FLASH_ATTN2_KERNEL = "kernels-community/flash-attn2"
+# A main-branch commit with per-torch builds (torch210/torch211, cu126/cu128/
+# cu130) whose GQA backward passes on torch 2.11; a cu129 torch uses the cu128
+# build. Its torch211 builds are byte-identical to the ModelScope mirror.
+# Revalidate (scripts/install_flash_attn.py runs a GQA backward) when the
+# torch pin changes.
+FLASH_ATTN2_KERNEL_REVISION = "569b9719d0c8c45561cfcbfff6095ffddf87881c"
+
 _FLASH_ATTENTION = re.compile(r"^flash_attention_(\d+)$")
 # transformers' hub kernel pattern: "org/repo", optionally "@revision" and ":function".
 _HUB_KERNEL = re.compile(r"^[^/:]+/[^/:]+(?:@[^/:]+)?(?::[^/:]+)?$")
+
+
+def flash_attn_installed(version: int = 2) -> bool:
+    """Whether transformers can use the flash_attn package for FlashAttention-``version``."""
+
+    from transformers.modeling_flash_attention_utils import FLASH_ATTENTION_COMPATIBILITY_MATRIX
+
+    entry = FLASH_ATTENTION_COMPATIBILITY_MATRIX.get(version)
+    return entry is not None and bool(entry["general_availability_check"]())
+
+
+def resolve_attn_implementation(attn_implementation: str | None) -> str | None:
+    """The attn_implementation to pass to transformers.
+
+    flash_attention_2 without the flash_attn package becomes the pinned Hub
+    kernel; everything else is passed through unchanged.
+    """
+
+    if attn_implementation == "flash_attention_2" and not flash_attn_installed(2):
+        return f"{FLASH_ATTN2_KERNEL}@{FLASH_ATTN2_KERNEL_REVISION}"
+    return attn_implementation
 
 
 def resolve_attn_kernel(attn_implementation: str | None) -> tuple[str, str | None] | None:
@@ -34,13 +68,9 @@ def resolve_attn_kernel(attn_implementation: str | None) -> tuple[str, str | Non
         return None
     match = _FLASH_ATTENTION.match(attn_implementation)
     if match is not None:
-        from transformers.modeling_flash_attention_utils import (
-            FLASH_ATTENTION_COMPATIBILITY_MATRIX,
-            FLASH_ATTN_KERNEL_FALLBACK,
-        )
+        from transformers.modeling_flash_attention_utils import FLASH_ATTN_KERNEL_FALLBACK
 
-        entry = FLASH_ATTENTION_COMPATIBILITY_MATRIX.get(int(match.group(1)))
-        if entry is not None and entry["general_availability_check"]():
+        if flash_attn_installed(int(match.group(1))):
             return None
         if attn_implementation not in FLASH_ATTN_KERNEL_FALLBACK:
             return None
@@ -82,7 +112,7 @@ def validate_attn_implementation(attn_implementation: str | None) -> None:
 
     if attn_implementation is None:
         return
-    kernel = resolve_attn_kernel(attn_implementation)
+    kernel = resolve_attn_kernel(resolve_attn_implementation(attn_implementation))
     if kernel is None:
         return
     repo_id, revision = kernel
