@@ -650,8 +650,9 @@ TUFT_VENV="${TUFT_VENV:-${TUFT_INSTALL_VENV:-$TUFT_HOME/venv}}"
 TUFT_PYTHON="$TUFT_VENV/bin/python"
 TUFT_PYPI_REQUIREMENT="${TUFT_PYPI_REQUIREMENT:-tuft[backend,persistence]>=0.1.8}"
 
-# Kernel override recorded by `install_flash_attn.py --source modelscope`;
-# the kernels package reads LOCAL_KERNELS. An explicit value wins.
+# Local kernel copy recorded by install_flash_attn.py, so the server loads it
+# without contacting the Hub; the kernels package reads LOCAL_KERNELS. An
+# explicit value wins.
 if [ -z "${LOCAL_KERNELS:-}" ] && [ -s "$TUFT_HOME/local-kernels" ]; then
     LOCAL_KERNELS="$(cat "$TUFT_HOME/local-kernels")"
     export LOCAL_KERNELS

@@ -54,7 +54,7 @@ The installer also honors these environment variables:
 
 ### FlashAttention-2
 
-Models that set `attn_implementation: flash_attention_2` use the `flash_attn` package when it is installed. Otherwise TuFT loads FlashAttention-2 from the Hugging Face kernel hub ([`kernels-community/flash-attn2`](https://huggingface.co/kernels-community/flash-attn2), pinned to a validated commit) through the [`kernels`](https://github.com/huggingface/kernels) package, which picks the build matching the installed torch/CUDA (a `cu129` torch uses the `cu128` build), so no wheel has to exist for your exact torch/CUDA/Python tuple. The installer fetches the kernel and runs a forward/backward smoke test; the summary at the end reports whether FlashAttention-2 is ready. When no kernel build is available, a model that requests `flash_attention_2` is rejected at server startup instead of failing on the first training request; use `attn_implementation: sdpa` there.
+Models that set `attn_implementation: flash_attention_2` use the `flash_attn` package when it is installed. Otherwise TuFT loads FlashAttention-2 from the Hugging Face kernel hub ([`kernels-community/flash-attn2`](https://huggingface.co/kernels-community/flash-attn2), pinned to a validated commit) through the [`kernels`](https://github.com/huggingface/kernels) package, which picks the build matching the installed torch/CUDA (a `cu129` torch uses the `cu128` build), so no wheel has to exist for your exact torch/CUDA/Python tuple. The installer fetches the kernel and runs a forward/backward smoke test; the summary at the end reports whether FlashAttention-2 is ready. The downloaded copy is recorded as a `LOCAL_KERNELS` override in `$TUFT_HOME/local-kernels`, which the `tuft` command exports, so the server loads it without contacting the Hub. If you start TuFT another way (e.g. `python -m tuft launch`), export it yourself, `export LOCAL_KERNELS="$(cat ~/.tuft/local-kernels)"`, or the kernel is resolved on the Hub at startup. When no kernel build is available, a model that requests `flash_attention_2` is rejected at server startup instead of failing on the first training request; use `attn_implementation: sdpa` there.
 
 Where the Hugging Face Hub is unreachable, fetch the kernel from the ModelScope mirror:
 
@@ -62,7 +62,7 @@ Where the Hugging Face Hub is unreachable, fetch the kernel from the ModelScope 
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install.sh)" -- --kernel-source modelscope
 ```
 
-The ModelScope build is verified against the Hugging Face signature and digests before use, stored under `$TUFT_HOME/kernels`, and exposed through a `LOCAL_KERNELS` override in `$TUFT_HOME/local-kernels`, which the `tuft` command exports. If you start TuFT another way (e.g. `python -m tuft launch`), export it yourself: `export LOCAL_KERNELS="$(cat ~/.tuft/local-kernels)"`. To re-fetch the kernel later, run `python scripts/install_flash_attn.py [--source modelscope]` with the TuFT environment's Python.
+The ModelScope build is verified against the Hugging Face signature and digests before use and stored under `$TUFT_HOME/kernels`. To re-fetch the kernel later, run `python scripts/install_flash_attn.py [--source modelscope]` with the TuFT environment's Python.
 
 ## Install from Source Code
 

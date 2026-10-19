@@ -55,7 +55,7 @@ TUFT_TORCH_BACKEND=cpu /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.
 
 ### FlashAttention-2
 
-设置了 `attn_implementation: flash_attention_2` 的模型在安装了 `flash_attn` 包时直接使用它；否则 TuFT 通过 [`kernels`](https://github.com/huggingface/kernels) 包从 Hugging Face kernel hub 加载 FlashAttention-2（[`kernels-community/flash-attn2`](https://huggingface.co/kernels-community/flash-attn2)，固定到已验证的提交）。`kernels` 会选择与已安装 torch/CUDA 匹配的构建（`cu129` 的 torch 使用 `cu128` 构建），因此无需为精确的 torch/CUDA/Python 组合准备 wheel。安装器会预先下载该 kernel 并运行前向/反向冒烟测试，结束时的摘要会显示 FlashAttention-2 是否可用。若当前环境没有可用的 kernel 构建，请求 `flash_attention_2` 的模型会在服务启动时被拒绝，而不是在第一次训练请求时才失败；此时请使用 `attn_implementation: sdpa`。
+设置了 `attn_implementation: flash_attention_2` 的模型在安装了 `flash_attn` 包时直接使用它；否则 TuFT 通过 [`kernels`](https://github.com/huggingface/kernels) 包从 Hugging Face kernel hub 加载 FlashAttention-2（[`kernels-community/flash-attn2`](https://huggingface.co/kernels-community/flash-attn2)，固定到已验证的提交）。`kernels` 会选择与已安装 torch/CUDA 匹配的构建（`cu129` 的 torch 使用 `cu128` 构建），因此无需为精确的 torch/CUDA/Python 组合准备 wheel。安装器会预先下载该 kernel 并运行前向/反向冒烟测试，结束时的摘要会显示 FlashAttention-2 是否可用。下载的副本会作为 `LOCAL_KERNELS` 覆盖项记录在 `$TUFT_HOME/local-kernels` 中，`tuft` 命令会自动导出该变量，因此服务启动时无需访问 Hub。如果以其他方式启动 TuFT（例如 `python -m tuft launch`），请自行导出：`export LOCAL_KERNELS="$(cat ~/.tuft/local-kernels)"`，否则会在启动时从 Hub 解析该 kernel。若当前环境没有可用的 kernel 构建，请求 `flash_attention_2` 的模型会在服务启动时被拒绝，而不是在第一次训练请求时才失败；此时请使用 `attn_implementation: sdpa`。
 
 如果无法访问 Hugging Face Hub，可以从 ModelScope 镜像获取 kernel：
 
@@ -63,7 +63,7 @@ TUFT_TORCH_BACKEND=cpu /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install.sh)" -- --kernel-source modelscope
 ```
 
-ModelScope 上的构建在使用前会按 Hugging Face 的签名和文件摘要进行校验，保存在 `$TUFT_HOME/kernels` 下，并通过 `$TUFT_HOME/local-kernels` 中记录的 `LOCAL_KERNELS` 覆盖项生效，`tuft` 命令会自动导出该变量。如果以其他方式启动 TuFT（例如 `python -m tuft launch`），请自行导出：`export LOCAL_KERNELS="$(cat ~/.tuft/local-kernels)"`。之后如需重新获取 kernel，可使用 TuFT 环境中的 Python 运行 `python scripts/install_flash_attn.py [--source modelscope]`。
+ModelScope 上的构建在使用前会按 Hugging Face 的签名和文件摘要进行校验，并保存在 `$TUFT_HOME/kernels` 下。之后如需重新获取 kernel，可使用 TuFT 环境中的 Python 运行 `python scripts/install_flash_attn.py [--source modelscope]`。
 
 ## 从源代码安装
 

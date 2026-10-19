@@ -9,14 +9,17 @@ test with grouped-query attention, so a missing or broken kernel shows up at
 install time rather than on the first training request.
 
 Sources:
-  huggingface (default)  Download into the Hugging Face cache, where
-                         transformers looks for it at runtime.
-  modelscope             Download the matching build from the ModelScope mirror
-                         into --kernels-dir, verify its sigstore signature
+  huggingface (default)  Download the build into the Hugging Face cache.
+  modelscope             Download the build from the ModelScope mirror into
+                         --kernels-dir and verify its sigstore signature
                          (huggingface/kernels-community build workflow) and file
-                         digests, and record a LOCAL_KERNELS override in
-                         $TUFT_HOME/local-kernels. The `tuft` wrapper exports it;
-                         other launchers must export LOCAL_KERNELS themselves.
+                         digests.
+
+Either way the downloaded copy is recorded as a LOCAL_KERNELS override in
+$TUFT_HOME/local-kernels, so the server loads it without contacting the Hub
+(the `kernels` package otherwise needs the Hub at every model load, even with
+a cached kernel). The `tuft` wrapper exports it; other launchers must export
+LOCAL_KERNELS themselves, or they resolve the pinned revision on the Hub.
 
 Exit codes: 0 kernel ready, 1 kernel unavailable for this environment.
 """
@@ -53,20 +56,16 @@ def environment() -> str:
     )
 
 
-def fetch_huggingface(tuft_home: Path):
+def fetch_huggingface() -> Path:
+    """Download the pinned build into the Hugging Face cache; return the snapshot."""
+
     from kernels import get_kernel
 
-    # A ModelScope override from an earlier run would shadow the Hub kernel,
-    # including the copy the `tuft` wrapper exported before `tuft upgrade`.
-    stale = tuft_home / "local-kernels"
-    if stale.exists():
-        if os.environ.get("LOCAL_KERNELS") == stale.read_text().strip():
-            del os.environ["LOCAL_KERNELS"]
-        stale.unlink()
-        print(f"Removed the ModelScope kernel override {stale}")
     pinned = f"{FLASH_ATTN2_KERNEL}@{FLASH_ATTN2_KERNEL_REVISION}"
     print(f"Fetching {pinned} from the Hugging Face Hub...")
-    return get_kernel(FLASH_ATTN2_KERNEL, revision=FLASH_ATTN2_KERNEL_REVISION)
+    kernel = get_kernel(FLASH_ATTN2_KERNEL, revision=FLASH_ATTN2_KERNEL_REVISION)
+    # .../snapshots/<revision>/build/<variant>/__init__.py
+    return Path(kernel.__file__ or ".").parents[2]
 
 
 def _modelscope_files(api: str, root: str, recursive: bool) -> list[dict]:
@@ -104,8 +103,9 @@ def _download(url: str, dest: Path, sha256: str) -> None:
     partial.replace(dest)
 
 
-def fetch_modelscope(kernels_dir: Path, tuft_home: Path):
-    from kernels import get_local_kernel
+def fetch_modelscope(kernels_dir: Path) -> Path:
+    """Download and verify the matching build from ModelScope; return its directory."""
+
     from kernels.variants import parse_variant, resolve_variant
     from kernels.verify import VerificationResult, verify_variant
 
@@ -139,12 +139,7 @@ def fetch_modelscope(kernels_dir: Path, tuft_home: Path):
     if not isinstance(result, VerificationResult.Success):
         raise RuntimeError(f"Signature verification of {variant_dir} failed: {result}")
     print("Verified the sigstore signature and file digests of the downloaded build")
-
-    override = f"{FLASH_ATTN2_KERNEL}={repo_dir}"
-    (tuft_home / "local-kernels").write_text(override + "\n")
-    os.environ["LOCAL_KERNELS"] = override
-    print(f"Recorded LOCAL_KERNELS={override} in {tuft_home / 'local-kernels'}")
-    return get_local_kernel(repo_dir)
+    return repo_dir
 
 
 def smoke_test(kernel) -> None:
@@ -205,14 +200,26 @@ def main() -> int:
         print(f"flash_attn {flash_attn.__version__} is installed; transformers will use it.")
         return 0
 
+    # Fetch afresh rather than through the override recorded by an earlier
+    # run, which the `tuft` wrapper exports before `tuft upgrade`.
+    record = tuft_home / "local-kernels"
+    if record.exists() and os.environ.get("LOCAL_KERNELS") == record.read_text().strip():
+        del os.environ["LOCAL_KERNELS"]
+
     try:
+        from kernels import get_local_kernel
+
         if args.source == "modelscope":
-            tuft_home.mkdir(parents=True, exist_ok=True)
-            kernel = fetch_modelscope(args.kernels_dir, tuft_home)
+            repo_dir = fetch_modelscope(args.kernels_dir)
         else:
-            kernel = fetch_huggingface(tuft_home)
+            repo_dir = fetch_huggingface()
+        kernel = get_local_kernel(repo_dir)
         print(f"Loaded {FLASH_ATTN2_KERNEL} from {Path(kernel.__file__ or '.').parent}")
         smoke_test(kernel)
+        override = f"{FLASH_ATTN2_KERNEL}={repo_dir}"
+        tuft_home.mkdir(parents=True, exist_ok=True)
+        record.write_text(override + "\n")
+        print(f"Recorded LOCAL_KERNELS={override} in {record}")
     except Exception as exc:
         other = "huggingface" if args.source == "modelscope" else "modelscope"
         print(
