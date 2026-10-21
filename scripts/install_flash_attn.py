@@ -2,18 +2,18 @@
 
 When the flash_attn package is not installed, TuFT loads FlashAttention-2 from
 the Hugging Face kernel hub (kernels-community/flash-attn2, pinned to a
-validated commit) through the `kernels` package, which picks the build matching
-the installed torch/CUDA/ABI (a cu129 torch uses the cu128 build). This script
-fetches that build ahead of time, loads it, and runs a forward/backward smoke
-test with grouped-query attention, so a missing or broken kernel shows up at
-install time rather than on the first training request.
+validated commit) through the `kernels` package. This script picks the build
+matching the installed torch/CUDA/ABI with the `kernels` resolver (a cu129
+torch uses the cu128 build), downloads only that build, verifies its sigstore
+signature (huggingface/kernels-community build workflow) and file digests,
+loads it, and runs a forward/backward smoke test with grouped-query attention,
+so a missing or broken kernel shows up at install time rather than on the
+first training request.
 
 Sources:
   huggingface (default)  Download the build into the Hugging Face cache.
   modelscope             Download the build from the ModelScope mirror into
-                         --kernels-dir and verify its sigstore signature
-                         (huggingface/kernels-community build workflow) and file
-                         digests.
+                         --kernels-dir.
 
 Either way the downloaded copy is recorded as a LOCAL_KERNELS override in
 $TUFT_HOME/local-kernels, so the server loads it without contacting the Hub
@@ -56,16 +56,48 @@ def environment() -> str:
     )
 
 
+def select_variant(names) -> str:
+    """The build variant the kernels resolver picks for this environment."""
+
+    from kernels.variants import parse_variant, resolve_variant
+
+    variants = []
+    for name in names:
+        try:
+            variants.append(parse_variant(name))
+        except ValueError:
+            continue
+    variant, _ = resolve_variant(variants)
+    if variant is None:
+        raise RuntimeError(f"No {FLASH_ATTN2_KERNEL} build matches this environment")
+    print(f"Selected build variant: {variant.variant_str}")
+    return variant.variant_str
+
+
 def fetch_huggingface() -> Path:
-    """Download the pinned build into the Hugging Face cache; return the snapshot."""
+    """Download the matching pinned build into the Hugging Face cache; return its directory."""
 
-    from kernels import get_kernel
+    # Plain huggingface_hub rather than kernels.get_kernel: kernels sends an
+    # invalid User-Agent when HF_HUB_DISABLE_TELEMETRY is set, which makes
+    # every one of its Hub requests fail.
+    from huggingface_hub import HfApi, snapshot_download
+    from huggingface_hub.hf_api import RepoFolder
 
-    pinned = f"{FLASH_ATTN2_KERNEL}@{FLASH_ATTN2_KERNEL_REVISION}"
-    print(f"Fetching {pinned} from the Hugging Face Hub...")
-    kernel = get_kernel(FLASH_ATTN2_KERNEL, revision=FLASH_ATTN2_KERNEL_REVISION)
-    # .../snapshots/<revision>/build/<variant>/__init__.py
-    return Path(kernel.__file__ or ".").parents[2]
+    revision = FLASH_ATTN2_KERNEL_REVISION
+    print(f"Fetching {FLASH_ATTN2_KERNEL}@{revision} from the Hugging Face Hub...")
+    tree = HfApi().list_repo_tree(
+        FLASH_ATTN2_KERNEL, path_in_repo="build", repo_type="kernel", revision=revision
+    )
+    variant = select_variant(
+        item.path.rsplit("/", 1)[-1] for item in tree if isinstance(item, RepoFolder)
+    )
+    snapshot = snapshot_download(
+        FLASH_ATTN2_KERNEL,
+        repo_type="kernel",
+        revision=revision,
+        allow_patterns=[f"build/{variant}/*"],
+    )
+    return Path(snapshot) / "build" / variant
 
 
 def _modelscope_files(api: str, root: str, recursive: bool) -> list[dict]:
@@ -104,42 +136,33 @@ def _download(url: str, dest: Path, sha256: str) -> None:
 
 
 def fetch_modelscope(kernels_dir: Path) -> Path:
-    """Download and verify the matching build from ModelScope; return its directory."""
-
-    from kernels.variants import parse_variant, resolve_variant
-    from kernels.verify import VerificationResult, verify_variant
+    """Download the matching build from ModelScope; return its directory."""
 
     domain = os.environ.get("MODELSCOPE_DOMAIN", "www.modelscope.cn")
     api = f"https://{domain}/api/v1/models/{FLASH_ATTN2_KERNEL}"
     print(f"Fetching {FLASH_ATTN2_KERNEL}@{MODELSCOPE_REVISION} from ModelScope ({domain})...")
 
-    variants = []
-    for entry in _modelscope_files(api, "build", recursive=False):
-        if entry["Type"] != "tree":
-            continue
-        try:
-            variants.append(parse_variant(entry["Name"]))
-        except ValueError:
-            continue
-    variant, _ = resolve_variant(variants)
-    if variant is None:
-        raise RuntimeError(f"ModelScope has no {FLASH_ATTN2_KERNEL} build for this environment")
-    print(f"Selected build variant: {variant.variant_str}")
+    entries = _modelscope_files(api, "build", recursive=False)
+    variant = select_variant(entry["Name"] for entry in entries if entry["Type"] == "tree")
 
     repo_dir = kernels_dir / FLASH_ATTN2_KERNEL
-    variant_dir = repo_dir / "build" / variant.variant_str
-    for entry in _modelscope_files(api, f"build/{variant.variant_str}", recursive=True):
+    for entry in _modelscope_files(api, f"build/{variant}", recursive=True):
         if entry["Type"] != "blob":
             continue
         query = urllib.parse.urlencode({"Revision": MODELSCOPE_REVISION, "FilePath": entry["Path"]})
         _download(f"{api}/repo?{query}", repo_dir / entry["Path"], entry["Sha256"])
+    return repo_dir / "build" / variant
 
-    # The mirror is only a transport: require the Hub build's signature.
+
+def verify(variant_dir: Path) -> None:
+    """Require the Hub build's sigstore signature and file digests, whatever the transport."""
+
+    from kernels.verify import VerificationResult, verify_variant
+
     result = verify_variant(variant_dir)
     if not isinstance(result, VerificationResult.Success):
         raise RuntimeError(f"Signature verification of {variant_dir} failed: {result}")
     print("Verified the sigstore signature and file digests of the downloaded build")
-    return repo_dir
 
 
 def smoke_test(kernel) -> None:
@@ -210,9 +233,12 @@ def main() -> int:
         from kernels import get_local_kernel
 
         if args.source == "modelscope":
-            repo_dir = fetch_modelscope(args.kernels_dir)
+            variant_dir = fetch_modelscope(args.kernels_dir)
         else:
-            repo_dir = fetch_huggingface()
+            variant_dir = fetch_huggingface()
+        verify(variant_dir)
+        # LOCAL_KERNELS points at the repository root, which holds build/<variant>.
+        repo_dir = variant_dir.parents[1]
         kernel = get_local_kernel(repo_dir)
         print(f"Loaded {FLASH_ATTN2_KERNEL} from {Path(kernel.__file__ or '.').parent}")
         smoke_test(kernel)
