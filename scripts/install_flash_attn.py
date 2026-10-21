@@ -30,7 +30,6 @@ import json
 import os
 import shutil
 import sys
-import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -45,7 +44,6 @@ from tuft.backends.attention import (
 
 
 SOURCES = ("huggingface", "modelscope")
-HUB_ATTEMPTS = 3
 # ModelScope mirror commit whose torch211 builds match FLASH_ATTN2_KERNEL_REVISION.
 MODELSCOPE_REVISION = "9cc36782d0673051d2e21f5c3985e111c353cf3a"
 
@@ -65,21 +63,9 @@ def fetch_huggingface() -> Path:
 
     pinned = f"{FLASH_ATTN2_KERNEL}@{FLASH_ATTN2_KERNEL_REVISION}"
     print(f"Fetching {pinned} from the Hugging Face Hub...")
-
-    def fetch() -> Path:
-        kernel = get_kernel(FLASH_ATTN2_KERNEL, revision=FLASH_ATTN2_KERNEL_REVISION)
-        # .../snapshots/<revision>/build/<variant>/__init__.py
-        return Path(kernel.__file__ or ".").parents[2]
-
-    # kernels reports any failed Hub lookup, transient ones included, as an
-    # untrusted publisher, so retry before giving up.
-    for attempt in range(1, HUB_ATTEMPTS):
-        try:
-            return fetch()
-        except Exception as exc:
-            print(f"Attempt {attempt} failed ({exc}); retrying in {15 * attempt}s...")
-            time.sleep(15 * attempt)
-    return fetch()
+    kernel = get_kernel(FLASH_ATTN2_KERNEL, revision=FLASH_ATTN2_KERNEL_REVISION)
+    # .../snapshots/<revision>/build/<variant>/__init__.py
+    return Path(kernel.__file__ or ".").parents[2]
 
 
 def _modelscope_files(api: str, root: str, recursive: bool) -> list[dict]:
