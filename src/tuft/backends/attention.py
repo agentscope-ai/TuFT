@@ -8,11 +8,13 @@ kernel (e.g. ``kernels-community/flash-attn2``) through the ``kernels``
 package. This module resolves the same way when the backend is constructed,
 so a missing backend stops the server at startup instead.
 
-For flash_attention_2 TuFT pins the Hub kernel to a commit instead of taking
-transformers' default kernel version (3). Its CUDA 12.8 torch-stable-ABI build,
-which cu128/cu129 torch resolves to, still ships the binary from before the fix
-for huggingface/kernels-community#1085, so the backward pass fails with
-grouped-query attention, which every Qwen3/Qwen3.5 model uses.
+For flash_attention_2 TuFT pins the Hub kernel to a commit of the kernel
+version transformers defaults to (3), so the server loads exactly the build the
+installer fetched and validated. Earlier version 3 builds for CUDA 12.8, which
+cu128/cu129 torch resolves to, failed the backward pass with grouped-query
+attention (huggingface/kernels-community#1085), which every Qwen3/Qwen3.5 model
+uses; scripts/install_flash_attn.py runs a GQA backward against SDPA to catch
+such builds.
 """
 
 from __future__ import annotations
@@ -25,12 +27,10 @@ import sys
 logger = logging.getLogger(__name__)
 
 FLASH_ATTN2_KERNEL = "kernels-community/flash-attn2"
-# A main-branch commit with per-torch builds (torch210/torch211, cu126/cu128/
-# cu130) whose GQA backward passes on torch 2.11 with cu128, cu129 (which uses
-# the cu128 build) and cu130. Its torch211 builds are byte-identical to the
-# ModelScope mirror. Revalidate (scripts/install_flash_attn.py runs a GQA
-# backward) when the torch pin changes.
-FLASH_ATTN2_KERNEL_REVISION = "569b9719d0c8c45561cfcbfff6095ffddf87881c"
+# The v3 head with the rebuilt torch-stable-ABI binaries (cu126/cu128/cu130),
+# which cover any torch >= 2.10; a cu129 torch uses the cu128 build. Revalidate
+# (scripts/install_flash_attn.py runs a GQA backward) when bumping it.
+FLASH_ATTN2_KERNEL_REVISION = "4d494bf4367844337a5dc583227598225019a062"
 
 _FLASH_ATTENTION = re.compile(r"^flash_attention_(\d+)$")
 # transformers' hub kernel pattern: "org/repo", optionally "@revision" and ":function".

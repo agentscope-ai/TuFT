@@ -44,7 +44,9 @@ from tuft.backends.attention import (
 
 
 SOURCES = ("huggingface", "modelscope")
-# ModelScope mirror commit whose torch211 builds match FLASH_ATTN2_KERNEL_REVISION.
+# ModelScope's mirror stopped syncing in July 2026 and has no version 3 builds,
+# so it serves the older per-torch builds (identical to the Hub's main branch),
+# which pass the same GQA smoke test on torch 2.11.
 MODELSCOPE_REVISION = "9cc36782d0673051d2e21f5c3985e111c353cf3a"
 
 

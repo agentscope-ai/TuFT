@@ -63,7 +63,7 @@ TUFT_TORCH_BACKEND=cpu /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install.sh)" -- --kernel-source modelscope
 ```
 
-ModelScope 上的构建在使用前会按 Hugging Face 的签名和文件摘要进行校验，并保存在 `$TUFT_HOME/kernels` 下。之后如需重新获取 kernel，可使用 TuFT 环境中的 Python 运行 `python scripts/install_flash_attn.py [--source modelscope]`。
+该镜像目前落后于 Hub：它包含 Hub `main` 分支上 torch 2.12 及以下的按 torch 版本构建，但没有 Hub 源所用的 version 3 构建；两者在 TuFT 使用的 torch 2.11 上都能通过安装器的冒烟测试。ModelScope 上的构建在使用前会按 Hugging Face 的签名和文件摘要进行校验，并保存在 `$TUFT_HOME/kernels` 下。之后如需重新获取 kernel，可使用 TuFT 环境中的 Python 运行 `python scripts/install_flash_attn.py [--source modelscope]`。
 
 ## 从源代码安装
 

@@ -62,7 +62,7 @@ Where the Hugging Face Hub is unreachable, fetch the kernel from the ModelScope 
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install.sh)" -- --kernel-source modelscope
 ```
 
-The ModelScope build is verified against the Hugging Face signature and digests before use and stored under `$TUFT_HOME/kernels`. To re-fetch the kernel later, run `python scripts/install_flash_attn.py [--source modelscope]` with the TuFT environment's Python.
+The mirror currently lags the Hub: it has the per-torch builds of the Hub's `main` branch for torch up to 2.12, but not the version 3 builds the Hub source uses; both pass the installer's smoke test on TuFT's torch 2.11. The ModelScope build is verified against the Hugging Face signature and digests before use and stored under `$TUFT_HOME/kernels`. To re-fetch the kernel later, run `python scripts/install_flash_attn.py [--source modelscope]` with the TuFT environment's Python.
 
 ## Install from Source Code
 
