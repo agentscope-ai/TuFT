@@ -20,6 +20,7 @@ such builds.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import sys
 
@@ -137,9 +138,21 @@ def validate_attn_implementation(attn_implementation: str | None) -> None:
         raise _unavailable(attn_implementation, f"resolving {repo_id} failed: {exc}") from exc
     if not available:
         raise _unavailable(attn_implementation, f"{repo_id} has no build for this environment")
+    # kernels serves a LOCAL_KERNELS entry (repo_id=path:...) whatever the revision.
+    local = dict(
+        entry.split("=", 1)
+        for entry in os.environ.get("LOCAL_KERNELS", "").split(":")
+        if "=" in entry
+    )
+    if repo_id in local:
+        source = f"local copy {local[repo_id]}"
+    elif revision is not None:
+        source = f"revision {revision}"
+    else:
+        source = f"version {version}"
     logger.info(
         "attn_implementation=%s resolves to Hub kernel %s (%s)",
         attn_implementation,
         repo_id,
-        f"revision {revision}" if revision is not None else f"version {version}",
+        source,
     )
