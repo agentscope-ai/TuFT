@@ -9,6 +9,8 @@ import os
 import re
 import shutil
 from dataclasses import dataclass, field
+from functools import wraps
+from inspect import signature
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -62,6 +64,61 @@ from tuft.config import (
     compute_lora_alpha,
 )
 from tuft.exceptions import InvalidRequestException, ResourceExhaustedException
+from tuft.scheduling import ResourceScheduler
+
+
+class FSDPCheckpointInputError(RuntimeError):
+    """Checkpoint rejected before any GPU mutation or collective starts."""
+
+
+class FSDPCheckpointWriteError(RuntimeError):
+    """Host I/O failed during a checkpoint save, which only reads GPU state."""
+
+
+def _checkpoint_io(method):
+    @wraps(method)
+    def guarded(*args, **kwargs):
+        try:
+            return method(*args, **kwargs)
+        except OSError as exc:
+            raise FSDPCheckpointWriteError(str(exc)) from exc
+
+    return guarded
+
+
+def _scheduled_fsdp(method):
+    """Reserve the entire FSDP group before dispatching any rank's collective."""
+    call_signature = signature(method)
+
+    @wraps(method)
+    async def scheduled(self, *args, **kwargs):
+        scheduler = getattr(self, "scheduler", None)
+        if scheduler is None:
+            return await method(self, *args, **kwargs)
+        arguments = call_signature.bind(self, *args, **kwargs).arguments
+        kind = (
+            "optimizer"
+            if method.__name__ == "optim_step"
+            else "reset"
+            if method.__name__ in {"load_state", "remove_adapter"}
+            else "backward"
+            if arguments.get("backward")
+            else "checkpoint"
+            if method.__name__ == "save_state"
+            else "maintenance"
+        )
+        tenant = arguments.get("lora_id") if kind != "maintenance" else None
+
+        async def operation():
+            # Recheck after queued operations acquire the group reservation.
+            self.check_execution_health()
+            return await method(self, *args, **kwargs)
+
+        return await scheduler.training(
+            operation, tenant=tenant, reclaim_sampler_memory=True, kind=kind
+        )
+
+    return scheduled
 
 
 # Matches the slot/adapter name embedded in a PEFT LoRA parameter key, e.g.
@@ -384,6 +441,7 @@ def _config_to_worker_dict(config: ModelConfig) -> dict:
         "max_model_len": config.max_model_len,
         "fsdp_override_config": dict(getattr(config, "fsdp_override_config", None) or {}),
         "attn_implementation": getattr(config, "attn_implementation", None),
+        "share_base_weights": config.scheduling.share_base_weights,
         "slot_config": {
             "rank_slots": rank_slots,
             "lora_alpha_ratio": int(getattr(config, "lora_alpha_ratio", DEFAULT_LORA_ALPHA_RATIO)),
@@ -411,6 +469,7 @@ def _worker_dict_to_configs(config_dict: dict) -> tuple[FSDPModelConfig, SlotPoo
         max_model_len=int(config_dict["max_model_len"]),
         attn_implementation=attn_implementation,
         override_config=override,
+        share_base_weights=config_dict.get("share_base_weights", False),
     )
     sc = config_dict.get("slot_config") or {}
     slot_config = SlotPoolConfig(
@@ -445,6 +504,8 @@ class MultiAdapterFSDPWorker:
         self._name_counter: Dict[int, int] = {}
         self._allocated: Dict[str, bool] = {}
         self._initialized = False
+        self._shared_base_weights = None
+        self._shared_weights_exported = False
         self.logger = logging.getLogger(f"{__name__}.MultiAdapterFSDPWorker")
 
     def _generate_adapter_name(self, rank: int) -> str:
@@ -537,6 +598,15 @@ class MultiAdapterFSDPWorker:
         world_size = dist.get_world_size() if dist.is_initialized() else 1
         device_mesh = init_device_mesh("cuda", (world_size,)) if world_size > 1 else None
 
+        sharing_kwargs = {}
+        placements = {}
+        if self.model_config.share_base_weights:
+            from .fsdp_shared_weights import prepare_fsdp_shared_layout, shared_fsdp_placement
+
+            prepare_fsdp_shared_layout(model_cuda, world_size)
+            placements, ignored = shared_fsdp_placement(model_cuda, world_size)
+            sharing_kwargs = {"shard_placement_fn": placements.get, "ignored_params": ignored}
+
         transformer_layer_cls_names = getattr(model_cuda, "_no_split_modules", None) or [
             "DecoderLayer",
             "TransformerBlock",
@@ -549,11 +619,28 @@ class MultiAdapterFSDPWorker:
             if module.__class__.__name__ in transformer_layer_cls_names:
                 wrapped_modules.append(module)
         for module in wrapped_modules:
-            fully_shard(module, mesh=device_mesh, mp_policy=mp_policy)
-        fully_shard(model_cuda, mesh=device_mesh, mp_policy=mp_policy)
+            fully_shard(module, mesh=device_mesh, mp_policy=mp_policy, **sharing_kwargs)
+        fully_shard(model_cuda, mesh=device_mesh, mp_policy=mp_policy, **sharing_kwargs)
+        # The placement map keys are the original full Parameters. Drop them
+        # before empty_cache, otherwise their storage is still live at cleanup
+        # and becomes stranded in the trainer's cache when initialize returns.
+        placements.clear()
         self.module = model_cuda
+        if self.model_config.share_base_weights:
+            from .fsdp_shared_weights import pack_fsdp_base_weights
+
+            self._shared_base_weights = pack_fsdp_base_weights(self.module)
+            torch.cuda.empty_cache()
         self._create_optimizer_for_adapter(first)
         self._initialized = True
+
+    def export_shared_base_weights(self) -> dict:
+        from .shared_weights import export_cuda_weights
+
+        if self._shared_base_weights is None or self._shared_weights_exported:
+            raise RuntimeError("Shared FSDP weights require one initialized consumer")
+        self._shared_weights_exported = True
+        return export_cuda_weights(self._shared_base_weights)
 
     def _create_optimizer_for_adapter(self, adapter_name: str) -> None:
         info = self._adapters[adapter_name]
@@ -697,6 +784,7 @@ class MultiAdapterFSDPWorker:
         info.step_count += 1
         return {"step_count": info.step_count, "adapter": adapter_name}
 
+    @_checkpoint_io
     def save_checkpoint(self, adapter_name: str, path: str | Path, optimizer: bool = True) -> None:
         """Save adapter.pt (training load_state) + PEFT format (sampling); optional optimizer."""
         self._activate_adapter(adapter_name)
@@ -826,25 +914,35 @@ class MultiAdapterFSDPWorker:
         path = Path(path)
         expected_modules = self._adapters[adapter_name].target_modules
         if set(checkpoint_modules) != set(expected_modules):
-            raise RuntimeError(
+            raise FSDPCheckpointInputError(
                 f"Cannot load FSDP checkpoint targeting modules {sorted(checkpoint_modules)} "
                 f"into a slot targeting {sorted(expected_modules)}."
             )
         expected_parameters = self._adapters[adapter_name].target_parameters
         if set(checkpoint_parameters or []) != set(expected_parameters):
-            raise RuntimeError(
+            raise FSDPCheckpointInputError(
                 f"Cannot load FSDP checkpoint targeting parameters "
                 f"{sorted(checkpoint_parameters or [])} into a slot targeting "
                 f"parameters {sorted(expected_parameters)}."
             )
-        state = torch.load(path / "adapter.pt", map_location="cpu", weights_only=True)
         # Build a slot-name-independent lookup: canonicalize saved keys so a checkpoint
         # saved under ANY slot name loads into the current slot. Without this, a slot
         # name mismatch (common after restart + create_adapter fallback) would silently
         # match zero parameters and continue training from stale weights.
-        canonical_state = {_canonical_lora_key(k): v for k, v in state.items()}
+        try:
+            state = torch.load(path / "adapter.pt", map_location="cpu", weights_only=True)
+            canonical_state = {_canonical_lora_key(k): v for k, v in state.items()}
+            if not any(
+                f".{adapter_name}." in name and _canonical_lora_key(name) in canonical_state
+                for name, _ in self.module.named_parameters()
+            ):
+                raise ValueError(
+                    f"load_checkpoint matched 0 parameters for adapter '{adapter_name}' from "
+                    f"{path / 'adapter.pt'}; the checkpoint key layout is incompatible."
+                )
+        except Exception as exc:
+            raise FSDPCheckpointInputError(str(exc)) from exc
         self._activate_adapter(adapter_name)
-        matched = 0
         with torch.no_grad():
             _match = f".{adapter_name}."
             for name, param in self.module.named_parameters():
@@ -853,17 +951,11 @@ class MultiAdapterFSDPWorker:
                 key = _canonical_lora_key(name)
                 if key not in canonical_state:
                     continue
-                matched += 1
                 loaded_tensor = canonical_state[key]
                 if isinstance(param, DTensor):
                     _copy_full_tensor_into_dtensor(param, loaded_tensor)
                 else:
                     param.data.copy_(loaded_tensor.to(param.device))
-        if matched == 0:
-            raise RuntimeError(
-                f"load_checkpoint matched 0 parameters for adapter '{adapter_name}' from "
-                f"{path / 'adapter.pt'}; the checkpoint key layout is incompatible."
-            )
         if optimizer:
             opt_path = path / "optimizer.pt"
             if opt_path.exists():
@@ -921,6 +1013,16 @@ class FSDPWorkerActor:
         import ray
 
         return ray.util.get_node_ip_address()
+
+    def get_device_assignment(self) -> dict:
+        import ray
+
+        return {"node": ray.get_runtime_context().get_node_id(), "gpus": ray.get_gpu_ids()}
+
+    def export_shared_base_weights(self) -> dict:
+        if self._worker is None:
+            raise RuntimeError("FSDP worker has not initialized")
+        return self._worker.export_shared_base_weights()
 
     def init_dist(self, master_addr: str, master_port: int = DEFAULT_MASTER_PORT) -> None:
         import torch.distributed as dist
@@ -1096,6 +1198,8 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         self._lora_id_to_adapter_name: Dict[str, str] = {}
         self._adapter_name_to_lora_id: Dict[str, str] = {}
         self._lock = asyncio.Lock()
+        self.scheduler: ResourceScheduler | None = None
+        self._group_failed = False
         # Both the Ray and the single-process path derive their slot pool from this
         # one dict, so they cannot disagree on rank slots, lora_alpha_ratio, or
         # target modules.
@@ -1106,15 +1210,72 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         _validate_explicit_target_modules(config)
         self.logger = logging.getLogger(f"{__name__}.FSDPTrainingBackend")
 
-    async def shutdown(self) -> None:
-        """Kill all FSDP worker Ray actors and release GPU resources."""
+    def check_execution_health(self) -> None:
+        if getattr(self, "_group_failed", False):
+            raise RuntimeError(
+                "FSDP collective failed; restart the backend before reusing its GPUs"
+            )
+
+    async def _await_workers(self, refs):
         import ray
 
-        for actor in self._actors:
+        try:
+            return await asyncio.to_thread(ray.get, refs)
+        except BaseException as exc:
+            if isinstance(exc, (FSDPCheckpointInputError, FSDPCheckpointWriteError)):
+                if await asyncio.to_thread(self._safe_checkpoint_failure, refs, exc):
+                    raise
+            # A rank may fail while a peer is still in an NCCL collective. The
+            # sampling phase must not reopen on that group after an early error.
+            self._group_failed = True
+            if self.scheduler is not None:
+                self.scheduler.disable_flex()
+            raise
+
+    @staticmethod
+    def _safe_checkpoint_failure(refs, first_error) -> bool:
+        import ray
+
+        refs = refs if isinstance(refs, list) else [refs]
+        try:
+            # Give other ranks a bounded chance to finish the same CPU preflight.
+            # Never wait indefinitely for a peer stuck inside a collective.
+            ready, pending = ray.wait(refs, num_returns=len(refs), timeout=1)
+            if pending:
+                return False
+            for ref in ready:
+                try:
+                    ray.get(ref)
+                except FSDPCheckpointInputError:
+                    if not isinstance(first_error, FSDPCheckpointInputError):
+                        return False
+                except FSDPCheckpointWriteError:
+                    if not isinstance(first_error, FSDPCheckpointWriteError):
+                        return False
+                except BaseException:
+                    return False
+                else:
+                    # A partly applied load is unsafe. A completed save only
+                    # reads GPU state, so rank-zero disk errors are recoverable.
+                    if isinstance(first_error, FSDPCheckpointInputError):
+                        return False
+            return True
+        except BaseException:
+            return False
+
+    @staticmethod
+    def _terminate_workers(actors) -> None:
+        import ray
+
+        for actor in actors:
             try:
                 ray.kill(actor, no_restart=True)
             except Exception:
                 pass
+
+    async def shutdown(self) -> None:
+        """Kill all FSDP worker Ray actors and release GPU resources."""
+        self._terminate_workers(self._actors)
         self._actors = []
         self._worker = None
         self._world_size = 0
@@ -1127,6 +1288,8 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         n_gpus = getattr(self.config, "fsdp_num_gpus", 1)
         n_gpus = max(1, int(n_gpus))
         use_ray = os.environ.get("TUFT_FSDP_NO_RAY") != "1"
+        if not use_ray and self.config.scheduling.policy == "shared_weight":
+            raise ValueError("FSDP shared_weight requires Ray-managed GPU placement")
         if not use_ray and n_gpus != 1:
             raise ValueError(
                 "TUFT_FSDP_NO_RAY=1 (no Ray) requires fsdp_num_gpus=1. "
@@ -1210,6 +1373,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             )
         except Exception as e:
             self.logger.error("[FSDP] get_node_ip FAILED: %s", e)
+            self._terminate_workers(actors)
             raise
         self.logger.info("[FSDP] get_node_ip OK: %s, calling init_dist...", master_addr)
         base_port = getattr(self.config, "fsdp_master_port", DEFAULT_MASTER_PORT)
@@ -1223,6 +1387,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             )
         except Exception as e:
             self.logger.error("[FSDP] init_dist FAILED: %s", e)
+            self._terminate_workers(actors)
             raise
         self.logger.info("[FSDP] init_dist OK, calling build_worker...")
         try:
@@ -1231,6 +1396,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             )
         except Exception as e:
             self.logger.error("[FSDP] build_worker FAILED: %s", e)
+            self._terminate_workers(actors)
             raise
         self.logger.info("[FSDP] build_worker OK, FSDP backend ready")
         self._actors = actors
@@ -1323,6 +1489,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             )
         return checkpoint_modules, checkpoint_parameters
 
+    @_scheduled_fsdp
     async def create_adapter(self, lora_id: str, lora_config: types.LoraConfig) -> None:
         self._validate_lora_config(lora_config)
         rank = getattr(lora_config, "rank", 8)
@@ -1338,19 +1505,14 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             if self._worker is not None:
                 adapter_name = await asyncio.to_thread(self._worker.allocate_slot, rank)
             elif self._actors:
-                import ray
-
-                adapter_name: str | None = await asyncio.to_thread(
-                    ray.get, self._actors[0].allocate_slot.remote(rank)
+                adapter_name: str | None = await self._await_workers(
+                    self._actors[0].allocate_slot.remote(rank)
                 )
                 if adapter_name is not None and len(self._actors) > 1:
                     # Every rank shares the base model; sync the remaining ranks to the
                     # same slot and reset weights/optimizer identically on each of them.
-                    await asyncio.gather(
-                        *[
-                            asyncio.to_thread(ray.get, a.reserve_slot.remote(adapter_name))
-                            for a in self._actors[1:]
-                        ]
+                    await self._await_workers(
+                        [a.reserve_slot.remote(adapter_name) for a in self._actors[1:]]
                     )
             else:
                 raise RuntimeError("FSDPTrainingBackend not initialized.")
@@ -1364,6 +1526,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             self._lora_id_to_adapter_name[lora_id] = adapter_name
             self._adapter_name_to_lora_id[adapter_name] = lora_id
 
+    @_scheduled_fsdp
     async def remove_adapter(self, lora_id: str) -> None:
         async with self._lock:
             adapter_name = self._lora_id_to_adapter_name.pop(lora_id, None)
@@ -1372,17 +1535,13 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                 if self._worker is not None:
                     await asyncio.to_thread(self._worker.release_slot, adapter_name)
                 elif self._actors:
-                    import ray
-
                     # Release (and reset) the slot on every rank, not just the lead,
                     # so no rank retains the run's weights/optimizer state.
-                    await asyncio.gather(
-                        *[
-                            asyncio.to_thread(ray.get, a.release_slot.remote(adapter_name))
-                            for a in self._actors
-                        ]
+                    await self._await_workers(
+                        [a.release_slot.remote(adapter_name) for a in self._actors]
                     )
 
+    @_scheduled_fsdp
     async def forward(
         self,
         data: list[types.Datum],
@@ -1435,8 +1594,6 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             metrics["actor/num_micro_batches"] = float(n_micro)
             loss_fn_outputs = _fsdp_logprobs_to_loss_fn_outputs(out, data)
         else:
-            import ray
-
             n_actors = len(self._actors)
             if not data:
                 return types.ForwardBackwardOutput(
@@ -1485,7 +1642,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                 )
                 ref_weights.append(len(shard))
 
-            results = await asyncio.to_thread(ray.get, refs) if refs else []
+            results = await self._await_workers(refs) if refs else []
 
             if replicated:
                 # Each replica reports the same logical request. Return one
@@ -1507,6 +1664,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             metrics=metrics,
         )
 
+    @_scheduled_fsdp
     async def optim_step(
         self,
         adam_params: types.AdamParams,
@@ -1526,8 +1684,6 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                     adam_params.eps,
                 )
         else:
-            import ray
-
             refs = [
                 a.optim_step.remote(
                     adapter_name,
@@ -1539,11 +1695,12 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                 )
                 for a in self._actors
             ]
-            results = await asyncio.to_thread(ray.get, refs)
+            results = await self._await_workers(refs)
             result = results[0] if results else {}
         metrics = {k: float(v) for k, v in (result or {}).items() if isinstance(v, (int, float))}
         return types.OptimStepResponse(metrics=metrics or None)
 
+    @_scheduled_fsdp
     async def save_state(
         self,
         lora_id: str,
@@ -1556,13 +1713,12 @@ class FSDPTrainingBackend(BaseTrainingBackend):
             async with self._lock:
                 await asyncio.to_thread(self._worker.save_checkpoint, adapter_name, path, optimizer)
         else:
-            import ray
-
             refs = [
                 a.save_checkpoint.remote(adapter_name, str(path), optimizer) for a in self._actors
             ]
-            await asyncio.to_thread(ray.get, refs)
+            await self._await_workers(refs)
 
+    @_scheduled_fsdp
     async def load_state(
         self,
         lora_id: str,
@@ -1585,8 +1741,6 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                     checkpoint_parameters,
                 )
         else:
-            import ray
-
             refs = [
                 a.load_checkpoint.remote(
                     adapter_name,
@@ -1597,4 +1751,4 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                 )
                 for a in self._actors
             ]
-            await asyncio.to_thread(ray.get, refs)
+            await self._await_workers(refs)

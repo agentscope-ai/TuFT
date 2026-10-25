@@ -14,7 +14,7 @@ repos:
           - fastapi
           - httpx
           - numpy
-          - tinker>=0.18.2
+          - tinker>=0.25,<0.26
           - typer
           - uvicorn
           - pytest

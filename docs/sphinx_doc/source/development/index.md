@@ -69,4 +69,5 @@ uv run pyright
 :hidden:
 
 testing
+shared-weight
 ```

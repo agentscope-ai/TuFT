@@ -60,6 +60,56 @@ class TelemetryConfig(BaseModel):
     resource_attributes: dict[str, str] = Field(default_factory=dict)
 
 
+class SchedulingConfig(BaseModel):
+    """Bounded multi-tenant sampling and optional training-GPU borrowing."""
+
+    policy: Literal["round_robin", "balanced", "shared_weight"] = "round_robin"
+    max_inflight_per_replica: int = Field(default=32, ge=1)
+    max_queued_requests: int = Field(default=1024, ge=1)
+    queue_timeout_s: float = Field(default=120, gt=0, allow_inf_nan=False)
+    # Affinity only wins when its extra queued token work fits this fraction.
+    locality_slack: float = Field(default=0.1, ge=0, le=1, allow_inf_nan=False)
+    merge_zero_adapters: bool = True
+    # One bounded window to collect requests for fair, adapter-aware dispatch.
+    adapter_batch_window_s: float = Field(default=0.002, ge=0, le=0.1, allow_inf_nan=False)
+    adapter_batch_max_requests: int = Field(default=32, ge=1, le=4096)
+    flex_max_inflight: int = Field(default=4, ge=1)
+    flex_max_tokens: int = Field(default=256, ge=1)
+    # Briefly keep the training lane open for an arriving optim_step/checkpoint.
+    training_quiet_s: float = Field(default=0.05, ge=0, le=10, allow_inf_nan=False)
+    # Allow a short training burst to finish before placing its next rollout.
+    sampling_alignment_s: float = Field(default=0, ge=0, le=10, allow_inf_nan=False)
+    cost_aware_borrowing: bool = True
+    borrow_min_backlog_tokens: int = Field(default=1024, ge=1)
+    # None inherits the existing per-request Flex cap for the configured workload.
+    borrow_probe_tokens: int | None = Field(default=None, ge=1)
+    borrow_min_dwell_s: float = Field(default=0.1, ge=0, le=60, allow_inf_nan=False)
+    borrow_safety_factor: float = Field(default=1.5, ge=1, le=10, allow_inf_nan=False)
+    # Optional bounded diagnostic ring; no tenant IDs or prompt contents.
+    scheduling_trace_capacity: int = Field(default=0, ge=0, le=4096)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_shared_weights(cls, values):
+        # Accept old shared-mode configs, but never silently enable the retired
+        # duplicate-base mode or change an explicit request to disable sharing.
+        if isinstance(values, dict) and "share_base_weights" in values:
+            values = dict(values)
+            legacy = values.pop("share_base_weights")
+            if legacy is not (values.get("policy", "round_robin") == "shared_weight"):
+                raise ValueError(
+                    "Shared-weight borrowing always shares frozen base weights; "
+                    "remove share_base_weights "
+                    "and use round_robin for static training/sampling"
+                )
+        return values
+
+    @property
+    def share_base_weights(self) -> bool:
+        """Internal storage requirement, derived from the selected policy."""
+        return self.policy == "shared_weight"
+
+
 class ModelConfig(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
 
@@ -80,6 +130,7 @@ class ModelConfig(BaseModel):
     # tensor_parallel_size GPUs) and load-balance requests across them.  Ideal for small
     # models where TP introduces unnecessary cross-GPU communication overhead.
     data_parallel_size: int = 1
+    scheduling: SchedulingConfig = Field(default_factory=SchedulingConfig)
 
     # default sampling parameters for this model
     temperature: float = 1.0
@@ -96,6 +147,9 @@ class ModelConfig(BaseModel):
     # default lora setting
     max_lora_rank: int = 16  # maximum rank for LoRA adapters
     max_loras: int = 1  # maximum number of LoRA adapters that can be applied simultaneously
+    # Host cache capacity per sampler; independent of GPU-active adapter slots.
+    # None preserves vLLM's default (max_loras). Evicted adapters reload on use.
+    max_cpu_loras: int | None = Field(default=None, ge=1)
     # Multiplier from a LoRA adapter's rank to its lora_alpha:
     # lora_alpha = rank * lora_alpha_ratio. Shared by the "hf" and "fsdp" training
     # backends so the same rank produces the same update scaling on both.
@@ -157,6 +211,14 @@ class ModelConfig(BaseModel):
     # only for local testing purposes
     colocate: bool = False
     sampling_memory_fraction: float = 0.2  # fraction of GPU memory for sampling
+    # Explicit per-replica KV budget; required when weights are CUDA IPC aliases
+    # because process-local allocator accounting does not measure shared storage.
+    sampling_kv_cache_memory_bytes: int | None = Field(default=None, gt=0)
+    # Skip multimodal encoders when deployment serves text only.
+    sampling_language_model_only: bool = False
+    sampling_moe_backend: Literal["auto", "triton"] = "auto"
+    sampling_gdn_prefill_backend: Literal["flashinfer", "triton", "cutedsl"] | None = None
+    sampling_max_num_seqs: int | None = Field(default=None, gt=0)
     # Max context length for sampling (vLLM) only; if unset, max_model_len is used.
     # Can be set smaller (e.g. 2048) in testing to reduce GPU memory and startup time.
     sampling_max_model_len: int | None = None
@@ -190,16 +252,48 @@ class ModelConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def validate_adapter_cache(self) -> "ModelConfig":
+        if self.max_cpu_loras is not None and self.max_cpu_loras < self.max_loras:
+            raise ValueError("max_cpu_loras must be >= max_loras")
+        return self
+
+    @model_validator(mode="after")
     def validate_colocate(self) -> "ModelConfig":
-        if self.colocate and self.tensor_parallel_size != 1:
+        fsdp_flex = self.training_backend == "fsdp" and self.scheduling.policy == "shared_weight"
+        if self.colocate and self.tensor_parallel_size != 1 and not fsdp_flex:
             raise ValueError("Colocate option is only supported for tensor_parallel_size=1.")
-        if self.colocate and self.data_parallel_size > 1:
+        if (
+            self.colocate
+            and self.data_parallel_size > 1
+            and self.scheduling.policy != "shared_weight"
+        ):
             raise ValueError("Colocate option is not supported with data_parallel_size > 1.")
         if self.colocate and not (self.training_enabled and self.sampling_enabled):
             raise ValueError(
                 "Colocate places sampling and training on the same device, so it requires "
                 f"both capabilities; model {self.model_name} declares {self.capabilities}."
             )
+        return self
+
+    @model_validator(mode="after")
+    def validate_scheduling(self) -> "ModelConfig":
+        if self.data_parallel_size < 1:
+            raise ValueError("data_parallel_size must be positive")
+        if self.scheduling.policy == "shared_weight":
+            if self.quantization:
+                raise ValueError("shared_weight requires unquantized shared base weights")
+            if self.sampling_kv_cache_memory_bytes is None:
+                raise ValueError("shared_weight requires sampling_kv_cache_memory_bytes")
+            if not self.colocate or self.training_backend not in {"hf", "fsdp"}:
+                raise ValueError("shared_weight requires colocate=true and an HF or FSDP trainer")
+            if self.training_backend == "fsdp" and self.fsdp_num_gpus != self.tensor_parallel_size:
+                raise ValueError(
+                    "FSDP shared_weight requires fsdp_num_gpus == tensor_parallel_size"
+                )
+            if self.data_parallel_size < 2:
+                raise ValueError("shared_weight requires at least one fixed and one flex sampler")
+            if not 0 < self.sampling_memory_fraction < 1:
+                raise ValueError("shared_weight sampling_memory_fraction must be between 0 and 1")
         return self
 
     @model_validator(mode="after")
@@ -332,9 +426,12 @@ class AppConfig(BaseModel):
         model_names = {model.model_name for model in self.supported_models}
         if len(model_names) != len(self.supported_models):
             raise ValueError("Model names in supported_models must be unique.")
-        if len(model_names) > 1 and any(model.colocate for model in self.supported_models):
+        if len(model_names) > 1 and any(
+            model.colocate and model.scheduling.policy != "shared_weight"
+            for model in self.supported_models
+        ):
             raise ValueError(
-                "Colocate option is only allowed when there is a single supported model."
+                "Multiple models require shared_weight for colocated training/sampling."
             )
 
     def with_supported_models(self, models: Iterable[ModelConfig]) -> "AppConfig":
@@ -363,13 +460,28 @@ class AppConfig(BaseModel):
         supported workflow, and must not be flagged as configuration drift.
         Records belonging to a disabled capability are preserved and validated
         against the rest of the model configuration instead.
+
+        Scheduling is also runtime-only: it changes admission and routing, not
+        adapter geometry or checkpoint contents. Excluding it preserves restart
+        compatibility with signatures written before scheduling was configurable.
         """
         return self.model_dump(
             mode="json",
             exclude={
                 "persistence": True,
                 "authorized_users": True,
-                "supported_models": {"__all__": {"capabilities"}},
+                "supported_models": {
+                    "__all__": {
+                        "capabilities",
+                        "scheduling",
+                        "max_cpu_loras",
+                        "sampling_kv_cache_memory_bytes",
+                        "sampling_language_model_only",
+                        "sampling_moe_backend",
+                        "sampling_gdn_prefill_backend",
+                        "sampling_max_num_seqs",
+                    }
+                },
             },
         )
 
