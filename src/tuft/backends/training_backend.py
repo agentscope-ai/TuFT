@@ -10,6 +10,7 @@ from tuft.backends.base_backend import BaseTrainingBackend
 from tuft.checkpoints import CheckpointRecord
 from tuft.config import ModelConfig
 from tuft.exceptions import LossFunctionMissingInputException
+from tuft.scheduling import ResourceScheduler
 from tuft.telemetry.tracing import get_tracer, inject_context
 
 
@@ -24,12 +25,38 @@ class HFTrainingBackend(BaseTrainingBackend):
     def __init__(self, config: ModelConfig) -> None:
         from .hf_training_model import HFTrainingModel
 
-        self.config = config
+        super().__init__(config)
+        self.scheduler: ResourceScheduler | None = None
         logger.info("Ray actor created: HFTrainingModel(%s)", config.model_name)
         self.model = HFTrainingModel.get_actor(config)
 
     async def async_init(self) -> None:
         await self.model.async_init.remote()
+
+    async def _execute(
+        self,
+        method,
+        *args,
+        scheduler_tenant: str | None = None,
+        scheduler_kind: str = "backward",
+        **kwargs,
+    ):
+        async def operation():
+            from ray.exceptions import RayActorError
+
+            try:
+                return await method.remote(*args, **kwargs)
+            except RayActorError:
+                # The lost trainer owns the sampler's CUDA IPC storage.
+                if self.scheduler is not None:
+                    self.scheduler.disable_flex()
+                raise
+
+        if self.scheduler is not None:
+            return await self.scheduler.training(
+                operation, tenant=scheduler_tenant, reclaim_sampler_memory=True, kind=scheduler_kind
+            )
+        return await operation()
 
     async def create_adapter(self, lora_id: str, lora_config: types.LoraConfig) -> None:
         """Create a LoRA adapter with the given ID and configuration."""
@@ -39,12 +66,14 @@ class HFTrainingBackend(BaseTrainingBackend):
             # Inject trace context for Ray actor
             trace_context: dict[str, str] = {}
             inject_context(trace_context)
-            await self.model.create_adapter.remote(lora_id, lora_config, trace_context)
+            await self._execute(self.model.create_adapter, lora_id, lora_config, trace_context)
 
     async def remove_adapter(self, lora_id: str) -> None:
         with _get_tracer().start_as_current_span("training_backend.remove_adapter") as span:
             span.set_attribute("tuft.lora_id", lora_id)
-            await self.model.remove_adapter.remote(lora_id)
+            await self._execute(
+                self.model.remove_adapter, lora_id, scheduler_tenant=lora_id, scheduler_kind="reset"
+            )
 
     async def forward(
         self,
@@ -74,7 +103,9 @@ class HFTrainingBackend(BaseTrainingBackend):
             # Inject trace context for Ray actor
             trace_context: dict[str, str] = {}
             inject_context(trace_context)
-            return await self.model.forward.remote(
+            return await self._execute(
+                self.model.forward,
+                scheduler_tenant=lora_id if backward else None,
                 data=data,
                 lora_id=lora_id,
                 loss_fn=loss_fn,
@@ -99,7 +130,14 @@ class HFTrainingBackend(BaseTrainingBackend):
             # Inject trace context for Ray actor
             trace_context: dict[str, str] = {}
             inject_context(trace_context)
-            return await self.model.optim_step.remote(adam_params, lora_id, trace_context)
+            return await self._execute(
+                self.model.optim_step,
+                adam_params,
+                lora_id,
+                trace_context,
+                scheduler_tenant=lora_id,
+                scheduler_kind="optimizer",
+            )
 
     async def save_state(
         self, lora_id: str, checkpoint_record: "CheckpointRecord", optimizer: bool
@@ -111,7 +149,9 @@ class HFTrainingBackend(BaseTrainingBackend):
             # Inject trace context for Ray actor
             trace_context: dict[str, str] = {}
             inject_context(trace_context)
-            await self.model.save_state.remote(
+            await self._execute(
+                self.model.save_state,
+                scheduler_kind="checkpoint",
                 lora_id=lora_id,
                 checkpoint_record=checkpoint_record,
                 optimizer=optimizer,
@@ -128,7 +168,10 @@ class HFTrainingBackend(BaseTrainingBackend):
             # Inject trace context for Ray actor
             trace_context: dict[str, str] = {}
             inject_context(trace_context)
-            await self.model.load_state.remote(
+            await self._execute(
+                self.model.load_state,
+                scheduler_tenant=lora_id,
+                scheduler_kind="reset",
                 lora_id=lora_id,
                 checkpoint_record=checkpoint_record,
                 optimizer=optimizer,

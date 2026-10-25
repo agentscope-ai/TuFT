@@ -150,6 +150,12 @@ class HFTrainingModel:
     def __init__(self, config: ModelConfig) -> None:
         self.config = config
         self.model = self._init_peft_model(config)
+        self._shared_base_weights = None
+        if config.scheduling.share_base_weights:
+            from .shared_weights import pack_hf_base_weights
+
+            self._shared_base_weights = pack_hf_base_weights(self.model.get_base_model())
+            torch.cuda.empty_cache()
         self.adapter_optimizer: Dict[str, torch.optim.AdamW] = {}
         self._lock = asyncio.Lock()
         self.logger = logging.getLogger()
@@ -158,6 +164,20 @@ class HFTrainingModel:
     async def async_init(self) -> None:
         """Do nothing for now. Just used to make sure the actor is ready."""
         pass
+
+    def get_device_assignment(self) -> dict:
+        """Expose Ray placement for validating shared-GPU scheduling at startup."""
+        return {"node": ray.get_runtime_context().get_node_id(), "gpus": ray.get_gpu_ids()}
+
+    def export_shared_base_weights(self) -> dict:
+        from .shared_weights import export_cuda_weights
+
+        if self._shared_base_weights is None:
+            raise RuntimeError("Shared base weights are not enabled")
+        if getattr(self, "_shared_weights_exported", False):
+            raise RuntimeError("Shared base weights may only be exported to one consumer")
+        self._shared_weights_exported = True
+        return export_cuda_weights(self._shared_base_weights)
 
     # --------------------------------
     # LoRA adapter management methods
@@ -667,7 +687,11 @@ class HFTrainingModel:
             ray.remote(cls)
             .options(
                 name="training_model_" + config.model_name,
-                num_gpus=(1 if not config.colocate else 1 - config.sampling_memory_fraction),
+                num_gpus=(
+                    1
+                    if not config.colocate or config.scheduling.share_base_weights
+                    else 1 - config.sampling_memory_fraction
+                ),
             )
             .remote(config)
         )
