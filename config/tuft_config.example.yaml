@@ -57,6 +57,10 @@ model_owner: local-user
 #   - max_loras: Maximum simultaneous LoRA adapters (default: 1)
 #   - training_backend: Training implementation, "hf" or "fsdp" (default: hf)
 #   - fsdp_num_gpus: Number of FSDP workers/GPUs (default: 1)
+#   - attn_implementation: FSDP attention backend, e.g. sdpa (default), eager, or
+#       flash_attention_2. flash_attention_2 uses the flash_attn package when it is
+#       installed and the Hugging Face kernel hub otherwise (see the installation
+#       guide); a backend that cannot load stops the server at startup.
 #   - fsdp_rank_slots: Preallocated LoRA slots by rank (default: 16 rank-8 slots
 #       plus 8 max_lora_rank slots, or 16 slots at max_lora_rank when it is <= 8;
 #       the same capacity for every target geometry)

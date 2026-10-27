@@ -21,7 +21,7 @@ Install TuFT with a single command:
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install.sh)"
 ```
 
-This installs TuFT with full backend support (GPU dependencies, persistence, flash-attn) and a bundled Python environment to `~/.tuft`. After installation, restart your terminal and run:
+This installs TuFT with full backend support (GPU dependencies, persistence, FlashAttention-2) and a bundled Python environment to `~/.tuft`. After installation, restart your terminal and run:
 
 ```bash
 tuft
@@ -48,8 +48,21 @@ The installer also honors these environment variables:
 | `TUFT_HOME` | Installation directory (default: `~/.tuft`) |
 | `TUFT_VENV` | Virtual environment location (default: `$TUFT_HOME/venv`), e.g. to place it on faster or larger storage |
 | `TUFT_TORCH_BACKEND` | Default value for `--torch-backend` (`auto`, `cpu`, or `cuNNN`) |
+| `TUFT_KERNEL_SOURCE` | Default value for `--kernel-source` (`huggingface` or `modelscope`) |
 | `TUFT_PYPI_REQUIREMENT` | Override the default PyPI requirement |
 | `UV_CACHE_DIR`, `UV_LINK_MODE`, `UV_SYSTEM_CERTS`, `UV_DEFAULT_INDEX`, `UV_INDEX` | Passed through to [uv](https://docs.astral.sh/uv/) for cache placement, link mode (e.g. `copy` across filesystems), system TLS trust stores, and package indexes/mirrors |
+
+### FlashAttention-2
+
+Models that set `attn_implementation: flash_attention_2` use the `flash_attn` package when it is installed. Otherwise TuFT loads FlashAttention-2 from the Hugging Face kernel hub ([`kernels-community/flash-attn2`](https://huggingface.co/kernels-community/flash-attn2), pinned to a validated commit) through the [`kernels`](https://github.com/huggingface/kernels) package, which picks the build matching the installed torch/CUDA (a `cu129` torch uses the `cu128` build), so no wheel has to exist for your exact torch/CUDA/Python tuple. The installer fetches the kernel and runs a forward/backward smoke test; the summary at the end reports whether FlashAttention-2 is ready. The downloaded copy is recorded as a `LOCAL_KERNELS` override in `$TUFT_HOME/local-kernels`, which the `tuft` command exports, so the server loads it without contacting the Hub. If you start TuFT another way (e.g. `python -m tuft launch`), export it yourself, `export LOCAL_KERNELS="$(cat ~/.tuft/local-kernels)"`, or the kernel is resolved on the Hub at startup. When no kernel build is available, a model that requests `flash_attention_2` is rejected at server startup instead of failing on the first training request; use `attn_implementation: sdpa` there.
+
+Where the Hugging Face Hub is unreachable, fetch the kernel from the ModelScope mirror:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install.sh)" -- --kernel-source modelscope
+```
+
+The mirror currently lags the Hub: it has the per-torch builds of the Hub's `main` branch for torch up to 2.12, but not the version 3 builds the Hub source uses; both pass the installer's smoke test on TuFT's torch 2.11. The ModelScope build is verified against the Hugging Face signature and digests before use and stored under `$TUFT_HOME/kernels`. To re-fetch the kernel later, run `python scripts/install_flash_attn.py [--source modelscope]` with the TuFT environment's Python.
 
 ## Install from Source Code
 
@@ -86,9 +99,9 @@ We recommend using [uv](https://github.com/astral-sh/uv) for dependency manageme
     # If you want to run the full feature set (e.g., model serving, persistence),
     # please install all dependencies
     uv sync --all-extras
+    # Fetch the FlashAttention-2 kernel (for the ModelScope mirror: uv pip install modelscope,
+    # then add --source modelscope)
     python scripts/install_flash_attn.py
-    # If you face issues with flash-attn installation, you can try installing it manually:
-    # uv pip install flash-attn --no-build-isolation
     ```
 
 ## Install via PyPI

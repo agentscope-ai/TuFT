@@ -29,6 +29,10 @@ TORCH_BACKEND="${TUFT_TORCH_BACKEND:-auto}"
 # below and the generated `tuft` wrapper see the same setting.
 TUFT_SKIP_GPU_CHECKS="${TUFT_SKIP_GPU_CHECKS:-0}"
 export TUFT_SKIP_GPU_CHECKS
+# Where to fetch the FlashAttention-2 kernel from: huggingface or modelscope.
+KERNEL_SOURCE="${TUFT_KERNEL_SOURCE:-huggingface}"
+# Installed into the venv only for --kernel-source modelscope.
+MODELSCOPE_REQUIREMENT="modelscope>=1.40.2"
 # Filled in by preflight_gpu_check: the concrete backend ("default" means the
 # plain PyPI wheels) and the matching uv arguments.
 RESOLVED_TORCH_BACKEND="default"
@@ -80,6 +84,14 @@ parse_args() {
                 export TUFT_SKIP_GPU_CHECKS
                 shift
                 ;;
+            --kernel-source)
+                if [[ $# -lt 2 ]]; then
+                    print_error "--kernel-source requires a value (huggingface or modelscope)"
+                    exit 1
+                fi
+                KERNEL_SOURCE="$2"
+                shift 2
+                ;;
             --help|-h)
                 echo "TuFT Installation Script"
                 echo ""
@@ -96,15 +108,19 @@ parse_args() {
                 echo "                         falls back to the default PyPI wheels."
                 echo "  --skip-gpu-checks      Turn GPU preflight and CUDA smoke-test failures into"
                 echo "                         warnings instead of errors"
+                echo "  --kernel-source VALUE  Where to fetch the FlashAttention-2 kernel from:"
+                echo "                         huggingface (default) or modelscope"
                 echo "  --help, -h             Show this help message"
                 echo ""
-                echo "The script installs TuFT with full backend support (GPU, persistence, flash-attn)."
+                echo "The script installs TuFT with full backend support (GPU, persistence,"
+                echo "FlashAttention-2 via the Hugging Face kernel hub)."
                 echo ""
                 echo "Environment Variables:"
                 echo "  TUFT_HOME             Installation directory (default: ~/.tuft)"
                 echo "  TUFT_VENV             Virtual environment location (default: \$TUFT_HOME/venv)"
                 echo "  TUFT_TORCH_BACKEND    Default value for --torch-backend"
                 echo "  TUFT_SKIP_GPU_CHECKS  Set to 1 to skip GPU preflight/smoke-test enforcement"
+                echo "  TUFT_KERNEL_SOURCE    Default value for --kernel-source"
                 echo "  TUFT_PYPI_REQUIREMENT Override the default PyPI requirement"
                 echo ""
                 echo "uv passthrough (network/filesystem controls, read natively by uv):"
@@ -499,16 +515,21 @@ record_torch_backend() {
 # URL for the flash-attn installation script
 FLASH_ATTN_SCRIPT_URL="https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install_flash_attn.py"
 
-# Install flash-attn from precompiled wheels (avoids lengthy compilation)
-# Also stores the script locally for later use by install-backend command
+# Set by install_flash_attn; print_completion repeats a failure at the end.
+FLASH_ATTN_STATUS="skipped"
+
+# Fetch the FlashAttention-2 kernel from the Hugging Face kernel hub (or its
+# ModelScope mirror) so attn_implementation: flash_attention_2 works without a
+# flash-attn wheel built for this exact torch/CUDA tuple. Also stores the
+# script locally for `tuft upgrade`.
 install_flash_attn() {
-    print_step "Installing flash-attn from precompiled wheels..."
+    print_step "Fetching the FlashAttention-2 kernel from $KERNEL_SOURCE..."
 
     local script_path="$TUFT_HOME/scripts/install_flash_attn.py"
 
     # Copy or download the flash-attn install script to local storage
     if [ -n "$LOCAL_SOURCE_PATH" ] && [ -f "$LOCAL_SOURCE_PATH/scripts/install_flash_attn.py" ]; then
-        print_step "Using local flash-attn install script"
+        print_step "Using local FlashAttention-2 kernel install script"
         cp "$LOCAL_SOURCE_PATH/scripts/install_flash_attn.py" "$script_path"
     else
         # Download the script from GitHub and store locally
@@ -518,11 +539,20 @@ install_flash_attn() {
         fi
     fi
 
+    # Remember the source so `tuft upgrade` fetches from the same place.
+    printf '%s\n' "$KERNEL_SOURCE" > "$TUFT_HOME/kernel-source"
+    if [ "$KERNEL_SOURCE" = "modelscope" ]; then
+        uv pip install --python "$TUFT_VENV/bin/python" "$MODELSCOPE_REQUIREMENT" \
+            || print_warning "Could not install $MODELSCOPE_REQUIREMENT"
+    fi
+
     # Run the script and check exit code
-    if "$TUFT_VENV/bin/python" "$script_path"; then
-        print_success "flash-attn installation complete"
+    if TUFT_HOME="$TUFT_HOME" "$TUFT_VENV/bin/python" "$script_path" --source "$KERNEL_SOURCE"; then
+        FLASH_ATTN_STATUS="ready"
+        print_success "FlashAttention-2 kernel ready"
     else
-        print_warning "flash-attn installation failed. This is optional, so installation will continue."
+        FLASH_ATTN_STATUS="unavailable"
+        print_warning "FlashAttention-2 is unavailable (optional, installation will continue)."
     fi
 }
 
@@ -615,6 +645,7 @@ set -e
 
 # Virtualenv location recorded at install time (override with TUFT_VENV).
 TUFT_INSTALL_VENV="${TUFT_VENV}"
+TUFT_MODELSCOPE_REQUIREMENT="${MODELSCOPE_REQUIREMENT}"
 WRAPPER_HEAD_EOF
 
     # Body: quoted heredoc, no expansion at install time.
@@ -625,6 +656,14 @@ TUFT_HOME="${TUFT_HOME:-$HOME/.tuft}"
 TUFT_VENV="${TUFT_VENV:-${TUFT_INSTALL_VENV:-$TUFT_HOME/venv}}"
 TUFT_PYTHON="$TUFT_VENV/bin/python"
 TUFT_PYPI_REQUIREMENT="${TUFT_PYPI_REQUIREMENT:-tuft[backend,persistence]>=0.1.8}"
+
+# Local kernel copy recorded by install_flash_attn.py, so the server loads it
+# without contacting the Hub; the kernels package reads LOCAL_KERNELS. An
+# explicit value wins.
+if [ -z "${LOCAL_KERNELS:-}" ] && [ -s "$TUFT_HOME/local-kernels" ]; then
+    LOCAL_KERNELS="$(cat "$TUFT_HOME/local-kernels")"
+    export LOCAL_KERNELS
+fi
 
 # Verify installation
 if [ ! -f "$TUFT_PYTHON" ]; then
@@ -756,19 +795,33 @@ case "${1:-}" in
             printf '%s\n' "$RESOLVED_BACKEND" > "$BACKEND_STATE"
         fi
 
-        # Also update flash-attn
+        # Also refresh the FlashAttention-2 kernel for the upgraded torch.
+        # Source precedence: TUFT_KERNEL_SOURCE > value recorded at install time.
+        KERNEL_SOURCE="${TUFT_KERNEL_SOURCE:-$(cat "$TUFT_HOME/kernel-source" 2>/dev/null || echo huggingface)}"
         echo ""
-        echo "Updating flash-attn..."
+        echo "Updating the FlashAttention-2 kernel (source: $KERNEL_SOURCE)..."
         FLASH_SCRIPT_PATH="$TUFT_HOME/scripts/install_flash_attn.py"
+        mkdir -p "$TUFT_HOME/scripts"
         if [ -n "$UPGRADE_LOCAL_SOURCE" ] && [ -f "$UPGRADE_LOCAL_SOURCE/scripts/install_flash_attn.py" ]; then
             cp "$UPGRADE_LOCAL_SOURCE/scripts/install_flash_attn.py" "$FLASH_SCRIPT_PATH"
-        elif [ ! -f "$FLASH_SCRIPT_PATH" ]; then
+        else
+            # Refresh the script (older installs carry the wheel-based one);
+            # keep the existing copy if the download fails.
             FLASH_SCRIPT_URL="https://raw.githubusercontent.com/agentscope-ai/tuft/main/scripts/install_flash_attn.py"
-            mkdir -p "$TUFT_HOME/scripts"
-            curl -fsSL "$FLASH_SCRIPT_URL" -o "$FLASH_SCRIPT_PATH" 2>/dev/null || true
+            if curl -fsSL "$FLASH_SCRIPT_URL" -o "$FLASH_SCRIPT_PATH.new" 2>/dev/null; then
+                mv "$FLASH_SCRIPT_PATH.new" "$FLASH_SCRIPT_PATH"
+            else
+                rm -f "$FLASH_SCRIPT_PATH.new"
+            fi
         fi
         if [ -f "$FLASH_SCRIPT_PATH" ]; then
-            "$TUFT_PYTHON" "$FLASH_SCRIPT_PATH" || echo "Warning: flash-attn update failed (optional)"
+            printf '%s\n' "$KERNEL_SOURCE" > "$TUFT_HOME/kernel-source"
+            if [ "$KERNEL_SOURCE" = "modelscope" ]; then
+                uv pip install --python "$TUFT_PYTHON" --upgrade "$TUFT_MODELSCOPE_REQUIREMENT" \
+                    || echo "Warning: could not install $TUFT_MODELSCOPE_REQUIREMENT"
+            fi
+            TUFT_HOME="$TUFT_HOME" "$TUFT_PYTHON" "$FLASH_SCRIPT_PATH" --source "$KERNEL_SOURCE" \
+                || echo "Warning: FlashAttention-2 kernel unavailable (optional); see the output above"
         fi
 
         # Post-upgrade checks: dependency metadata coherence plus a CUDA smoke
@@ -988,7 +1041,15 @@ print_completion() {
     echo "Installation directory: $TUFT_HOME"
     echo "Virtual environment:    $TUFT_VENV"
     echo "Torch backend:          $RESOLVED_TORCH_BACKEND"
+    echo "FlashAttention-2:       $FLASH_ATTN_STATUS (kernel source: $KERNEL_SOURCE)"
     echo ""
+    if [ "$FLASH_ATTN_STATUS" = "unavailable" ]; then
+        print_warning "No FlashAttention-2 kernel for this environment (see the output above)."
+        echo "         Models with attn_implementation: flash_attention_2 cannot use it. Use"
+        echo "         attn_implementation: sdpa, the cu130 torch backend, or re-run with a"
+        echo "         different --kernel-source."
+        echo ""
+    fi
     echo "To get started:"
     echo ""
     echo "  1. Restart your terminal or run:"
@@ -1010,6 +1071,13 @@ print_completion() {
 # Main installation flow
 main() {
     parse_args "$@"
+    case "$KERNEL_SOURCE" in
+        huggingface|modelscope) ;;
+        *)
+            print_error "Invalid kernel source '$KERNEL_SOURCE' (expected huggingface or modelscope)"
+            exit 1
+            ;;
+    esac
 
     echo ""
     echo -e "${BLUE}============================================${NC}"
@@ -1018,7 +1086,7 @@ main() {
     echo -e "${BLUE}============================================${NC}"
     echo ""
 
-    print_step "Installing with full backend support (GPU, persistence, flash-attn)"
+    print_step "Installing with full backend support (GPU, persistence, FlashAttention-2)"
 
     if [ -n "$LOCAL_SOURCE_PATH" ]; then
         print_step "Installing from local source: $LOCAL_SOURCE_PATH"
