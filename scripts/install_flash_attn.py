@@ -13,7 +13,7 @@ first training request.
 Sources:
   huggingface (default)  Download the build into the Hugging Face cache.
   modelscope             Download the build from the ModelScope mirror into
-                         --kernels-dir.
+                         --kernels-dir (needs the modelscope package).
 
 Either way the downloaded copy is recorded as a LOCAL_KERNELS override in
 $TUFT_HOME/local-kernels, so the server loads it without contacting the Hub
@@ -25,13 +25,8 @@ Exit codes: 0 kernel ready, 1 kernel unavailable for this environment.
 """
 
 import argparse
-import hashlib
-import json
 import os
-import shutil
 import sys
-import urllib.parse
-import urllib.request
 from pathlib import Path
 
 import torch
@@ -102,57 +97,29 @@ def fetch_huggingface() -> Path:
     return Path(snapshot) / "build" / variant
 
 
-def _modelscope_files(api: str, root: str, recursive: bool) -> list[dict]:
-    query = urllib.parse.urlencode(
-        {"Root": root, "Revision": MODELSCOPE_REVISION, "Recursive": str(recursive).lower()}
-    )
-    url = f"{api}/repo/files?{query}"
-    with urllib.request.urlopen(url, timeout=60) as response:
-        payload = json.load(response)
-    files = (payload.get("Data") or {}).get("Files")
-    if not payload.get("Success") or files is None:
-        raise RuntimeError(f"ModelScope listing failed: {payload.get('Message')} ({url})")
-    return files
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _download(url: str, dest: Path, sha256: str) -> None:
-    if dest.exists() and _sha256(dest) == sha256:
-        return
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    partial = dest.with_name(dest.name + ".partial")
-    with urllib.request.urlopen(url, timeout=60) as response, open(partial, "wb") as out:
-        shutil.copyfileobj(response, out, length=1 << 20)
-    actual = _sha256(partial)
-    if actual != sha256:
-        partial.unlink()
-        raise RuntimeError(f"SHA-256 mismatch for {dest.name}: expected {sha256}, got {actual}")
-    partial.replace(dest)
-
-
 def fetch_modelscope(kernels_dir: Path) -> Path:
     """Download the matching build from ModelScope; return its directory."""
 
-    domain = os.environ.get("MODELSCOPE_DOMAIN", "www.modelscope.cn")
-    api = f"https://{domain}/api/v1/models/{FLASH_ATTN2_KERNEL}"
-    print(f"Fetching {FLASH_ATTN2_KERNEL}@{MODELSCOPE_REVISION} from ModelScope ({domain})...")
-
-    entries = _modelscope_files(api, "build", recursive=False)
-    variant = select_variant(entry["Name"] for entry in entries if entry["Type"] == "tree")
+    try:
+        from modelscope import snapshot_download
+    except ImportError as exc:
+        raise RuntimeError("--source modelscope needs the modelscope package") from exc
 
     repo_dir = kernels_dir / FLASH_ATTN2_KERNEL
-    for entry in _modelscope_files(api, f"build/{variant}", recursive=True):
-        if entry["Type"] != "blob":
-            continue
-        query = urllib.parse.urlencode({"Revision": MODELSCOPE_REVISION, "FilePath": entry["Path"]})
-        _download(f"{api}/repo?{query}", repo_dir / entry["Path"], entry["Sha256"])
+    print(f"Fetching {FLASH_ATTN2_KERNEL}@{MODELSCOPE_REVISION} from ModelScope...")
+
+    def download(pattern: str) -> None:
+        snapshot_download(
+            FLASH_ATTN2_KERNEL,
+            revision=MODELSCOPE_REVISION,
+            local_dir=str(repo_dir),
+            allow_patterns=[pattern],
+        )
+
+    # Every loadable build has a metadata.json, so these small files list the builds.
+    download("build/*/metadata.json")
+    variant = select_variant(path.parent.name for path in repo_dir.glob("build/*/metadata.json"))
+    download(f"build/{variant}/*")
     return repo_dir / "build" / variant
 
 

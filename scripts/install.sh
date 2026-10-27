@@ -31,6 +31,8 @@ TUFT_SKIP_GPU_CHECKS="${TUFT_SKIP_GPU_CHECKS:-0}"
 export TUFT_SKIP_GPU_CHECKS
 # Where to fetch the FlashAttention-2 kernel from: huggingface or modelscope.
 KERNEL_SOURCE="${TUFT_KERNEL_SOURCE:-huggingface}"
+# Installed into the venv only for --kernel-source modelscope.
+MODELSCOPE_REQUIREMENT="modelscope>=1.40.2"
 # Filled in by preflight_gpu_check: the concrete backend ("default" means the
 # plain PyPI wheels) and the matching uv arguments.
 RESOLVED_TORCH_BACKEND="default"
@@ -539,6 +541,10 @@ install_flash_attn() {
 
     # Remember the source so `tuft upgrade` fetches from the same place.
     printf '%s\n' "$KERNEL_SOURCE" > "$TUFT_HOME/kernel-source"
+    if [ "$KERNEL_SOURCE" = "modelscope" ]; then
+        uv pip install --python "$TUFT_VENV/bin/python" "$MODELSCOPE_REQUIREMENT" \
+            || print_warning "Could not install $MODELSCOPE_REQUIREMENT"
+    fi
 
     # Run the script and check exit code
     if TUFT_HOME="$TUFT_HOME" "$TUFT_VENV/bin/python" "$script_path" --source "$KERNEL_SOURCE"; then
@@ -639,6 +645,7 @@ set -e
 
 # Virtualenv location recorded at install time (override with TUFT_VENV).
 TUFT_INSTALL_VENV="${TUFT_VENV}"
+TUFT_MODELSCOPE_REQUIREMENT="${MODELSCOPE_REQUIREMENT}"
 WRAPPER_HEAD_EOF
 
     # Body: quoted heredoc, no expansion at install time.
@@ -809,6 +816,10 @@ case "${1:-}" in
         fi
         if [ -f "$FLASH_SCRIPT_PATH" ]; then
             printf '%s\n' "$KERNEL_SOURCE" > "$TUFT_HOME/kernel-source"
+            if [ "$KERNEL_SOURCE" = "modelscope" ]; then
+                uv pip install --python "$TUFT_PYTHON" --upgrade "$TUFT_MODELSCOPE_REQUIREMENT" \
+                    || echo "Warning: could not install $TUFT_MODELSCOPE_REQUIREMENT"
+            fi
             TUFT_HOME="$TUFT_HOME" "$TUFT_PYTHON" "$FLASH_SCRIPT_PATH" --source "$KERNEL_SOURCE" \
                 || echo "Warning: FlashAttention-2 kernel unavailable (optional); see the output above"
         fi

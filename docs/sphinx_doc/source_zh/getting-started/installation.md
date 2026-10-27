@@ -100,7 +100,8 @@ TUFT_TORCH_BACKEND=cpu /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.
     # 如果要运行完整功能集（如模型服务、持久化），
     # 请安装所有依赖
     uv sync --all-extras
-    # 获取 FlashAttention-2 kernel（添加 --source modelscope 可使用 ModelScope 镜像）
+    # 获取 FlashAttention-2 kernel（使用 ModelScope 镜像时先 uv pip install modelscope，
+    # 再添加 --source modelscope）
     python scripts/install_flash_attn.py
     ```
 
