@@ -16,11 +16,7 @@ import time
 from importlib.metadata import version
 from pathlib import Path
 
-
-if __package__:
-    from .benchmark_shared_weight import GPUMonitor
-else:
-    from benchmark_shared_weight import GPUMonitor
+from benchmark_shared_weight import GPUMonitor
 
 
 def scheduling(policy: str) -> dict:

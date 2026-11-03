@@ -15,11 +15,13 @@ async def test_multi_tenant_training_publication_and_sampling():
     import torch
     from huggingface_hub import snapshot_download
 
-    # Load by checkout path: the published container also has a top-level
-    # `scripts` package, which shadows this repository's namespace directory.
+    # Load the benchmark directly from this checkout.
     spec = importlib.util.spec_from_file_location(
         "tuft_shared_weight_validation",
-        Path(__file__).resolve().parents[1] / "scripts" / "benchmark_shared_weight.py",
+        Path(__file__).resolve().parents[1]
+        / "benchmarks"
+        / "shared-weight"
+        / "benchmark_shared_weight.py",
     )
     assert spec is not None and spec.loader is not None
     benchmark = importlib.util.module_from_spec(spec)

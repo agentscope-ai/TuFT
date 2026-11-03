@@ -2,9 +2,8 @@
 
 import asyncio
 
-from tinker import types
-
-from scripts.benchmark_shared_weight_agents import (
+import pytest
+from benchmark_shared_weight_agents import (
     parse_action,
     reward,
     scheduling,
@@ -12,6 +11,8 @@ from scripts.benchmark_shared_weight_agents import (
     tool_reply,
     training_datum,
 )
+from tinker import types
+
 from tuft.config import SchedulingConfig
 from tuft.scheduling import ResourceScheduler
 
@@ -60,23 +61,32 @@ async def test_long_context_wave_has_bounded_probe_and_matched_fixed_capacity():
         await s.close()
 
 
-def test_direct_cli_import_does_not_depend_on_scripts_namespace():
+@pytest.mark.parametrize(
+    "script",
+    [
+        "benchmark_shared_weight.py",
+        "benchmark_shared_weight_agents.py",
+        "report_shared_weight_agents.py",
+        "diagnose_shared_weight_agent_tail.py",
+        "summarize_shared_weight.py",
+    ],
+)
+def test_benchmark_cli_runs_outside_checkout(script):
     import subprocess
     import sys
     from pathlib import Path
 
-    path = Path(__file__).resolve().parents[1] / "scripts/benchmark_shared_weight_agents.py"
+    path = Path(__file__).resolve().parents[1] / "benchmarks/shared-weight" / script
     subprocess.run(
         [sys.executable, str(path), "--help"], check=True, capture_output=True, cwd="/tmp"
     )
 
 
 def test_chat_template_contract_with_real_transformers_tokenizer():
+    from benchmark_shared_weight_agents import encode_prompt
     from tokenizers import Tokenizer
     from tokenizers.models import WordLevel
     from transformers import PreTrainedTokenizerFast
-
-    from scripts.benchmark_shared_weight_agents import encode_prompt
 
     tokenizer = PreTrainedTokenizerFast(
         tokenizer_object=Tokenizer(WordLevel({"[UNK]": 0, "hello": 1}, unk_token="[UNK]")),

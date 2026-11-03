@@ -15,6 +15,25 @@ def percentile(values: list[float], fraction: float) -> float:
     return values[low] + (values[min(low + 1, len(values) - 1)] - values[low]) * (index - low)
 
 
+def gpu_utilization(samples: list[dict]) -> dict:
+    """Average NVML GPU-active readings, not SM occupancy or FLOP utilization.
+
+    The monitor polls approximately every 0.2 seconds. These are arithmetic
+    sample means; the first and last timestamps document the observed window.
+    """
+    per_gpu = [
+        statistics.mean(sample["gpu"][index]["sm_percent"] for sample in samples)
+        for index in range(len(samples[0]["gpu"]))
+    ]
+    return {
+        "mean_percent_by_gpu": per_gpu,
+        "mean_percent_all_gpus": statistics.mean(per_gpu),
+        "sample_count": len(samples),
+        "first_sample_s": samples[0]["elapsed_s"],
+        "last_sample_s": samples[-1]["elapsed_s"],
+    }
+
+
 def summarize(data: dict) -> list[dict]:
     if data.get("returncode") or data.get("timed_out") or len(data["runs"]) != 2:
         raise ValueError("A successful complete pair is required for comparison")
@@ -62,6 +81,7 @@ def summarize(data: dict) -> list[dict]:
                 publication_mean_s=statistics.mean(r["duration_s"] for r in run["publications"]),
                 peak_gpu_gib=max(g["memory_bytes"] for sample in run["gpu"] for g in sample["gpu"])
                 / 1024**3,
+                gpu_utilization=gpu_utilization(run["gpu"]),
                 tenant_finish_s={
                     str(i): max(u["finished_s"] for u in run["updates"] if u["tenant"] == i)
                     for i in range(run["tenants"])
@@ -81,17 +101,42 @@ def summarize(data: dict) -> list[dict]:
 
 
 def main():
-    import matplotlib.pyplot as plt
-
     parser = argparse.ArgumentParser()
     parser.add_argument("input", type=Path)
     args = parser.parse_args()
+    import matplotlib.pyplot as plt
+
     data = json.loads(args.input.read_text())
     rows = summarize(data)
     target = args.input.with_suffix("")
     Path(str(target) + "-summary.json").write_text(json.dumps(rows, indent=2) + "\n")
     colors = ["#526b84", "#159782"]
     labels = ["Static (matched admission)", "Shared-weight borrowing"]
+    utilization, utilization_ax = plt.subplots(figsize=(8, 4), constrained_layout=True)
+    for i, row in enumerate(rows):
+        values = row["gpu_utilization"]["mean_percent_by_gpu"] + [
+            row["gpu_utilization"]["mean_percent_all_gpus"]
+        ]
+        bars = utilization_ax.bar(
+            [j + (i - 0.5) * 0.35 for j in range(len(values))],
+            values,
+            width=0.35,
+            color=colors[i],
+            label=labels[i],
+        )
+        utilization_ax.bar_label(bars, fmt="%.1f%%", padding=3)
+    utilization_ax.set(
+        xticks=[0, 1, 2],
+        xticklabels=["GPU 0 (NVML index)", "GPU 1 (NVML index)", "Both GPUs, mean"],
+        ylabel="Mean NVML GPU utilization (%)",
+        ylim=(0, 100),
+        title="Saved agent run · approximately 0.2 s polling\n"
+        "GPU-active time, not SM occupancy or FLOP utilization",
+    )
+    utilization_ax.legend()
+    utilization_ax.grid(alpha=0.2, axis="y")
+    for extension in ("png", "svg"):
+        utilization.savefig(str(target) + "-gpu-utilization." + extension, dpi=180)
     fig, axes = plt.subplots(2, 2, figsize=(12, 8), constrained_layout=True)
     for i, (run, row) in enumerate(zip(data["runs"], rows, strict=True)):
         times = sorted(u["finished_s"] for u in run["updates"])

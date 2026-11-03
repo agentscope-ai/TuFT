@@ -67,7 +67,7 @@ def workload_scheduling(policy: str, tenants: int, samples_per_tenant: int, outp
 
     Match the engine's 64-sequence capacity for performance workloads. Small
     correctness tests scale the admission limit down to half their request wave.
-    Admitting an entire wave to Fixed prevents any cost-aware probe from running.
+    Admitting a whole wave to the dedicated sampler prevents cost-aware probes.
     """
     return {
         "policy": policy,
@@ -76,6 +76,17 @@ def workload_scheduling(policy: str, tenants: int, samples_per_tenant: int, outp
         "max_inflight_per_replica": min(64, max(1, tenants * samples_per_tenant // 2)),
         "sampling_alignment_s": 0.25,
     }
+
+
+def source_sha256() -> str:
+    """Hash repository sources, failing if the checkout cannot be located."""
+    root = Path(__file__).resolve().parents[2]
+    sources = sorted((root / "src").rglob("*.py"))
+    if not sources:
+        raise FileNotFoundError(f"No Python sources found in {root / 'src'}")
+    return hashlib.sha256(
+        b"".join(p.relative_to(root).as_posix().encode() + p.read_bytes() for p in sources)
+    ).hexdigest()
 
 
 async def run(
@@ -753,11 +764,6 @@ async def run(
 def main():
     from importlib.metadata import PackageNotFoundError, version
 
-    import torch
-    import transformers
-    import vllm
-    from huggingface_hub import HfApi, snapshot_download
-
     parser = argparse.ArgumentParser()
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--rounds", type=int, default=3)
@@ -773,6 +779,11 @@ def main():
     parser.add_argument("--kv-cache-gib", type=int, default=16)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    import torch
+    import transformers
+    import vllm
+    from huggingface_hub import HfApi, snapshot_download
+
     if args.rounds < 1 or args.tenants < 2 or args.samples_per_tenant < 1:
         parser.error(
             "rounds and samples must be positive; verification requires at least two tenants"
@@ -794,13 +805,7 @@ def main():
             "model_revision": revision,
             "vllm_use_aot_compile": os.environ.get("VLLM_USE_AOT_COMPILE", "default"),
             "benchmark_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-            "source_sha256": hashlib.sha256(
-                b"".join(
-                    p.relative_to(Path(__file__).resolve().parents[1]).as_posix().encode()
-                    + p.read_bytes()
-                    for p in sorted((Path(__file__).resolve().parents[1] / "src").rglob("*.py"))
-                )
-            ).hexdigest(),
+            "source_sha256": source_sha256(),
             "gpus": subprocess.check_output(
                 ["nvidia-smi", "--query-gpu=name,memory.total,driver_version", "--format=csv"],
                 text=True,

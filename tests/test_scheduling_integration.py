@@ -1,6 +1,6 @@
 """Controller/backend integration with controllable Ray and sampling boundaries.
 
-Real GPU engine coverage lives in scripts/benchmark_shared_weight.py. These tests
+Real GPU engine coverage lives in benchmarks/shared-weight/benchmark_shared_weight.py. These tests
 exercise the production factories, shared gate, sequence guard and tenant routing
 without CUDA, sockets, or a running service.
 """

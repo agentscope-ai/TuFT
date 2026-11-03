@@ -21,6 +21,16 @@
     "valid_tool_fraction": 1.0,
     "publication_mean_s": 1.167925247725003,
     "peak_gpu_gib": 49.7545166015625,
+    "gpu_utilization": {
+      "mean_percent_by_gpu": [
+        68.05083399523431,
+        4.899920571882446
+      ],
+      "mean_percent_all_gpus": 36.47537728355838,
+      "sample_count": 1259,
+      "first_sample_s": 4.252999985965289e-06,
+      "last_sample_s": 253.95714821999997
+    },
     "tenant_finish_s": {
       "0": 253.86123113000002,
       "1": 253.82221246199998,
@@ -95,6 +105,16 @@
     "valid_tool_fraction": 1.0,
     "publication_mean_s": 1.609308235949993,
     "peak_gpu_gib": 50.70526123046875,
+    "gpu_utilization": {
+      "mean_percent_by_gpu": [
+        75.76255319148936,
+        5.118297872340426
+      ],
+      "mean_percent_all_gpus": 40.44042553191489,
+      "sample_count": 1175,
+      "first_sample_s": 3.3219999977518455e-06,
+      "last_sample_s": 236.11927606000006
+    },
     "tenant_finish_s": {
       "0": 236.21456858400006,
       "1": 236.27471995899998,
