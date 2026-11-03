@@ -4,13 +4,12 @@ import os
 import shutil
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Callable, Dict
+from typing import Any, Callable, Dict, cast
 
 import ray
 import torch
 from opentelemetry.trace import StatusCode
-from peft import LoraConfig, get_peft_model
-from ray.actor import ActorProxy
+from peft import LoraConfig, PeftModel, get_peft_model
 from tinker import types
 from tinker.types import LoraConfig as TinkerLoraConfig
 from torch.nn.utils.rnn import pad_sequence
@@ -658,7 +657,7 @@ class HFTrainingModel:
             tensors.append(padded_tensor[i, :length])
         return tensors
 
-    def _init_peft_model(self, config: ModelConfig):
+    def _init_peft_model(self, config: ModelConfig) -> PeftModel:
         model = AutoModelForCausalLM.from_pretrained(
             str(config.model_path),
             dtype="auto",
@@ -674,7 +673,7 @@ class HFTrainingModel:
             # can still start; create_adapter keeps the hard failure.
             peft_config = LoraConfig()
         peft_model = get_peft_model(model, peft_config=peft_config, adapter_name="default")
-        return peft_model
+        return cast(PeftModel, peft_model)
 
     def _activate_adapter(self, lora_id: str):
         if lora_id not in self.adapter_optimizer:
@@ -682,7 +681,9 @@ class HFTrainingModel:
         self.model.set_adapter(lora_id)
 
     @classmethod
-    def get_actor(cls, config: ModelConfig) -> "ActorProxy":
+    def get_actor(cls, config: ModelConfig) -> Any:
+        # Ray synthesizes remote methods at runtime; ActorProxy also includes
+        # the local class, whose methods do not expose .remote().
         return (
             ray.remote(cls)
             .options(

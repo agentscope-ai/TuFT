@@ -1216,7 +1216,7 @@ class FSDPTrainingBackend(BaseTrainingBackend):
                 "FSDP collective failed; restart the backend before reusing its GPUs"
             )
 
-    async def _await_workers(self, refs):
+    async def _await_workers(self, refs) -> Any:
         import ray
 
         try:

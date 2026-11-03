@@ -1,6 +1,7 @@
 """Storage and numerical invariants for frozen base-weight sharing."""
 
 import copy
+from typing import Any
 
 import pytest
 import torch
@@ -16,7 +17,7 @@ from tuft.backends.shared_weights import (
 )
 
 
-def tiny_model():
+def tiny_model() -> Any:
     config = Qwen3Config(
         vocab_size=64,
         hidden_size=32,
@@ -28,7 +29,7 @@ def tiny_model():
         tie_word_embeddings=False,
         attention_dropout=0,
     )
-    model = Qwen3ForCausalLM(config).to(torch.bfloat16)
+    model = Qwen3ForCausalLM(config).bfloat16()
     return get_peft_model(model, LoraConfig(r=2, target_modules=["q_proj", "v_proj"]))
 
 
@@ -110,11 +111,12 @@ def test_binding_aliases_storage_and_only_copies_vocabulary_padding():
 
 
 def test_layout_failure_does_not_partially_rebind():
-    model = torch.nn.Sequential(torch.nn.Linear(4, 6, bias=False, dtype=torch.bfloat16))
-    before = model[0].weight.data_ptr()
+    projection = torch.nn.Linear(4, 6, bias=False, dtype=torch.bfloat16)
+    model = torch.nn.Sequential(projection)
+    before = projection.weight.data_ptr()
     with pytest.raises(ValueError, match="shape"):
         bind_shared_weights(model, {"0.weight": torch.ones(5, 4, dtype=torch.bfloat16)})
-    assert model[0].weight.data_ptr() == before
+    assert projection.weight.data_ptr() == before
     with pytest.raises(ValueError, match="keys"):
         bind_shared_weights(model, {})
     with pytest.raises(ValueError, match="dtype"):
@@ -122,7 +124,7 @@ def test_layout_failure_does_not_partially_rebind():
 
 
 def test_binding_resolves_duplicate_module_paths_without_ignoring_missing_weights():
-    model = torch.nn.Module()
+    model: Any = torch.nn.Module()
     model.router = torch.nn.Linear(4, 6, bias=False, dtype=torch.bfloat16)
     model.runner = torch.nn.Module()
     model.runner.gate = model.router

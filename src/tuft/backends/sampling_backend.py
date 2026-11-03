@@ -97,7 +97,8 @@ class VLLMSamplingBackend(BaseSamplingBackend):
         self._instance_index = instance_index
         # The trainer owns full GPUs. Create the sharing actor only after its
         # placement is known, avoiding fractional packing across base models.
-        self.engine = (
+        # Ray supplies actor methods dynamically, including their .remote API.
+        self.engine: Any = (
             None
             if config.colocate and config.scheduling.share_base_weights
             else self._create_engine(config)

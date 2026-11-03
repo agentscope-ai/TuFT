@@ -6,6 +6,7 @@ editing allocator pointer tables or retagging live allocations.
 """
 
 import pickle
+from typing import Any, cast
 
 import torch
 import vllm
@@ -47,6 +48,7 @@ class SharedWeightLoader(BaseModelLoader):
             name = f"language_model.{name}" if hasattr(model, "language_model") else name
             weights[name] = rebuild_cuda_tensor(*args)
         weights = resolve_shared_weight_aliases(model, weights)
-        model._tuft_shared_weight_report = bind_shared_weights(model, weights)
+        shared_model = cast(Any, model)
+        shared_model._tuft_shared_weight_report = bind_shared_weights(model, weights)
         # Keep imported tensors alive across LoRA wrapping, sleep and graph replay.
-        model._tuft_shared_weights = weights
+        shared_model._tuft_shared_weights = weights

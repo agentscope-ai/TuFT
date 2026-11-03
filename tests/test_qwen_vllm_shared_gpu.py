@@ -20,6 +20,7 @@ def test_hybrid_vllm_aliases_and_recurrent_sleep(tmp_path, monkeypatch, moe):
     )
     from transformers.models.qwen3_5_moe.modeling_qwen3_5_moe import Qwen3_5MoeForCausalLM
     from vllm import LLM, SamplingParams
+    from vllm.inputs import TokensPrompt
     from vllm.lora.request import LoRARequest
 
     from tuft.backends.hf_training_model import _export_vllm_compatible_lora_aliases
@@ -87,7 +88,7 @@ def test_hybrid_vllm_aliases_and_recurrent_sleep(tmp_path, monkeypatch, moe):
         report = llm.collective_rpc("shared_weight_report")[0]
         assert report["copied_parameters"] == 0
         assert report["verified_alias_bytes"] > 0
-        prompt = {"prompt_token_ids": [1, 3, 5, 7]}
+        prompt = TokensPrompt(prompt_token_ids=[1, 3, 5, 7])
         params = SamplingParams(temperature=0, max_tokens=8, logprobs=1, ignore_eos=True)
         base_output = llm.generate([prompt], params)[0].outputs[0]
         # Expert-only LoRA proves routed experts are actually used by vLLM;

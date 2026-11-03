@@ -26,7 +26,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from logging import getLogger
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 
 logger = getLogger(__name__)
@@ -80,8 +80,8 @@ class VLLMEngineConfig:
     share_base_weights: bool = False
     kv_cache_memory_bytes: int | None = None
     language_model_only: bool = False
-    moe_backend: str = "auto"
-    gdn_prefill_backend: str | None = None
+    moe_backend: Literal["auto", "triton"] = "auto"
+    gdn_prefill_backend: Literal["flashinfer", "triton", "cutedsl"] | None = None
     max_num_seqs: int | None = None
     # Trusted physical devices reserved by the colocated FSDP actors.
     shared_gpu_ids: list[str] | None = None

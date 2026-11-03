@@ -25,7 +25,7 @@ vllm at module level; nothing in TuFT's server process imports it.
 """
 
 from types import MethodType
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 import torch
 import vllm
@@ -317,7 +317,7 @@ class TuFTGPUWorker(VLLMGPUWorker):
             for name, param in model.named_parameters(remove_duplicate=False)
             if ".lora_" not in name
         }
-        aliases = model._tuft_shared_weights
+        aliases = cast(dict[str, torch.Tensor], model._tuft_shared_weights)
         # Compare storage in the consumer process, not virtual addresses between
         # processes (CUDA IPC mappings can legitimately have different addresses).
         actual = sum(
@@ -357,7 +357,8 @@ class TuFTGPUWorker(VLLMGPUWorker):
         from .shared_weights import tensor_fingerprint
 
         result = {}
-        for name, module in self.model_runner.model.lora_manager.modules.items():
+        lora_manager = cast(Any, self.model_runner.model.lora_manager)
+        for name, module in lora_manager.modules.items():
             for kind in ("lora_a_stacked", "lora_b_stacked"):
                 values = getattr(module, kind, ())
                 if isinstance(values, torch.Tensor):

@@ -14,7 +14,7 @@ def _verify_rank(rank, rendezvous, output, family="qwen3"):
 
     import torch
     import torch.distributed as dist
-    from torch.distributed.tensor import DTensor
+    from torch.distributed.tensor import DTensor, Shard
     from transformers import Qwen3Config, Qwen3ForCausalLM
 
     import tuft.backends.fsdp_training_backend as backend
@@ -40,7 +40,7 @@ def _verify_rank(rank, rendezvous, output, family="qwen3"):
 
         def build_model(_):
             if family == "qwen3":
-                model = Qwen3ForCausalLM(config).to(torch.bfloat16)
+                model = Qwen3ForCausalLM(config).bfloat16()
             else:
                 from tests.test_qwen_shared_weights import hybrid_model
 
@@ -139,10 +139,10 @@ def _verify_rank(rank, rendezvous, output, family="qwen3"):
             assert isinstance(
                 params["base_model.model.model.layers.0.self_attn.o_proj.weight"], DTensor
             )
-            assert (
-                params["base_model.model.model.layers.0.self_attn.o_proj.weight"].placements[0].dim
-                == 1
-            )
+            placement = params[
+                "base_model.model.model.layers.0.self_attn.o_proj.weight"
+            ].placements[0]
+            assert isinstance(placement, Shard) and placement.dim == 1
             assert isinstance(
                 params[
                     "base_model.model.model.layers.0.self_attn.q_proj.lora_A.adapter_r2_0.weight"

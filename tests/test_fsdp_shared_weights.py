@@ -3,7 +3,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-import torch
 from peft import LoraConfig, get_peft_model
 from tinker import types
 from transformers import Qwen3Config, Qwen3ForCausalLM
@@ -26,7 +25,7 @@ def test_fsdp_shared_layout_preserves_sharding_and_replicates_only_norms():
         num_key_value_heads=2,
     )
     model = get_peft_model(
-        Qwen3ForCausalLM(config).to(torch.bfloat16),
+        Qwen3ForCausalLM(config).bfloat16(),
         LoraConfig(r=2, target_modules=["q_proj", "down_proj"]),
     )
     placements, ignored = shared_fsdp_placement(model, 2)
