@@ -1,18 +1,61 @@
 # Shared Weights (Experimental)
 
-Agent RL alternates between generating rollouts and updating adapters. With many
-tenants using the same base model, training GPUs can sit idle during generation.
-This experimental mode lets those GPUs serve rollouts using the trainer's frozen
-weights, without loading another full base model onto them.
+An agent training loop spends part of its time generating rollouts and part of
+its time updating a LoRA adapter. While agents are generating, the training GPUs
+may have little to do. Shared-weight mode lets TuFT use that spare capacity for
+rollouts, using the frozen base weights already held by the trainer.
+
+There are two kinds of sampler in this setup. The **dedicated sampler** runs on
+GPUs reserved for inference. It handles TuFT's OpenAI-compatible endpoints **and**
+Tinker sampling requests, and can keep serving while training is running. The
+**shared-weight sampler** runs on the training GPUs and helps with eligible
+Tinker sampling requests when those GPUs are available. It does not serve the
+OpenAI-compatible endpoints.
 
 Each tenant keeps its own LoRA adapter and optimizer state. Sampling uses a
-published adapter snapshot; an update does not change an in-flight request.
-A dedicated sampler remains available while the trainer is working.
-The existing `round_robin` policy remains the default.
+published snapshot of an adapter, so an update cannot change a request that is
+already running. This feature is experimental and opt-in; `round_robin` remains
+the default policy.
+
+## Where does a sampling request go?
+
+The API your client calls determines which samplers TuFT can use:
+
+| Your client sends | TuFT sends the work to |
+| --- | --- |
+| An OpenAI-compatible chat or completion request at `/oai/api/v1/chat/completions` or `/oai/api/v1/completions` | A dedicated sampler, for both streaming and non-streaming requests. With multiple dedicated replicas, TuFT rotates requests among them. |
+| A Tinker sampling request, such as `sampling_client.sample(...)` | The sampling scheduler, which chooses a dedicated sampler or, when eligible, the shared-weight sampler. |
+
+You keep using the same API throughout a request. TuFT does not forward a Tinker
+request to the OpenAI-compatible endpoint when it chooses the dedicated sampler;
+it calls that sampler's sampling backend. Likewise, turning on shared weights
+does not make OpenAI-compatible traffic borrow the training GPUs.
+
+For Tinker requests, an idle trainer alone is not enough to trigger borrowing.
+The shared-weight sampler must have room, the request must fit its token limit,
+and no training or other operation may be waiting to reserve those GPUs. After a
+training operation, there is also a short pause before borrowing can resume.
+With the default cost-aware policy, TuFT uses recent timings to decide whether
+borrowing is likely to finish sooner than using a dedicated sampler, including
+the time needed to switch phases. It also checks the next expected training
+window when one is known. An eligible request can still go to a dedicated sampler.
+
+Before those timing estimates are available, TuFT learns with one bounded request
+at a time. These probes require a backlog and full dedicated-sampler admission
+slots. If no sampler can accept a request yet, it waits in the bounded Tinker
+queue; a full queue or an expired admission deadline produces an error.
+
+For example, suppose several tenants request rollouts through the Tinker client
+while the trainer is idle. TuFT can place some of those requests on the
+shared-weight sampler if borrowing is worthwhile. As soon as a training operation is
+queued, TuFT stops admitting new work there and waits for its active requests to
+finish before training starts. Dedicated samplers continue serving requests,
+including any OpenAI-compatible traffic, throughout that phase change.
 
 ## Enable shared weights
 
-Start with one of these configurations from `benchmarks/shared-weight/`:
+To try the feature, start with the configuration that matches your training backend
+in `benchmarks/shared-weight/`:
 
 - {download}`HF: two H100 80GB GPUs <../../../../benchmarks/shared-weight/tuft_config.shared-weight.h100.yaml>`.
 - {download}`FSDP: four H100 80GB GPUs <../../../../benchmarks/shared-weight/tuft_config.shared-weight.fsdp.h100.yaml>`.
@@ -23,9 +66,10 @@ For example, from the repository root:
 tuft launch --config benchmarks/shared-weight/tuft_config.shared-weight.h100.yaml
 ```
 
-These are starting configurations, not the settings of the benchmark below.
-Check the model, context length and memory budget before using them.
-The main `config/tuft_config.example.yaml` also has a commented shared-weight block.
+Adjust the model, context length and memory budget for your workload before
+launching. These examples use different settings from the saved benchmark below.
+If you already have a TuFT configuration, the commented shared-weight block in
+`config/tuft_config.example.yaml` shows the options to add.
 
 | Setting | Requirement |
 | --- | --- |
@@ -40,53 +84,78 @@ With two sampling replicas, HF uses two GPUs. FSDP with two ranks uses four:
 two shared training/sampling GPUs and two dedicated sampling GPUs. Each base
 model reserves its own group. Shared weights must be unquantized.
 
-Set `flex_max_tokens` (default: 256) high enough for the prompt plus requested output of requests
-you want to borrow capacity for. Longer requests stay on the dedicated sampler.
-`flex_max_inflight` limits concurrent borrowed work. `max_queued_requests` and
-`queue_timeout_s` bound admission waits. `cost_aware_borrowing` is enabled by
-default; it borrows only when the estimated benefit covers switching costs and
-fits before the next known training window. A cold model uses one bounded probe
-at a time. `scheduling_trace_capacity` enables a bounded decision log.
+### Size the borrowing limit for your requests
 
-## How it works
+`flex_max_tokens` defaults to 256, which is usually too small for agent rollouts
+with long prompts. TuFT estimates a Tinker request's token budget as:
 
-The trainer owns the frozen storage. The borrowing vLLM sampler maps it through
-CUDA IPC. HF packs compatible tensors once at startup. FSDP keeps persistent base
-shards and maps each to the matching vLLM tensor-parallel rank. Full weights gathered
-during training are temporary; small normalization and router weights stay
-replicated. Startup checks placement and layouts; unsupported layouts fail
-explicitly. Vocabulary padding may require an additional allocation.
+```text
+num_samples × (prompt tokens + max_tokens per completion)
+```
 
-When training is queued, the scheduler stops admitting borrowed work, waits for
-active requests to finish, and sleeps the borrowing sampler to release KV memory.
-It wakes the sampler when borrowing resumes. Admission is bounded and fair across
-tenants, with adapter grouping to reduce switching. Predictive wave alignment is
-outside this feature. OpenAI-compatible requests stay on the dedicated sampler;
-scheduled Tinker requests can use both.
+Here, `max_tokens` is the requested output limit, not the eventual output length.
+Requests above `flex_max_tokens` use dedicated samplers. For example, with a limit
+of 8,192, a 3,000-token prompt asking for one completion of up to 256 tokens fits
+(3,256 tokens). Asking for four completions in the same call does not (13,024
+tokens). This is an eligibility check, not a promise that a fitting request will
+be sent to the shared-weight sampler.
 
-This experimental integration supports BF16 Qwen3 and Qwen3.5-family dense/MoE
-text layouts and checks the tested torch 2.11.0 / vLLM 0.24.0 pair. It uses internal,
-version-sensitive interfaces, including CUDA IPC reducers and model/PEFT hooks.
-An upgrade needs fresh compatibility checks.
+`flex_max_inflight` limits how many requests can borrow at once. Keep
+`cost_aware_borrowing` enabled to account for switching costs. You can set
+`scheduling_trace_capacity` to keep a bounded log of scheduling decisions when
+you want to understand why a request did or did not borrow capacity.
+`max_queued_requests` and `queue_timeout_s` control the Tinker admission queue;
+they do not govern the OpenAI-compatible proxy path.
 
-The trainer process must outlive its shared views. An observed actor or phase
-failure disables borrowing. Already-published snapshots remain usable on the
-dedicated sampler; training and new publications require a restart. FSDP input
-rejections and known checkpoint I/O errors are recoverable only when every rank
-has finished safely. Uncertain collective or partial-update failures disable the
-group. Training/inference numerical calibration is separate: this mode does not
-promise identical log probabilities across engines.
+## What happens to the weights?
+
+The trainer owns the frozen base weights. The shared-weight vLLM sampler accesses
+that same GPU storage through CUDA IPC, so it does not need another full base
+copy on the training GPUs. When training needs the GPUs, TuFT waits for borrowed
+requests to finish and puts the sampler to sleep to free its KV cache. It wakes
+the sampler when borrowing resumes.
+
+With HF, compatible weight tensors are packed once during startup. With FSDP,
+the base stays sharded: each sampler tensor-parallel rank shares the corresponding
+trainer shard. Full weights gathered during training are temporary. Small
+normalization and router weights remain replicated, and vocabulary padding can
+require an additional allocation. Startup checks the layout and rejects
+unsupported configurations explicitly.
+
+### Compatibility and recovery
+
+The experimental integration supports BF16 Qwen3 and Qwen3.5-family dense/MoE text
+layouts. It checks for the tested torch 2.11.0 / vLLM 0.24.0 pair because some of
+the integration uses internal, version-sensitive interfaces. Test compatibility
+again before upgrading those packages.
+
+The trainer process must stay alive while the sampler uses its storage. If TuFT
+observes an actor or phase-switch failure, it disables borrowing. You can still
+sample already-published snapshots on a healthy dedicated sampler, but training
+and new publications require a restart. FSDP can recover from input rejections
+and known checkpoint I/O errors only after every rank has finished safely. An
+uncertain collective failure or partially applied update disables the group.
+
+Sharing weights does not guarantee identical log probabilities across the
+training and inference engines. Numerical calibration is a separate task.
+Predictive wave alignment is also outside this feature. The default configuration
+does not add a delay to align training bursts.
 
 ## Saved benchmark
 
-These measurements come from an earlier revision, before this PR was extracted.
-They are one ordered comparison with one base model, not a new GPU measurement of
-the current branch or a general speedup guarantee.
+We checked the system with a small multi-tenant agent workload. In this saved
+comparison, shared weights helped finish the workload sooner and reduced average
+sampling latency. However, requests at the 95th percentile took longer, with the
+delays concentrated at startup. The measurements
+come from an earlier revision, before this PR was extracted. They are one ordered
+comparison with one base model, so they do not establish a general speedup or
+measure the current branch after its later fixes.
 
 The workload used two H100 80GB GPUs, Qwen3-4B with the HF trainer, and eight tenants
-with independent rank-8 adapters. Each tenant performed six updates. Each update
-used four trajectories, each with two tool lookups followed by a shipping decision.
-Tool results fed later prompts, and generated tokens fed real LoRA updates.
+with independent rank-8 adapters. Each tenant performed six updates. For each update,
+an agent tried four trajectories: it looked up policy and stock information, then
+decided whether to ship an order. The tool results became part of the next prompt,
+and the generated tokens fed real LoRA updates.
 Prompts ranged from 1,781 to 3,604 tokens; outputs were short JSON actions.
 
 Both arms used eager sampling, an 8,192-token context limit, a 4 GiB KV cache budget
@@ -137,12 +206,15 @@ drains did not cause these outliers. No predictive holds were applied.
 
 ![Startup tail](../../../../benchmarks/shared-weight/startup-tail.png)
 
-The saved telemetry cannot explain why the dedicated sampler started more slowly.
-Calibration under sustained load, correlated engine timing, and representative
-warmup remain follow-up work. The full-run results above include startup.
-Training service also improved, so the wall-time gain cannot all be attributed
-to scheduling. This workload verifies system behavior, not learning convergence
-or numerical equivalence between training and inference.
+The saved telemetry does not tell us why the dedicated sampler started more
+slowly. The next steps are to calibrate under sustained load, connect scheduler
+timings to engine timings, and make warmup resemble the real workload. The results
+above keep startup included rather than hiding that cost.
+
+Training also completed faster in the shared-weight run, so we cannot attribute
+all of the wall-time improvement to scheduling. This workload checks that the
+system can serve and train multiple tenants; it does not establish learning
+convergence or numerical equivalence between training and inference.
 
 Code, example configurations, figures and raw telemetry are in
 `benchmarks/shared-weight/`. You can download the

@@ -140,7 +140,7 @@ supported_models:
     #   max_queued_requests: 1024     # Reject new requests when the queue is full.
     #   queue_timeout_s: 120         # Admission deadline; running work is not cancelled.
     #   flex_max_inflight: 4         # Concurrent requests borrowing the training GPU.
-    #   flex_max_tokens: 8192        # Prompt + output token cap; default 256 is too low here.
+    #   flex_max_tokens: 8192        # num_samples * (prompt tokens + max_tokens); default 256.
     #   cost_aware_borrowing: true   # Require estimated benefit to cover switching costs.
     #   borrow_probe_tokens: 8192   # Token cap for one cold-start calibration request.
     #   sampling_alignment_s: 0     # No deliberate delay to align training bursts.
