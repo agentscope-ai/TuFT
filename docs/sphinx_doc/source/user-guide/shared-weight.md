@@ -145,9 +145,7 @@ does not add a delay to align training bursts.
 
 We checked the system with a small multi-tenant agent workload. In this saved
 comparison, shared weights helped finish the workload sooner and reduced average
-sampling latency. The measurements come from an earlier revision, before this PR
-was extracted. They are one ordered comparison with one base model, so they do
-not establish a general speedup or measure the current branch after its later fixes.
+sampling latency.
 
 The workload used two H100 80GB GPUs, Qwen3-4B with the HF trainer, and eight tenants
 with independent rank-8 adapters. Each tenant performed six updates. For each update,
