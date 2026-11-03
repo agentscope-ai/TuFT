@@ -145,11 +145,9 @@ does not add a delay to align training bursts.
 
 We checked the system with a small multi-tenant agent workload. In this saved
 comparison, shared weights helped finish the workload sooner and reduced average
-sampling latency. However, requests at the 95th percentile took longer, with the
-delays concentrated at startup. The measurements
-come from an earlier revision, before this PR was extracted. They are one ordered
-comparison with one base model, so they do not establish a general speedup or
-measure the current branch after its later fixes.
+sampling latency. The measurements come from an earlier revision, before this PR
+was extracted. They are one ordered comparison with one base model, so they do
+not establish a general speedup or measure the current branch after its later fixes.
 
 The workload used two H100 80GB GPUs, Qwen3-4B with the HF trainer, and eight tenants
 with independent rank-8 adapters. Each tenant performed six updates. For each update,
@@ -177,8 +175,8 @@ wave is included.
 | Mean NVML GPU utilization, both GPUs | 36.48% | 40.44% |
 
 Both arms reserved two GPUs, so allocated GPU-seconds/update is twice the wall
-time divided by 48 updates. It fell **6.98%**. Mean sampling latency fell **30.28%**,
-while p95 rose **24.62%**. Storage checks found 8,044,936,192 unique shared base bytes,
+time divided by 48 updates. It fell **6.98%**, and mean sampling latency fell
+**30.28%**. Storage checks found 8,044,936,192 unique shared base bytes,
 zero copied base parameters and unchanged frozen-weight hashes.
 
 ![Agent workload results](../../../../benchmarks/shared-weight/agent-results.png)
@@ -195,29 +193,17 @@ which engine was active or why utilization changed.
 
 ![GPU utilization](../../../../benchmarks/shared-weight/gpu-utilization.png)
 
-### Startup latency and limits
+### What this means for your deployment
 
-All 29 requests above the shared-weight arm's pooled p95 were first-turn requests
-in the initial round. Later-round p95 was 1.937 s versus 2.813 s static. Warmup
-sampling bypassed the scheduler, and the dedicated sampler's initial service was
-slower in the shared-weight run. The borrowing sampler made nine serial cold
-probes while waiting for the dedicated sampler to drain. Training and publication
-drains did not cause these outliers. No predictive holds were applied.
+Shared weights are useful when borrowing the training GPUs lets your tenants
+complete more rollout-and-update work with the same GPU allocation. When deciding
+whether to enable the feature, focus on completed updates per GPU-second and
+whether the shared memory layout leaves enough room for your contexts and batches.
+Keep sampling latency within the limits your agents need; faster overall training
+does not guarantee that every request finishes sooner.
 
-![Startup tail](../../../../benchmarks/shared-weight/startup-tail.png)
-
-The saved telemetry does not tell us why the dedicated sampler started more
-slowly. The next steps are to calibrate under sustained load, connect scheduler
-timings to engine timings, and make warmup resemble the real workload. The results
-above keep startup included rather than hiding that cost.
-
-Training also completed faster in the shared-weight run, so we cannot attribute
-all of the wall-time improvement to scheduling. This workload checks that the
-system can serve and train multiple tenants; it does not establish learning
-convergence or numerical equivalence between training and inference.
-
-Code, example configurations, figures and raw telemetry are in
-`benchmarks/shared-weight/`. You can download the
-{download}`raw telemetry <../../../../benchmarks/shared-weight/agent-telemetry.json>`
-and {download}`summary <../../../../benchmarks/shared-weight/agent-results.json>`.
-To regenerate reports without GPU work, see that directory's README.
+In this short comparison, full-run sampling p95 increased from 4.072 s to 5.075 s.
+The slow requests were concentrated in the first measured rollout round. This is
+a request-latency result, not a measure of server startup time, and it does not
+establish the latency of a long-running deployment. The table includes that first
+round so you can see the tradeoff alongside the throughput benefit.

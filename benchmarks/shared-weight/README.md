@@ -32,6 +32,33 @@ run. It is the arithmetic mean of NVML GPU-active percentages sampled roughly
 every 0.2 seconds, not SM occupancy or FLOP utilization. The two-GPU average is
 36.48% static versus 40.44% shared weights (+3.97 percentage points).
 
+## Latency diagnosis and measurement limits
+
+The reported p95 is sampling-request latency over the entire timed workload,
+including the first rollout round. Server initialization and warmup are excluded.
+We examined the first round because the full-run p95 rose from 4.072 s to 5.075 s,
+even though average latency and workload completion time improved. It is a check
+on the cost of borrowing, not the feature's main optimization target.
+
+All 29 requests above the shared-weight arm's pooled p95 were first-turn requests
+in the initial round. Later-round p95 was 1.937 s versus 2.813 s static. Warmup
+sampling bypassed the scheduler, and the dedicated sampler's initial service was
+slower in the shared-weight run. The borrowing sampler made nine serial cold
+probes while waiting for the dedicated sampler to drain. Training and publication
+drains did not cause these outliers. No predictive holds were applied.
+
+![Startup-tail diagnosis](startup-tail.png)
+
+The saved telemetry does not explain why the dedicated sampler started more
+slowly. Calibration under sustained load, correlated scheduler/engine timing, and
+representative warmup remain follow-up investigations. Later-round results help
+locate the slow requests; they do not replace the full-run result or establish
+steady-state latency in a long-running deployment.
+
+Training service also improved, so the wall-time gain cannot all be attributed
+to scheduling. This workload verifies multi-tenant system behavior, not learning
+convergence or numerical equivalence between training and inference.
+
 ## Regenerate reports without GPUs
 
 From the repository root, using an environment with Matplotlib installed:
