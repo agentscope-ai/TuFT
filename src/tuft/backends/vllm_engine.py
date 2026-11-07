@@ -83,6 +83,7 @@ class VLLMEngineConfig:
     moe_backend: Literal["auto", "triton"] = "auto"
     gdn_prefill_backend: Literal["flashinfer", "triton", "cutedsl"] | None = None
     max_num_seqs: int | None = None
+    enable_metrics: bool = False
     # Trusted physical devices reserved by the colocated FSDP actors.
     shared_gpu_ids: list[str] | None = None
 
@@ -198,7 +199,7 @@ class VLLMEngine:
                 enforce_eager=self.config.enforce_eager,
                 override_generation_config=override_generation_config,
                 reasoning_parser=self.config.reasoning_parser,  # type: ignore[arg-type]
-                disable_log_stats=True,
+                disable_log_stats=not self.config.enable_metrics,
                 enable_log_requests=self.config.enable_log_requests,
                 enable_lora=self.config.enable_lora,
                 max_lora_rank=self.config.max_lora_rank,  # type: ignore[arg-type]
@@ -239,6 +240,31 @@ class VLLMEngine:
                 self._shared_manifest_dir.cleanup()
             await self._run_api_server()
             self._prepared = True
+
+    def sampling_metrics(self) -> dict:
+        """Read public Prometheus counters, including on the non-HTTP shared replica."""
+        from prometheus_client import REGISTRY
+
+        names = {
+            "vllm:num_requests_running",
+            "vllm:num_requests_waiting",
+            "vllm:kv_cache_usage_perc",
+            "vllm:num_preemptions_total",
+            "vllm:generation_tokens_total",
+            "vllm:iteration_tokens_total_sum",
+            "vllm:iteration_tokens_total_count",
+        }
+        result = {}
+        latest_lora = float("-inf")
+        for family in REGISTRY.collect():
+            for sample in family.samples:
+                if sample.name in names:
+                    result[sample.name] = result.get(sample.name, 0.0) + sample.value
+                elif sample.name == "vllm:lora_requests_info" and sample.value > latest_lora:
+                    latest_lora = sample.value
+                    adapters = sample.labels.get("running_lora_adapters", "")
+                    result["running_lora_adapters"] = len([v for v in adapters.split(",") if v])
+        return result
 
     async def reset_prefix_cache(self) -> bool:
         """Diagnostic cache-reset control; callers must first drain requests."""

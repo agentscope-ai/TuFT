@@ -1,0 +1,36 @@
+{
+  "source_commit": "bf5e578ade09de73d5ed0680928e6e6bd5f4b314",
+  "same_initial_adapters": true,
+  "same_runtime_packages": true,
+  "same_client_timing": true,
+  "only_model_config_difference": "sampling.borrowing.max_request_tokens: 1 (static) vs 8192 (borrowing)",
+  "report_sha256": "03b9b7c6ee163eeb91d96624ae506e1fab2d4f364e41ec723fb8318ba4b209ee",
+  "arms": {
+    "off": {
+      "sha256": "5acbe1acd88324b28f3b7e26dd16609a68930eac3fb9b3526f8cf0feadb96149",
+      "requests": 736,
+      "updates": 23,
+      "trajectories": 184,
+      "borrowed_completions": 0,
+      "frozen_base_unchanged": true,
+      "copied_base_parameters": 0,
+      "failed_sampling_requests": 0,
+      "output_limited_requests": 0,
+      "elapsed_s": 1045.0764844072983,
+      "wall_s": 1390.7495906352997
+    },
+    "on": {
+      "sha256": "0d5b4fbb889c5b1862d0cd9f0e0e2a624ed6f3a53e5658241b93ee3f006e4e75",
+      "requests": 672,
+      "updates": 21,
+      "trajectories": 168,
+      "borrowed_completions": 41.0,
+      "frozen_base_unchanged": true,
+      "copied_base_parameters": 0,
+      "failed_sampling_requests": 0,
+      "output_limited_requests": 0,
+      "elapsed_s": 1193.1331627713516,
+      "wall_s": 1538.5944752693176
+    }
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "off": {
+    "frozen_base_unchanged": true,
+    "copied_parameters": 0,
+    "requests": 768,
+    "updates": 24,
+    "all_tenants_updated": true,
+    "output_limited": 0,
+    "measurement_window": [
+      240.0,
+      840.0
+    ],
+    "checkpoint_events": 16,
+    "checkpoint_queue_max_s": 31.193846727721393,
+    "checkpoint_service_max_s": 0.5045528011396527,
+    "publication_count": 16,
+    "global_publication_gate_events": 0
+  },
+  "on": {
+    "frozen_base_unchanged": true,
+    "copied_parameters": 0,
+    "requests": 736,
+    "updates": 23,
+    "all_tenants_updated": true,
+    "output_limited": 0,
+    "measurement_window": [
+      240.0,
+      840.0
+    ],
+    "checkpoint_events": 17,
+    "checkpoint_queue_max_s": 31.50010187458247,
+    "checkpoint_service_max_s": 0.6293038688600063,
+    "publication_count": 17,
+    "global_publication_gate_events": 0
+  },
+  "matching_initial_adapters": true,
+  "raw_sha256": {
+    "tenants-8-on.json": "82be7b54db12e6aa6969fe35ef4fc8907abcf6656b55260c058aba9e28ee1776",
+    "tenants-8-on-wall.json": "0a354ddb58e7d39e3636b8b1e094762163b88ba7ff5fcb129f739cd3e8f4097c",
+    "tenants-8-off-wall.json": "a18fce0b7ab26f5abd46951c8dab7855ded8563e55bb65fb4229b2d0a35a38f5",
+    "tenants-8-off.json": "6d7a7f4e2610fe35469552091c0c25f8d2bca92eb3efa29a8bfaced68810c576"
+  }
+}

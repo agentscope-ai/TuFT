@@ -1,6 +1,6 @@
 """Controller/backend integration with controllable Ray and sampling boundaries.
 
-Real GPU engine coverage lives in benchmarks/shared-weight/benchmark_shared_weight.py. These tests
+Real GPU engine coverage lives in benchmarks/borrowing/benchmark_shared_weight.py. These tests
 exercise the production factories, shared gate, sequence guard and tenant routing
 without CUDA, sockets, or a running service.
 """
@@ -16,7 +16,7 @@ from tuft.auth import User
 from tuft.backends.base_backend import BaseSamplingBackend, BaseTrainingBackend
 from tuft.backends.sampling_backend import DPSamplingBackend
 from tuft.backends.training_backend import HFTrainingBackend
-from tuft.config import AppConfig, ModelConfig, SchedulingConfig
+from tuft.config import AppConfig, ModelConfig, SamplingConfig
 from tuft.exceptions import SequenceConflictException, UserMismatchException
 from tuft.state import ServerState
 
@@ -145,7 +145,7 @@ def state(tmp_path, monkeypatch, request):
         colocate=True,
         data_parallel_size=2,
         sampling_kv_cache_memory_bytes=16 * 1024**3,
-        scheduling=SchedulingConfig(policy="shared_weight", training_quiet_s=0),
+        sampling=SamplingConfig.model_validate({"borrowing": {"enabled": True}}),
     )
     models = [model]
     if getattr(request, "param", 1) == 2:
@@ -172,6 +172,51 @@ async def create_run(state, user, model="Qwen/Qwen3-0.6B"):
     )
     run = await state.create_model(session.session_id, model, types.LoraConfig(rank=8), user, None)
     return session.session_id, run.training_run_id
+
+
+@pytest.mark.integration
+async def test_ready_optimizer_releases_rollout_before_unrelated_backward(state):
+    server, updates, _, _ = state
+    await server.async_init()
+    _, owner = await create_run(server, "owner")
+    _, waiting = await create_run(server, "waiting")
+    _, ready = await create_run(server, "ready")
+    backend = server.training.training_backends["Qwen/Qwen3-0.6B"]
+    entered, release = asyncio.Event(), asyncio.Event()
+    order = []
+
+    async def forward(*args, **kwargs):
+        if not entered.is_set():
+            entered.set()
+            await release.wait()
+        else:
+            order.append("backward")
+            assert updates[ready] == 1
+        return types.ForwardBackwardOutput(
+            loss_fn_output_type="cross_entropy", loss_fn_outputs=[], metrics={}
+        )
+
+    backend.model.forward = SimpleNamespace(remote=forward)
+    active = asyncio.create_task(
+        server.run_forward(owner, "owner", [], "cross_entropy", None, None, backward=True)
+    )
+    await asyncio.wait_for(entered.wait(), 2)
+    queued = asyncio.create_task(
+        server.run_forward(waiting, "waiting", [], "cross_entropy", None, None, backward=True)
+    )
+    async with asyncio.timeout(2):
+        while backend.scheduler.snapshot()["training_pending"] < 2:
+            await asyncio.sleep(0)
+    optimizer = asyncio.create_task(server.run_optim_step(ready, "ready", types.AdamParams(), 1))
+    async with asyncio.timeout(2):
+        while backend.scheduler.snapshot()["training_pending"] < 3:
+            await asyncio.sleep(0)
+    release.set()
+    await asyncio.gather(active, queued, optimizer)
+    assert order == ["backward"]
+    assert backend.scheduler.snapshot()["training_priority_overtakes"] == 1
+    assert server.training.training_runs[ready].next_seq_id == 2
+    await server.shutdown()
 
 
 @pytest.mark.integration
@@ -249,21 +294,15 @@ async def test_hf_complete_update_telemetry_and_snapshot_identity(state):
     await server.async_init()
     session, run_id = await create_run(server, "alice")
     _, other_id = await create_run(server, "alice")
-    pool = server.sampling._base_backends["Qwen/Qwen3-0.6B"]
-    scheduler = pool.scheduler
     for _ in range(2):
         await server.run_forward(run_id, "alice", [], "cross_entropy", None, None, backward=True)
-    assert not scheduler.profiler.arrivals[run_id]
     await server.run_optim_step(run_id, "alice", types.AdamParams(), None)
-    assert scheduler.profiler.states[run_id].observations == 1
-    assert other_id not in scheduler.profiler.states
     checkpoint = await server.save_checkpoint(run_id, "alice", "published", "sampler")
     sampler = await server.create_sampling_session(
         session, None, checkpoint.tinker_path, "alice", session_seq_id=0
     )
     record = server.sampling.sampling_sessions[sampler]
     assert record.model_id == sampler
-    assert scheduler.profiler.states[run_id].observations == 1
 
     request = types.SampleRequest(
         sampling_session_id=sampler,
@@ -274,7 +313,6 @@ async def test_hf_complete_update_telemetry_and_snapshot_identity(state):
     )
     await asyncio.wait_for(server.run_sample(request, "alice"), 2)
     assert [sample["lora_id"] for r in Replica.instances for sample in r.samples] == [sampler]
-    assert scheduler.profiler.states[run_id].observations == 1
     await server.shutdown()
 
 
@@ -291,7 +329,6 @@ async def test_many_adapters_on_two_bases_keep_publications_and_training_isolate
     runs = []
     sampling_release = asyncio.Event()
     for model, pool in pools.items():
-        pool.scheduler.config.cost_aware_borrowing = False
         pool.scheduler.config.max_inflight_per_replica = 16
         for replica in pool._instances:
             replica.sample_release = sampling_release
@@ -337,6 +374,11 @@ async def test_many_adapters_on_two_bases_keep_publications_and_training_isolate
             s.snapshot().get("admitted", 0) + s.snapshot()["queued"] == 32 for s in schedulers
         ):
             await asyncio.sleep(0.001)
+        # Publication leaves a brief training grace period. Keep real overflow
+        # queued until the unoccupied model can borrow after that period.
+        async with asyncio.timeout(2):
+            while not list(pools.values())[1]._instances[0].samples:
+                await asyncio.sleep(0.001)
         sampling_release.set()
         await asyncio.gather(*tasks)
     first, second = pools.values()
@@ -348,7 +390,6 @@ async def test_many_adapters_on_two_bases_keep_publications_and_training_isolate
         assert set(seen) == expected
         assert all(seen.count(s) == 4 for s in expected)
         assert pool.scheduler.snapshot()["active"] == [0, 0]
-    assert sum(s.snapshot()["adapter_grouped_requests"] for s in schedulers) > 0
     record_property("base_models", len(pools))
     record_property("published_adapters", len(samplers))
     record_property("completed_samples", len(tasks))
@@ -369,11 +410,13 @@ def test_host_adapter_cache_capacity_is_independent_of_gpu_slots():
         max_model_len=512,
         max_loras=4,
         max_cpu_loras=128,
+        sampling_enable_metrics=True,
     )
     backend = VLLMSamplingBackend.__new__(VLLMSamplingBackend)
     engine = backend._build_engine_config(model, tensor_parallel_size=1, gpu_memory_utilization=0.5)
     assert engine.max_loras == 4
     assert engine.max_cpu_loras == 128
+    assert engine.enable_metrics
     with pytest.raises(ValidationError, match="max_cpu_loras"):
         ModelConfig(
             model_name="qwen",
@@ -414,8 +457,8 @@ async def test_publication_fixed_io_does_not_hold_training_gate(state, tmp_path)
         assert trained and not publication.done()
         release.set()
         await publication
-        assert all("published" in replica.adapters for replica in pool._instances)
-        assert scheduler.snapshot()["publication_estimate_s"] >= 0
+        assert "published" in pool._instances[1].adapters
+        assert "published" not in pool._instances[0].adapters
     finally:
         release.set()
         await publication
@@ -423,20 +466,14 @@ async def test_publication_fixed_io_does_not_hold_training_gate(state, tmp_path)
 
 
 @pytest.mark.integration
-async def test_publication_partial_failure_rolls_back_under_gate(state, tmp_path):
+async def test_failed_dedicated_publication_does_not_load_borrowed_replica(state, tmp_path):
     server, _, _, _ = state
     await server.async_init()
     pool = next(iter(server.sampling._base_backends.values()))
-    original = pool._instances[0].remove_adapter
-
-    async def rollback(adapter):
-        assert pool.scheduler.snapshot()["training_active"]
-        await original(adapter)
 
     async def fail(*args):
         raise RuntimeError("fixed registration failed")
 
-    pool._instances[0].remove_adapter = rollback
     pool._instances[1].add_adapter = fail
     try:
         with pytest.raises(RuntimeError, match="fixed registration failed"):
@@ -452,7 +489,9 @@ async def test_hf_trainer_loss_disables_borrowing_but_keeps_fixed_sampling():
     from tuft.scheduling import ResourceScheduler
 
     backend = HFTrainingBackend.__new__(HFTrainingBackend)
-    scheduler = ResourceScheduler(2, SchedulingConfig(cost_aware_borrowing=False), flex_index=0)
+    scheduler = ResourceScheduler(
+        2, SamplingConfig.model_validate({"borrowing": {"enabled": True}}), flex_index=0
+    )
     backend.scheduler = scheduler
 
     async def lost():
@@ -475,11 +514,17 @@ async def test_sampler_actor_loss_routes_later_requests_to_fixed(monkeypatch):
     from tuft.scheduling import ResourceScheduler
 
     pool = DPSamplingBackend.__new__(DPSamplingBackend)
+    pool.flex_index = 0
     pool.config = ModelConfig(model_name="qwen", model_path=Path("qwen"), max_model_len=512)
     pool.scheduler = ResourceScheduler(
-        2, SchedulingConfig(cost_aware_borrowing=False), flex_index=0
+        2,
+        SamplingConfig.model_validate(
+            {"borrowing": {"enabled": True}, "max_inflight_per_replica": 1}
+        ),
+        flex_index=0,
     )
     calls = []
+    entered, release = asyncio.Event(), asyncio.Event()
 
     async def lost(**kwargs):
         calls.append(0)
@@ -487,6 +532,8 @@ async def test_sampler_actor_loss_routes_later_requests_to_fixed(monkeypatch):
 
     async def fixed(**kwargs):
         calls.append(1)
+        entered.set()
+        await release.wait()
         return types.SampleResponse(sequences=[])
 
     monkeypatch.setattr(
@@ -497,8 +544,93 @@ async def test_sampler_actor_loss_routes_later_requests_to_fixed(monkeypatch):
     )
     prompt = types.ModelInput.from_ints([1])
     params = types.SamplingParams(max_tokens=1)
+    dedicated = asyncio.create_task(pool.sample(prompt, 1, params))
+    await asyncio.wait_for(entered.wait(), 2)
     with pytest.raises(RayActorError):
         await pool.sample(prompt, 1, params)
+    release.set()
+    await dedicated
     await pool.sample(prompt, 1, params)
-    assert calls == [0, 1] and pool.scheduler.snapshot()["flex_failed"]
+    assert calls == [1, 0, 1] and pool.scheduler.snapshot()["flex_failed"]
     await pool.scheduler.close()
+
+
+@pytest.mark.parametrize("borrowing", [False, True])
+async def test_dedicated_routing_is_round_robin_independent_of_borrowing(monkeypatch, borrowing):
+    import tuft.backends.sampling_backend as sampling_module
+
+    Replica.instances = []
+    monkeypatch.setattr(sampling_module, "VLLMSamplingBackend", Replica)
+    config = ModelConfig(
+        model_name="routing",
+        model_path=Path("routing"),
+        max_model_len=512,
+        colocate=borrowing,
+        data_parallel_size=3 if borrowing else 2,
+        sampling_kv_cache_memory_bytes=1024,
+        sampling=SamplingConfig.model_validate({"borrowing": {"enabled": borrowing}}),
+    )
+    pool = DPSamplingBackend(config)
+    expected = [1, 2] if borrowing else [0, 1]
+    assert pool.dedicated_indices == expected
+    if pool.scheduler is not None:
+        # A queued training call removes only the borrowed GPU from eligibility.
+        pool.scheduler._training_pending = 1
+    results = []
+    try:
+        for _ in range(4):
+            response = await pool.sample(
+                types.ModelInput.from_ints([1]), 1, types.SamplingParams(max_tokens=1)
+            )
+            results.append(response.sequences[0].tokens[0] - 10)
+        assert results == expected * 2
+        assert [pool.get_next_openai_api_url() for _ in range(4)] == [
+            f"http://replica-{i}" for i in expected * 2
+        ]
+        assert pool.get_openai_api_urls() == [f"http://replica-{i}" for i in expected]
+    finally:
+        if pool.scheduler is not None:
+            pool.scheduler._training_pending = 0
+        await pool.shutdown()
+
+
+@pytest.mark.integration
+async def test_published_session_can_sample_while_unrelated_trainer_is_busy(state):
+    server, _, _, _ = state
+    await server.async_init()
+    session, run = await create_run(server, "alice")
+    checkpoint = await server.save_checkpoint(run, "alice", "snapshot", "sampler")
+    pool = next(iter(server.sampling._base_backends.values()))
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def train():
+        entered.set()
+        await release.wait()
+
+    training = asyncio.create_task(
+        pool.scheduler.training(train, tenant="another-run", reclaim_sampler_memory=True)
+    )
+    await entered.wait()
+    try:
+        sampler = await asyncio.wait_for(
+            server.create_sampling_session(
+                session, None, checkpoint.tinker_path, "alice", session_seq_id=0
+            ),
+            2,
+        )
+        request = types.SampleRequest(
+            sampling_session_id=sampler,
+            seq_id=1,
+            prompt=types.ModelInput.from_ints([1, 2]),
+            num_samples=1,
+            sampling_params=types.SamplingParams(max_tokens=2),
+        )
+        await asyncio.wait_for(server.run_sample(request, "alice"), 2)
+        assert not training.done()
+        assert sampler in pool._instances[1].adapters
+        assert sampler not in pool._instances[0].adapters
+        assert pool._instances[1].samples[-1]["lora_id"] == sampler
+    finally:
+        release.set()
+        await training
+        await server.shutdown()

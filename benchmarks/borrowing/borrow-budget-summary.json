@@ -1,0 +1,318 @@
+{
+  "budget_5s": {
+    "scheduler": {
+      "admitted": 384.0,
+      "completed": 384.0,
+      "queue_wait_s": 4166.869719182998,
+      "queue_timeouts": 0,
+      "training_queue_wait_s": 947.8936446400005,
+      "training_drain_wait_s": 8.251299948369706e-05,
+      "training_execution_s": 208.10020323299977,
+      "switch_to_training_s": 0.4168366850002485,
+      "switch_to_sampling_s": 0.3289061610000772,
+      "borrow_probes": 1.0,
+      "borrow_probe_requests": 4.0,
+      "borrow_cold_rejections": 32.0,
+      "borrow_cost_rejections": 0,
+      "replica_0_live_rate_updates": 0,
+      "replica_1_live_rate_updates": 11.0,
+      "replica_0_completed": 4.0,
+      "replica_1_completed": 380.0,
+      "borrow_duration_rejections": 5448.0,
+      "training_priority_overtakes": 13.0,
+      "failed": 0
+    },
+    "shared_request_fraction": 0.010416666666666666,
+    "mean_admission_wait_s": 10.851223227039057,
+    "update_p95_s": 76.73442819644994,
+    "peak_gpu_memory_gib": [
+      40.070556640625,
+      26.6353759765625
+    ],
+    "elapsed_s": 576.528535937,
+    "requests": 384,
+    "updates": 32,
+    "requests_per_s": 0.6660554960664801,
+    "output_tokens": 216394,
+    "output_tokens_per_s": 375.33961722867156,
+    "mean_output_tokens": 563.5260416666666,
+    "output_limit_fraction": 0.0,
+    "prompt_range": [
+      1500,
+      2899
+    ],
+    "request_p50_s": 49.528336927,
+    "request_p95_s": 84.66301972654996,
+    "mean_stage_test_fraction": 0.5480784406565656,
+    "final_stage_all_tests_pass_fraction": 0.041666666666666664,
+    "gpu_utilization_percent": [
+      30.471527777777776,
+      29.59861111111111
+    ],
+    "rollout_end_s": 545.454148746,
+    "rollout_gpu_utilization_percent": [
+      27.36844036697248,
+      31.275963302752295
+    ],
+    "training_input_tokens": 1040515,
+    "training_tokens_per_service_s": 5000.067197603769,
+    "frozen_base_unchanged": true,
+    "optimizer": {
+      "count": 32,
+      "queue_p50_s": 6.198512876999985,
+      "queue_p95_s": 48.42188111529997,
+      "queue_max_s": 58.55693776599992,
+      "queue_sum_s": 361.46672968600035,
+      "service_sum_s": 0.9758671129999357
+    },
+    "drain_events_s": [],
+    "max_drain_s": 1.91499998436484e-06,
+    "allocated_gpu_s": 1153.057071874,
+    "updates_per_gpu_hour": 99.90832440997201,
+    "arm_wall_s": 913.983907699585,
+    "shared": {
+      "shared_parameter_bytes": 9682902528,
+      "shared_storage_bytes": 8411504128,
+      "copied_parameter_bytes": 0,
+      "shared_parameters": 331,
+      "copied_parameters": 0,
+      "verified_alias_bytes": 9682902528,
+      "gpu_allocated_bytes": 18013373440,
+      "gpu_free_bytes": 52702216192,
+      "ranks": [
+        {
+          "shared_parameter_bytes": 9682902528,
+          "shared_storage_bytes": 8411504128,
+          "copied_parameter_bytes": 0,
+          "shared_parameters": 331,
+          "copied_parameters": 0,
+          "verified_alias_bytes": 9682902528,
+          "gpu_allocated_bytes": 18013373440,
+          "gpu_free_bytes": 52702216192
+        }
+      ],
+      "sleep_s": 2.319072548000122,
+      "sleep_count": 32,
+      "wake_s": 2.574717624000016,
+      "wake_count": 32,
+      "sleeping": false
+    },
+    "first_update_finished_s": 217.43520349000005,
+    "first_wave_updates_finished_s": 317.48372488300004,
+    "dedicated_gpu_idle_sample_fraction": 0.05520833333333333,
+    "backward": {
+      "first_service_s": 7.4495855919999485,
+      "median_service_s": 6.421342962999972,
+      "service_sum_s": 207.12433611999984
+    },
+    "borrowing": {
+      "budget_s": 5.0,
+      "probe_requests": 4.0,
+      "non_probe_requests": 0.0,
+      "total_requests": 4,
+      "first_admission_s": 0.2398389189999648,
+      "last_admission_s": 0.23996740399996952,
+      "admissions_after_first_update": 0,
+      "busy_intervals": [
+        {
+          "start_s": 0.2398389189999648,
+          "end_s": 13.373007142000006
+        }
+      ],
+      "shared_service_durations_s": [
+        12.92564666200002,
+        12.996491963999972,
+        13.061913759999982,
+        13.130992423999999
+      ],
+      "rejection_counts": {
+        "borrow_rejected_cold": 32.0,
+        "borrow_rejected_probe_full": 47.0,
+        "borrow_rejected_duration": 5448.0,
+        "borrow_rejected_training": 80.0,
+        "borrow_rejected_dwell": 4.0
+      },
+      "saved_rejection_events": 408,
+      "saved_rejection_reasons": {
+        "cold": 32,
+        "probe_full": 12,
+        "duration": 280,
+        "training": 80,
+        "dwell": 4
+      },
+      "saved_rejection_estimate_sources": {
+        "unknown": 32,
+        "observed_service": 12,
+        "scaled_service": 364
+      }
+    }
+  },
+  "budget_35s": {
+    "scheduler": {
+      "admitted": 384.0,
+      "completed": 384.0,
+      "queue_wait_s": 3797.3360851340003,
+      "queue_timeouts": 0,
+      "training_queue_wait_s": 706.6441807439994,
+      "training_drain_wait_s": 7.787500044287299e-05,
+      "training_execution_s": 207.05930771600106,
+      "switch_to_training_s": 0.43255995300000905,
+      "switch_to_sampling_s": 0.40656984399993235,
+      "borrow_probes": 2.0,
+      "borrow_probe_requests": 8.0,
+      "borrow_cold_rejections": 32.0,
+      "borrow_cost_rejections": 205.0,
+      "replica_0_live_rate_updates": 0,
+      "replica_1_live_rate_updates": 11.0,
+      "replica_0_completed": 12.0,
+      "replica_1_completed": 372.0,
+      "borrow_duration_rejections": 3102.0,
+      "training_priority_overtakes": 11.0,
+      "failed": 0
+    },
+    "shared_request_fraction": 0.03125,
+    "mean_admission_wait_s": 9.88889605503646,
+    "update_p95_s": 65.19486112730006,
+    "peak_gpu_memory_gib": [
+      40.115478515625,
+      26.8463134765625
+    ],
+    "elapsed_s": 557.466629902,
+    "requests": 384,
+    "updates": 32,
+    "requests_per_s": 0.6888304687717458,
+    "output_tokens": 219521,
+    "output_tokens_per_s": 393.7832118105271,
+    "mean_output_tokens": 571.6692708333334,
+    "output_limit_fraction": 0.0,
+    "prompt_range": [
+      1500,
+      2899
+    ],
+    "request_p50_s": 47.431550880500026,
+    "request_p95_s": 90.81748791739993,
+    "mean_stage_test_fraction": 0.4868607954545454,
+    "final_stage_all_tests_pass_fraction": 0.0,
+    "gpu_utilization_percent": [
+      33.47360861759425,
+      30.17235188509874
+    ],
+    "rollout_end_s": 530.7478906460001,
+    "rollout_gpu_utilization_percent": [
+      30.6043002640513,
+      31.683892870614862
+    ],
+    "training_input_tokens": 1055271,
+    "training_tokens_per_service_s": 5096.467343778582,
+    "frozen_base_unchanged": true,
+    "optimizer": {
+      "count": 32,
+      "queue_p50_s": 5.986585011499869,
+      "queue_p95_s": 40.64364217795,
+      "queue_max_s": 50.081762702000105,
+      "queue_sum_s": 293.3741596459995,
+      "service_sum_s": 1.062587918000645
+    },
+    "drain_events_s": [],
+    "max_drain_s": 1.6110000160551863e-06,
+    "allocated_gpu_s": 1114.933259804,
+    "updates_per_gpu_hour": 103.32457031576187,
+    "arm_wall_s": 747.2069590091705,
+    "shared": {
+      "shared_parameter_bytes": 9682902528,
+      "shared_storage_bytes": 8411504128,
+      "copied_parameter_bytes": 0,
+      "shared_parameters": 331,
+      "copied_parameters": 0,
+      "verified_alias_bytes": 9682902528,
+      "gpu_allocated_bytes": 18013373440,
+      "gpu_free_bytes": 52723187712,
+      "ranks": [
+        {
+          "shared_parameter_bytes": 9682902528,
+          "shared_storage_bytes": 8411504128,
+          "copied_parameter_bytes": 0,
+          "shared_parameters": 331,
+          "copied_parameters": 0,
+          "verified_alias_bytes": 9682902528,
+          "gpu_allocated_bytes": 18013373440,
+          "gpu_free_bytes": 52723187712
+        }
+      ],
+      "sleep_s": 2.1419074239995552,
+      "sleep_count": 32,
+      "wake_s": 2.629371443999162,
+      "wake_count": 32,
+      "sleeping": false
+    },
+    "first_update_finished_s": 209.5687876080001,
+    "first_wave_updates_finished_s": 312.5548735010002,
+    "dedicated_gpu_idle_sample_fraction": 0.04847396768402154,
+    "backward": {
+      "first_service_s": 7.234948736999968,
+      "median_service_s": 6.352967024500117,
+      "service_sum_s": 205.9967197980004
+    },
+    "borrowing": {
+      "budget_s": 35.0,
+      "probe_requests": 8.0,
+      "non_probe_requests": 4.0,
+      "total_requests": 12,
+      "first_admission_s": 0.16755234200013547,
+      "last_admission_s": 45.342177110999955,
+      "admissions_after_first_update": 0,
+      "busy_intervals": [
+        {
+          "start_s": 0.16755234200013547,
+          "end_s": 13.556402887000104
+        },
+        {
+          "start_s": 13.556552125000053,
+          "end_s": 26.83007831200007
+        },
+        {
+          "start_s": 45.34158109700002,
+          "end_s": 79.63564820800002
+        }
+      ],
+      "shared_service_durations_s": [
+        13.172043298000062,
+        13.240378398999837,
+        13.309234397999944,
+        13.38089074100003,
+        13.13668488999997,
+        13.203098132999912,
+        13.203106388999913,
+        13.270203724999874,
+        30.608788769000057,
+        30.737743476999867,
+        34.10077829499983,
+        34.29035272199985
+      ],
+      "rejection_counts": {
+        "borrow_rejected_cold": 32.0,
+        "borrow_rejected_capacity": 64.0,
+        "borrow_rejected_probe_full": 150.0,
+        "borrow_rejected_cost": 205.0,
+        "borrow_rejected_duration": 3102.0,
+        "borrow_rejected_training": 86.0,
+        "borrow_rejected_dwell": 9.0
+      },
+      "saved_rejection_events": 427,
+      "saved_rejection_reasons": {
+        "cold": 32,
+        "capacity": 64,
+        "probe_full": 25,
+        "cost": 19,
+        "duration": 192,
+        "training": 86,
+        "dwell": 9
+      },
+      "saved_rejection_estimate_sources": {
+        "unknown": 33,
+        "observed_service": 23,
+        "scaled_service": 371
+      }
+    }
+  }
+}

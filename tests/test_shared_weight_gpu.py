@@ -20,7 +20,7 @@ async def test_multi_tenant_training_publication_and_sampling():
         "tuft_shared_weight_validation",
         Path(__file__).resolve().parents[1]
         / "benchmarks"
-        / "shared-weight"
+        / "borrowing"
         / "benchmark_shared_weight.py",
     )
     assert spec is not None and spec.loader is not None

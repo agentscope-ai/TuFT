@@ -13,7 +13,7 @@ from benchmark_shared_weight_agents import (
 )
 from tinker import types
 
-from tuft.config import SchedulingConfig
+from tuft.config import SamplingConfig
 from tuft.scheduling import ResourceScheduler
 
 
@@ -33,12 +33,12 @@ def test_tools_rewards_and_policy_gradient_alignment():
     types.CreateSessionRequest(sdk_version="agent-benchmark", tags=[], user_metadata=None)
 
 
-async def test_long_context_wave_has_bounded_probe_and_matched_fixed_capacity():
-    fixed, flex = scheduling("balanced"), scheduling("shared_weight")
-    assert {k: v for k, v in fixed.items() if k != "policy"} == {
-        k: v for k, v in flex.items() if k != "policy"
+async def test_long_context_wave_has_bounded_overflow_and_matched_fixed_capacity():
+    fixed, flex = scheduling("round_robin"), scheduling("shared_weight")
+    assert {k: v for k, v in fixed.items() if k != "borrowing"} == {
+        k: v for k, v in flex.items() if k != "borrowing"
     }
-    s = ResourceScheduler(2, SchedulingConfig(**flex), flex_index=0)
+    s = ResourceScheduler(2, SamplingConfig(**flex), flex_index=0)
     release, borrowed = asyncio.Event(), asyncio.Event()
     indices = []
 
@@ -53,8 +53,8 @@ async def test_long_context_wave_has_bounded_probe_and_matched_fixed_capacity():
     ]
     try:
         await asyncio.wait_for(borrowed.wait(), 2)
-        assert indices.count(0) == 1 and indices.count(1) == 16
-        assert s.snapshot()["queued"] == 15
+        assert indices.count(0) == 4 and indices.count(1) == 16
+        assert s.snapshot()["queued"] == 12
     finally:
         release.set()
         await asyncio.gather(*jobs)
@@ -76,7 +76,7 @@ def test_benchmark_cli_runs_outside_checkout(script):
     import sys
     from pathlib import Path
 
-    path = Path(__file__).resolve().parents[1] / "benchmarks/shared-weight" / script
+    path = Path(__file__).resolve().parents[1] / "benchmarks/borrowing" / script
     subprocess.run(
         [sys.executable, str(path), "--help"], check=True, capture_output=True, cwd="/tmp"
     )

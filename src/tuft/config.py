@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Iterable, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, TypeAdapter, model_validator
 
 from .persistence import PersistenceConfig
 
@@ -60,54 +60,79 @@ class TelemetryConfig(BaseModel):
     resource_attributes: dict[str, str] = Field(default_factory=dict)
 
 
-class SchedulingConfig(BaseModel):
-    """Bounded multi-tenant sampling and optional training-GPU borrowing."""
+class BorrowingConfig(BaseModel):
+    """Admission and training protection for sampling on training GPUs."""
 
-    policy: Literal["round_robin", "balanced", "shared_weight"] = "round_robin"
+    model_config = {"extra": "forbid"}
+    enabled: bool = False
+    max_inflight: int = Field(default=1, ge=1)
+    max_request_tokens: int = Field(
+        default=256,
+        ge=1,
+        description="Per-request prompt plus output token allowance, summed across samples",
+    )
+
+
+class SamplingConfig(BaseModel):
+    """Borrowing opt-in and its sampling controller settings.
+
+    With borrowing disabled, the dedicated-only path bypasses these admission
+    and trace settings. Replica routing remains round-robin on both paths.
+    """
+
+    model_config = {"extra": "forbid"}
+    borrowing: BorrowingConfig = Field(default_factory=BorrowingConfig)
     max_inflight_per_replica: int = Field(default=32, ge=1)
     max_queued_requests: int = Field(default=1024, ge=1)
     queue_timeout_s: float = Field(default=120, gt=0, allow_inf_nan=False)
-    # Affinity only wins when its extra queued token work fits this fraction.
-    locality_slack: float = Field(default=0.1, ge=0, le=1, allow_inf_nan=False)
-    merge_zero_adapters: bool = True
-    # One bounded window to collect requests for fair, adapter-aware dispatch.
-    adapter_batch_window_s: float = Field(default=0.002, ge=0, le=0.1, allow_inf_nan=False)
-    adapter_batch_max_requests: int = Field(default=32, ge=1, le=4096)
-    flex_max_inflight: int = Field(default=4, ge=1)
-    flex_max_tokens: int = Field(default=256, ge=1)
-    # Briefly keep the training lane open for an arriving optim_step/checkpoint.
-    training_quiet_s: float = Field(default=0.05, ge=0, le=10, allow_inf_nan=False)
-    # Allow a short training burst to finish before placing its next rollout.
-    sampling_alignment_s: float = Field(default=0, ge=0, le=10, allow_inf_nan=False)
-    cost_aware_borrowing: bool = True
-    borrow_min_backlog_tokens: int = Field(default=1024, ge=1)
-    # None inherits the existing per-request Flex cap for the configured workload.
-    borrow_probe_tokens: int | None = Field(default=None, ge=1)
-    borrow_min_dwell_s: float = Field(default=0.1, ge=0, le=60, allow_inf_nan=False)
-    borrow_safety_factor: float = Field(default=1.5, ge=1, le=10, allow_inf_nan=False)
-    # Optional bounded diagnostic ring; no tenant IDs or prompt contents.
     scheduling_trace_capacity: int = Field(default=0, ge=0, le=4096)
 
     @model_validator(mode="before")
     @classmethod
-    def migrate_shared_weights(cls, values):
-        # Accept old shared-mode configs, but never silently enable the retired
-        # duplicate-base mode or change an explicit request to disable sharing.
-        if isinstance(values, dict) and "share_base_weights" in values:
-            values = dict(values)
-            legacy = values.pop("share_base_weights")
-            if legacy is not (values.get("policy", "round_robin") == "shared_weight"):
-                raise ValueError(
-                    "Shared-weight borrowing always shares frozen base weights; "
-                    "remove share_base_weights "
-                    "and use round_robin for static training/sampling"
-                )
+    def migrate_legacy_scheduling(cls, values):
+        """Normalize pre-refactor inputs without overriding explicit borrowing settings."""
+        if not isinstance(values, dict):
+            return values
+        values = dict(values)
+        borrowing = values.get("borrowing", {})
+        if isinstance(borrowing, BorrowingConfig):
+            borrowing = borrowing.model_dump(exclude_unset=True)
+        if not isinstance(borrowing, dict):
+            return values  # Let the nested schema explain the invalid value.
+        borrowing = dict(borrowing)
+        if "enabled" in borrowing:
+            borrowing["enabled"] = TypeAdapter(bool).validate_python(borrowing["enabled"])
+        if "policy" in values:
+            policy = values.pop("policy")
+            if policy not in {"round_robin", "borrow", "shared_weight"}:
+                raise ValueError("Unsupported legacy scheduling policy")
+            enabled = policy != "round_robin"
+            if "enabled" in borrowing and borrowing["enabled"] != enabled:
+                raise ValueError("Conflicting legacy policy and sampling.borrowing.enabled")
+            borrowing["enabled"] = enabled
+        for old, new in {
+            "flex_max_inflight": "max_inflight",
+            "flex_max_tokens": "max_request_tokens",
+        }.items():
+            if old in values:
+                value = values.pop(old)
+                value = getattr(BorrowingConfig.model_validate({new: value}), new)
+                if new in borrowing:
+                    explicit = getattr(BorrowingConfig.model_validate({new: borrowing[new]}), new)
+                    if explicit != value:
+                        raise ValueError(f"Conflicting legacy {old} and borrowing.{new}")
+                borrowing[new] = value
+        if "share_base_weights" in values:
+            shared = TypeAdapter(bool).validate_python(values.pop("share_base_weights"))
+            if shared is not borrowing.get("enabled", False):
+                raise ValueError("Borrowing always shares frozen base weights")
+        values["borrowing"] = borrowing
         return values
 
     @property
     def share_base_weights(self) -> bool:
-        """Internal storage requirement, derived from the selected policy."""
-        return self.policy == "shared_weight"
+        """Storage requirement, derived from borrowing rather than routing."""
+        return self.borrowing.enabled
 
 
 class ModelConfig(BaseModel):
@@ -130,7 +155,17 @@ class ModelConfig(BaseModel):
     # tensor_parallel_size GPUs) and load-balance requests across them.  Ideal for small
     # models where TP introduces unnecessary cross-GPU communication overhead.
     data_parallel_size: int = 1
-    scheduling: SchedulingConfig = Field(default_factory=SchedulingConfig)
+    sampling: SamplingConfig = Field(default_factory=SamplingConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_sampling_config(cls, values):
+        if isinstance(values, dict) and "scheduling" in values:
+            values = dict(values)
+            if "sampling" in values:
+                raise ValueError("Use sampling only; do not also supply legacy scheduling")
+            values["sampling"] = values.pop("scheduling")
+        return values
 
     # default sampling parameters for this model
     temperature: float = 1.0
@@ -219,6 +254,7 @@ class ModelConfig(BaseModel):
     sampling_moe_backend: Literal["auto", "triton"] = "auto"
     sampling_gdn_prefill_backend: Literal["flashinfer", "triton", "cutedsl"] | None = None
     sampling_max_num_seqs: int | None = Field(default=None, gt=0)
+    sampling_enable_metrics: bool = False
     # Max context length for sampling (vLLM) only; if unset, max_model_len is used.
     # Can be set smaller (e.g. 2048) in testing to reduce GPU memory and startup time.
     sampling_max_model_len: int | None = None
@@ -259,13 +295,13 @@ class ModelConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_colocate(self) -> "ModelConfig":
-        fsdp_flex = self.training_backend == "fsdp" and self.scheduling.policy == "shared_weight"
+        fsdp_flex = self.training_backend == "fsdp" and self.sampling.borrowing.enabled
         if self.colocate and self.tensor_parallel_size != 1 and not fsdp_flex:
             raise ValueError("Colocate option is only supported for tensor_parallel_size=1.")
         if (
             self.colocate
             and self.data_parallel_size > 1
-            and self.scheduling.policy != "shared_weight"
+            and self.sampling.borrowing.enabled is False
         ):
             raise ValueError("Colocate option is not supported with data_parallel_size > 1.")
         if self.colocate and not (self.training_enabled and self.sampling_enabled):
@@ -276,24 +312,32 @@ class ModelConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_scheduling(self) -> "ModelConfig":
+    def validate_borrowing(self) -> "ModelConfig":
         if self.data_parallel_size < 1:
             raise ValueError("data_parallel_size must be positive")
-        if self.scheduling.policy == "shared_weight":
+        if self.sampling.borrowing.enabled:
             if self.quantization:
-                raise ValueError("shared_weight requires unquantized shared base weights")
+                raise ValueError(
+                    "sampling.borrowing.enabled requires unquantized shared base weights"
+                )
             if self.sampling_kv_cache_memory_bytes is None:
-                raise ValueError("shared_weight requires sampling_kv_cache_memory_bytes")
+                raise ValueError(
+                    "sampling.borrowing.enabled requires sampling_kv_cache_memory_bytes"
+                )
             if not self.colocate or self.training_backend not in {"hf", "fsdp"}:
-                raise ValueError("shared_weight requires colocate=true and an HF or FSDP trainer")
+                raise ValueError(
+                    "sampling.borrowing.enabled requires colocate=true and an HF or FSDP trainer"
+                )
             if self.training_backend == "fsdp" and self.fsdp_num_gpus != self.tensor_parallel_size:
                 raise ValueError(
-                    "FSDP shared_weight requires fsdp_num_gpus == tensor_parallel_size"
+                    "FSDP sampling.borrowing.enabled requires fsdp_num_gpus == tensor_parallel_size"
                 )
             if self.data_parallel_size < 2:
-                raise ValueError("shared_weight requires at least one fixed and one flex sampler")
+                raise ValueError(
+                    "sampling.borrowing.enabled requires at least one fixed and one flex sampler"
+                )
             if not 0 < self.sampling_memory_fraction < 1:
-                raise ValueError("shared_weight sampling_memory_fraction must be between 0 and 1")
+                raise ValueError("Borrowing sampling_memory_fraction must be between 0 and 1")
         return self
 
     @model_validator(mode="after")
@@ -427,11 +471,12 @@ class AppConfig(BaseModel):
         if len(model_names) != len(self.supported_models):
             raise ValueError("Model names in supported_models must be unique.")
         if len(model_names) > 1 and any(
-            model.colocate and model.scheduling.policy != "shared_weight"
+            model.colocate and model.sampling.borrowing.enabled is False
             for model in self.supported_models
         ):
             raise ValueError(
-                "Multiple models require shared_weight for colocated training/sampling."
+                "Multiple models require sampling.borrowing.enabled "
+                "for colocated training/sampling."
             )
 
     def with_supported_models(self, models: Iterable[ModelConfig]) -> "AppConfig":
@@ -474,12 +519,14 @@ class AppConfig(BaseModel):
                     "__all__": {
                         "capabilities",
                         "scheduling",
+                        "sampling",
                         "max_cpu_loras",
                         "sampling_kv_cache_memory_bytes",
                         "sampling_language_model_only",
                         "sampling_moe_backend",
                         "sampling_gdn_prefill_backend",
                         "sampling_max_num_seqs",
+                        "sampling_enable_metrics",
                     }
                 },
             },

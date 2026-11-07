@@ -441,7 +441,7 @@ def _config_to_worker_dict(config: ModelConfig) -> dict:
         "max_model_len": config.max_model_len,
         "fsdp_override_config": dict(getattr(config, "fsdp_override_config", None) or {}),
         "attn_implementation": getattr(config, "attn_implementation", None),
-        "share_base_weights": config.scheduling.share_base_weights,
+        "share_base_weights": config.sampling.share_base_weights,
         "slot_config": {
             "rank_slots": rank_slots,
             "lora_alpha_ratio": int(getattr(config, "lora_alpha_ratio", DEFAULT_LORA_ALPHA_RATIO)),
@@ -1288,8 +1288,8 @@ class FSDPTrainingBackend(BaseTrainingBackend):
         n_gpus = getattr(self.config, "fsdp_num_gpus", 1)
         n_gpus = max(1, int(n_gpus))
         use_ray = os.environ.get("TUFT_FSDP_NO_RAY") != "1"
-        if not use_ray and self.config.scheduling.policy == "shared_weight":
-            raise ValueError("FSDP shared_weight requires Ray-managed GPU placement")
+        if not use_ray and self.config.sampling.borrowing.enabled:
+            raise ValueError("FSDP borrowing requires Ray-managed GPU placement")
         if not use_ray and n_gpus != 1:
             raise ValueError(
                 "TUFT_FSDP_NO_RAY=1 (no Ray) requires fsdp_num_gpus=1. "

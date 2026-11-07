@@ -1,0 +1,6 @@
+runs/
+# Deployment-specific experiment launchers and environment provenance stay local.
+launch_static_clients_server.py
+launch_tenant_sweep_server.py
+tenant-sweep-20261106-provenance.json
+static-independent-analysis/provenance.json

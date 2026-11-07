@@ -151,6 +151,7 @@ class HFTrainingBackend(BaseTrainingBackend):
             inject_context(trace_context)
             await self._execute(
                 self.model.save_state,
+                scheduler_tenant=lora_id,
                 scheduler_kind="checkpoint",
                 lora_id=lora_id,
                 checkpoint_record=checkpoint_record,

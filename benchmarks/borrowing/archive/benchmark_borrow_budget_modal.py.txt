@@ -1,0 +1,216 @@
+"""One matched 5s/35s borrowing-budget comparison with the current scheduler.
+
+Both arms physically share weights and use representative training warmup.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import shutil
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+import modal
+
+
+if not modal.is_local():
+    sys.path.insert(0, "/validation/benchmarks/borrowing")
+import benchmark_coding_modal as base  # noqa: E402
+
+
+app = modal.App("tuft-shared-weight-borrow-budget")
+image = base.image
+ARMS = {"budget_5s": 5, "budget_35s": 35}
+
+
+@app.function(
+    image=image, cpu=4, memory=8192, timeout=1800, retries=0, volumes={"/data": base.volume}
+)
+def prepare(run_id: str, provenance: dict):
+    subprocess.run(
+        [
+            base.PYTHON,
+            "-c",
+            "from tuft.scheduling import ResourceScheduler; "
+            "from benchmark_shared_weight_agents import run; "
+            "import inspect; assert 'borrow_budget_s' in inspect.signature(run).parameters",
+        ],
+        env=base.environment(),
+        check=True,
+    )
+    return base.prepare.local(run_id, provenance)  # type: ignore[attr-defined]
+
+
+@app.function(
+    image=image,
+    gpu="H100:2",
+    cpu=16,
+    memory=65536,
+    timeout=3600,
+    retries=0,
+    scaledown_window=2,
+    volumes={"/data": base.volume},
+)
+async def compare(run_id: str, model_path: str):
+    import asyncio
+    import sys
+
+    await base.volume.reload.aio()
+    folder = Path("/data") / run_id
+    kernel_cache = Path("/data/kernel-cache/flashinfer")
+    local_cache = Path("/root/.cache/flashinfer")
+    if kernel_cache.exists():
+        shutil.copytree(kernel_cache, local_cache, dirs_exist_ok=True)
+    sandboxes = []
+    results = {}
+    gpu_started = time.time()
+    (folder / "gpu-start.json").write_text(json.dumps(dict(unix_s=gpu_started)))
+    try:
+        for _ in range(8):
+            sandboxes.append(
+                await modal.Sandbox.create.aio(
+                    app=app,
+                    image=base.tool_image,
+                    cpu=1,
+                    memory=1024,
+                    timeout=3600,
+                    block_network=True,
+                )
+            )
+        for arm, budget in ARMS.items():
+            env = base.environment()
+            env["TUFT_CODING_SANDBOX_IDS"] = json.dumps([s.object_id for s in sandboxes])
+            if results:
+                env["TUFT_EXPECTED_ADAPTER_HASHES"] = json.dumps(
+                    results["budget_5s"]["initial_adapter_fingerprints"]
+                )
+            command = [
+                base.PYTHON,
+                str(base.REMOTE / "benchmark_shared_weight_agents.py"),
+                "--policy",
+                "shared_weight",
+                "--model-path",
+                model_path,
+                "--workload",
+                "coding",
+                "--tenants",
+                "16",
+                "--trajectories",
+                "3",
+                "--rounds",
+                "2",
+                "--adapter-seed",
+                "20261103",
+                "--borrow-budget-s",
+                str(budget),
+                "--representative-warmup",
+                "--output",
+                str(folder / f"{arm}.json"),
+            ]
+            print("ARM_START", arm, flush=True)
+            arm_started = time.time()
+            process = await asyncio.create_subprocess_exec(
+                *command, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+            )
+            assert process.stdout is not None
+            try:
+                async with asyncio.timeout(1650):
+                    with (folder / f"{arm}.log").open("w") as log:
+                        async for line in process.stdout:
+                            message = line.decode(errors="replace")
+                            log.write(message)
+                            log.flush()
+                            sys.stdout.write(message)
+                            sys.stdout.flush()
+                            if message.startswith("PROGRESS ") or "UPDATE_DONE" in message:
+                                await base.volume.commit.aio()
+                    code = await process.wait()
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+                await base.volume.commit.aio()
+            if code:
+                raise RuntimeError(f"{arm} failed ({code}); telemetry retained, no retries")
+            result = json.loads((folder / f"{arm}.json").read_text())
+            assert len(result["requests"]) == 384 and len(result["updates"]) == 32
+            assert result["frozen_base_unchanged"] and result["shared"]["copied_parameters"] == 0
+            result["arm_wall_s"] = time.time() - arm_started
+            results[arm] = result
+            (folder / f"{arm}.json").write_text(json.dumps(result))
+            await base.volume.commit.aio()
+        assert (
+            results["budget_5s"]["initial_adapter_fingerprints"]
+            == results["budget_35s"]["initial_adapter_fingerprints"]
+        ), "Starting adapters differ"
+        (folder / "comparison.json").write_text(json.dumps(results))
+        return results
+    finally:
+        (folder / "gpu-time.json").write_text(
+            json.dumps(
+                dict(
+                    started_unix_s=gpu_started,
+                    ended_unix_s=time.time(),
+                    function_wall_s=time.time() - gpu_started,
+                    gpu_count=2,
+                ),
+                indent=2,
+            )
+        )
+        try:
+            if local_cache.exists():
+                shutil.copytree(local_cache, kernel_cache, dirs_exist_ok=True)
+            await base.volume.commit.aio()
+        finally:
+            for sandbox in sandboxes:
+                await sandbox.terminate.aio()
+
+
+@app.local_entrypoint()
+def main():
+    run_id = "borrow-budget-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    output = base.BENCH / "runs" / run_id
+    output.mkdir(parents=True)
+    sources = list((base.ROOT / "src").rglob("*.py")) + list(base.BENCH.glob("*.py"))
+    provenance = dict(
+        run_id=run_id,
+        model=base.MODEL,
+        model_revision=base.REVISION,
+        git_head=subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=base.ROOT, text=True
+        ).strip(),
+        source_sha256={
+            str(p.relative_to(base.ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in sources
+        },
+        arm_order=list(ARMS),
+        borrowing_budgets_s=ARMS,
+        representative_training_warmup=True,
+        restore_adapters_and_optimizer_after_warmup=True,
+        initial_lora_b_value=1e-5,
+        evaluation=dict(max_actual_drain_s=20, max_update_p95_regression_fraction=0.10),
+        gpu="H100:2",
+        tenants=16,
+        trajectories=3,
+        updates_per_tenant=2,
+        turns=4,
+        adapter_seed=20261103,
+        max_output_tokens=1536,
+        automatic_retries=0,
+        both_policies="current shared_weight scheduler",
+    )
+    (output / "provenance.json").write_text(json.dumps(provenance, indent=2))
+    for source in sources:
+        destination = output / "source" / source.relative_to(base.ROOT)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+    print("RUN_ID", run_id, flush=True)
+    preflight = prepare.remote(run_id, provenance)  # type: ignore[attr-defined]
+    (output / "preflight.json").write_text(json.dumps(preflight, indent=2))
+    result = compare.remote(run_id, preflight["model_path"])  # type: ignore[attr-defined]
+    (output / "comparison.json").write_text(json.dumps(result))
+    print("SAVED", output, flush=True)

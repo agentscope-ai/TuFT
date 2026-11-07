@@ -11,7 +11,7 @@ from tuft.backends.fsdp_shared_weights import shared_fsdp_placement
 from tuft.backends.fsdp_training_backend import FSDPTrainingBackend
 from tuft.backends.sampling_backend import VLLMSamplingBackend
 from tuft.backends.vllm_engine import VLLMEngine
-from tuft.config import ModelConfig, SchedulingConfig
+from tuft.config import ModelConfig, SamplingConfig
 from tuft.scheduling import ResourceScheduler
 
 
@@ -57,7 +57,7 @@ def test_fsdp_shared_weight_requires_matching_groups(world_size):
         fsdp_num_gpus=world_size,
         tensor_parallel_size=world_size,
         data_parallel_size=2,
-        scheduling={"policy": "shared_weight", "share_base_weights": True},
+        sampling={"policy": "shared_weight", "share_base_weights": True},
         sampling_kv_cache_memory_bytes=2**30,
     )
     assert ModelConfig.model_validate(args).fsdp_num_gpus == world_size
@@ -70,7 +70,9 @@ async def test_fsdp_optimizer_waits_for_drain_and_survives_caller_cancellation()
     backend: Any = FSDPTrainingBackend.__new__(FSDPTrainingBackend)
     backend.scheduler = ResourceScheduler(
         2,
-        SchedulingConfig(policy="shared_weight", training_quiet_s=0, cost_aware_borrowing=False),
+        SamplingConfig.model_validate(
+            {"borrowing": {"enabled": True}, "max_inflight_per_replica": 1}
+        ),
         flex_index=0,
     )
     backend._lock = asyncio.Lock()
@@ -91,6 +93,15 @@ async def test_fsdp_optimizer_waits_for_drain_and_survives_caller_cancellation()
         entered.set()
         await release.wait()
 
+    fixed_started = asyncio.Event()
+
+    async def fixed(index):
+        assert index == 1
+        fixed_started.set()
+        await release.wait()
+
+    dedicated = asyncio.create_task(backend.scheduler.sample("fixed", None, 1, False, fixed))
+    await fixed_started.wait()
     sampling = asyncio.create_task(backend.scheduler.sample("user", None, 1, True, sample))
     await entered.wait()
     training = asyncio.create_task(
@@ -100,7 +111,7 @@ async def test_fsdp_optimizer_waits_for_drain_and_survives_caller_cancellation()
     assert not updates
     training.cancel()
     release.set()
-    await sampling
+    await asyncio.gather(sampling, dedicated)
     result = await training
     assert result.metrics == {"steps": 1.0}
     assert updates == ["slot"] and events == [False, True]
@@ -148,7 +159,7 @@ async def test_failed_collective_blocks_queued_updates_and_flex_sampling(monkeyp
     backend: Any = FSDPTrainingBackend.__new__(FSDPTrainingBackend)
     backend.scheduler = ResourceScheduler(
         2,
-        SchedulingConfig(policy="shared_weight", training_quiet_s=0, cost_aware_borrowing=False),
+        SamplingConfig.model_validate({"borrowing": {"enabled": True}}),
         flex_index=0,
     )
     backend._worker = None
@@ -185,14 +196,17 @@ async def test_failed_collective_blocks_queued_updates_and_flex_sampling(monkeyp
 
 
 @pytest.mark.integration
-async def test_fsdp_two_rank_update_telemetry_keeps_group_and_shards(monkeypatch):
+@pytest.mark.parametrize("queue_optimizer", [False, True])
+async def test_fsdp_two_rank_update_telemetry_keeps_group_and_shards(monkeypatch, queue_optimizer):
     """Exercise real FSDP dispatch/aggregation with CPU stand-ins for Ray ranks."""
     import logging
 
     import ray
 
     backend: Any = FSDPTrainingBackend.__new__(FSDPTrainingBackend)
-    backend.scheduler = ResourceScheduler(2, SchedulingConfig(policy="shared_weight"), flex_index=0)
+    backend.scheduler = ResourceScheduler(
+        2, SamplingConfig.model_validate({"borrowing": {"enabled": True}}), flex_index=0
+    )
     backend.config = SimpleNamespace(micro_batch_size=1)
     backend.logger = logging.getLogger("fsdp-test")
     backend._worker = None
@@ -231,10 +245,7 @@ async def test_fsdp_two_rank_update_telemetry_keeps_group_and_shards(monkeypatch
     ]
     for _ in range(2):
         await backend.forward(data, "a", "cross_entropy", None, backward=True)
-    assert not backend.scheduler.profiler.arrivals["a"]
     await backend.optim_step(types.AdamParams(), "a")
-    assert backend.scheduler.profiler.states["a"].observations == 1
-    assert "b" not in backend.scheduler.profiler.states
     assert calls == [
         (rank, op, "slot-a", size)
         for op, size in [("backward", 2), ("backward", 2), ("optimizer", 0)]
@@ -242,6 +253,35 @@ async def test_fsdp_two_rank_update_telemetry_keeps_group_and_shards(monkeypatch
     ]
     assert tuple(backend._actors) == original_actors and backend._world_size == 2
     assert phases == [True]
+    if queue_optimizer:
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def occupied():
+            entered.set()
+            await release.wait()
+
+        owner = asyncio.create_task(backend.scheduler.training(occupied, tenant="owner"))
+        await entered.wait()
+        backward = asyncio.create_task(
+            backend.forward(data, "b", "cross_entropy", None, backward=True)
+        )
+        async with asyncio.timeout(2):
+            while backend.scheduler.snapshot()["training_pending"] < 2:
+                await asyncio.sleep(0)
+        optimizer = asyncio.create_task(backend.optim_step(types.AdamParams(), "a"))
+        async with asyncio.timeout(2):
+            while backend.scheduler.snapshot()["training_pending"] < 3:
+                await asyncio.sleep(0)
+        release.set()
+        await asyncio.gather(owner, backward, optimizer)
+        assert calls[-4:] == [
+            (0, "optimizer", "slot-a", 0),
+            (1, "optimizer", "slot-a", 0),
+            (0, "backward", "slot-b", 2),
+            (1, "backward", "slot-b", 2),
+        ]
+        assert backend.scheduler.snapshot()["training_priority_overtakes"] == 1
+        assert tuple(backend._actors) == original_actors and backend._world_size == 2
     await backend.scheduler.close()
 
 
@@ -269,7 +309,9 @@ async def test_only_completed_safe_checkpoint_failures_preserve_fsdp_group(
 
     backend: Any = FSDPTrainingBackend.__new__(FSDPTrainingBackend)
     backend._group_failed = False
-    backend.scheduler = ResourceScheduler(2, SchedulingConfig(policy="shared_weight"), flex_index=0)
+    backend.scheduler = ResourceScheduler(
+        2, SamplingConfig.model_validate({"borrowing": {"enabled": True}}), flex_index=0
+    )
     backend._worker = None
     backend._lora_id_to_adapter_name = {"tenant": "slot"}
     backend._actors = [SimpleNamespace(optim_step=SimpleNamespace(remote=lambda *a: "ok"))] * 2

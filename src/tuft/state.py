@@ -147,7 +147,7 @@ class ServerState:
         from .backends.training_backend import HFTrainingBackend
 
         for model in self.config.supported_models:
-            if model.scheduling.policy == "shared_weight":
+            if model.sampling.borrowing.enabled:
                 training_backend = self.training.training_backends[model.model_name]
                 sampling_backend = self.sampling._base_backends[model.model_name]
                 # CPU dummy factories intentionally do not allocate the GPU pool.
@@ -165,7 +165,7 @@ class ServerState:
         from .backends.training_backend import HFTrainingBackend
 
         for model in self.config.supported_models:
-            if model.scheduling.policy == "shared_weight":
+            if model.sampling.borrowing.enabled:
                 training = self.training.training_backends[model.model_name]
                 sampling = self.sampling._base_backends[model.model_name]
                 if isinstance(training, FSDPTrainingBackend) and isinstance(
@@ -175,19 +175,21 @@ class ServerState:
                     assignments = await asyncio.gather(
                         *(actor.get_device_assignment.remote() for actor in training._actors)
                     )
-                    sampling._instances[0].configure_fsdp_placement(assignments)
+                    sampling.borrowed_sampler.configure_fsdp_placement(assignments)
                     descriptors = await asyncio.gather(
                         *(actor.export_shared_base_weights.remote() for actor in training._actors)
                     )
-                    await sampling._instances[0].engine.configure_shared_weights.remote(descriptors)
+                    await sampling.borrowed_sampler.engine.configure_shared_weights.remote(
+                        descriptors
+                    )
                 if isinstance(training, HFTrainingBackend) and isinstance(
                     sampling, DPSamplingBackend
                 ):
                     trainer_device = await training.model.get_device_assignment.remote()
-                    sampling._instances[0].configure_shared_placement([trainer_device])
-                    sampler_device = await sampling._instances[
-                        0
-                    ].engine.get_device_assignment.remote()
+                    sampling.borrowed_sampler.configure_shared_placement([trainer_device])
+                    sampler_device = (
+                        await sampling.borrowed_sampler.engine.get_device_assignment.remote()
+                    )
                     if not trainer_device["gpus"] or trainer_device != sampler_device:
                         raise RuntimeError(
                             "Shared-weight borrowing requires trainer and flex sampler "
@@ -195,12 +197,12 @@ class ServerState:
                             f"got {trainer_device} and {sampler_device}. "
                             "Use an otherwise idle Ray cluster with the configured GPU count."
                         )
-                    engine = sampling._instances[0].engine
+                    engine = sampling.borrowed_sampler.engine
                     descriptors = await training.model.export_shared_base_weights.remote()
                     await engine.configure_shared_weights.remote(descriptors)
 
                 if isinstance(sampling, DPSamplingBackend):
-                    engine = sampling._instances[0].engine
+                    engine = sampling.borrowed_sampler.engine
 
                     async def transition(
                         training_phase: bool, target=engine, trainer=training

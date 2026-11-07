@@ -150,7 +150,7 @@ class HFTrainingModel:
         self.config = config
         self.model = self._init_peft_model(config)
         self._shared_base_weights = None
-        if config.scheduling.share_base_weights:
+        if config.sampling.share_base_weights:
             from .shared_weights import pack_hf_base_weights
 
             self._shared_base_weights = pack_hf_base_weights(self.model.get_base_model())
@@ -420,6 +420,9 @@ class HFTrainingModel:
 
             async with self._lock:
                 self._activate_adapter(lora_id)
+                # from_pretrained leaves decoder layers in eval mode. Checkpointing
+                # only runs in training mode, even when gradients are enabled.
+                self.model.train(backward)
 
                 for micro_idx in range(num_micro_batches):
                     start_idx = micro_idx * micro_batch_size
@@ -517,6 +520,7 @@ class HFTrainingModel:
                 attention_mask=attention_mask,
                 position_ids=position_ids,
                 return_dict=True,
+                use_cache=False,
             )
 
             if loss_fn_config is None:
@@ -690,7 +694,7 @@ class HFTrainingModel:
                 name="training_model_" + config.model_name,
                 num_gpus=(
                     1
-                    if not config.colocate or config.scheduling.share_base_weights
+                    if not config.colocate or config.sampling.share_base_weights
                     else 1 - config.sampling_memory_fraction
                 ),
             )

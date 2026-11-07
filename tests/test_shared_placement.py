@@ -8,7 +8,7 @@ import pytest
 
 from tuft.backends.sampling_backend import VLLMSamplingBackend
 from tuft.backends.vllm_engine import VLLMEngine, VLLMEngineConfig
-from tuft.config import AppConfig, ModelConfig, SchedulingConfig
+from tuft.config import AppConfig, ModelConfig, SamplingConfig
 
 
 def model(name: str = "qwen", backend: Literal["hf", "fsdp"] = "hf", ranks: int = 1):
@@ -22,7 +22,7 @@ def model(name: str = "qwen", backend: Literal["hf", "fsdp"] = "hf", ranks: int 
         tensor_parallel_size=ranks,
         data_parallel_size=2,
         sampling_kv_cache_memory_bytes=1024**3,
-        scheduling=SchedulingConfig(policy="shared_weight"),
+        sampling=SamplingConfig.model_validate({"borrowing": {"enabled": True}}),
     )
 
 
@@ -102,7 +102,7 @@ def test_multiple_models_require_explicit_shared_placement_for_colocation():
     legacy = ModelConfig(
         model_name="legacy", model_path=Path("legacy"), max_model_len=512, colocate=True
     )
-    with pytest.raises(ValueError, match="Multiple models require shared_weight"):
+    with pytest.raises(ValueError, match="Multiple models require sampling.borrowing.enabled"):
         AppConfig(supported_models=[legacy, model("b")]).check_validity()
 
 

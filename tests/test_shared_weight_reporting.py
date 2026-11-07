@@ -35,19 +35,17 @@ def test_bounded_job_reporting_rejects_failed_or_timed_out_partial_results():
 
 
 @pytest.mark.parametrize("tenants,samples", [(8, 16), (2, 8)])
-async def test_gpu_workload_has_ready_backlog_for_cold_borrowing(tenants, samples):
+async def test_gpu_workload_has_ready_overflow_for_borrowing(tenants, samples):
     import asyncio
 
     from benchmark_shared_weight import workload_scheduling
 
-    from tuft.config import SchedulingConfig
+    from tuft.config import SamplingConfig
     from tuft.scheduling import ResourceScheduler
 
     scheduler = ResourceScheduler(
         2,
-        SchedulingConfig.model_validate(
-            workload_scheduling("shared_weight", tenants, samples, 128)
-        ),
+        SamplingConfig.model_validate(workload_scheduling("shared_weight", tenants, samples, 128)),
         flex_index=0,
     )
     release, borrowed = asyncio.Event(), asyncio.Event()
@@ -65,8 +63,8 @@ async def test_gpu_workload_has_ready_backlog_for_cold_borrowing(tenants, sample
     ]
     try:
         await asyncio.wait_for(borrowed.wait(), 2)
-        assert destinations.count(0) == 1  # A single bounded calibration probe.
-        assert scheduler.snapshot()["queued"] > 0
+        assert destinations.count(0) == tenants * samples // 2
+        assert scheduler.snapshot()["queued"] == 0
     finally:
         release.set()
         await asyncio.gather(*jobs)
@@ -80,7 +78,7 @@ def test_agent_summary_separates_counters_from_gauges_and_estimates():
     from report_shared_weight_agents import summarize
 
     data = json.loads(
-        (Path(__file__).parents[1] / "benchmarks/shared-weight/agent-telemetry.json").read_text()
+        (Path(__file__).parents[1] / "benchmarks/borrowing/agent-telemetry.json").read_text()
     )
     rows = summarize(data)
     for run, row in zip(data["runs"], rows, strict=True):
@@ -115,7 +113,7 @@ def test_benchmark_provenance_hashes_checkout_sources(monkeypatch, tmp_path):
     import benchmark_shared_weight as benchmark
 
     assert benchmark.source_sha256() != hashlib.sha256(b"").hexdigest()
-    monkeypatch.setattr(benchmark, "__file__", str(tmp_path / "benchmarks/shared-weight/run.py"))
+    monkeypatch.setattr(benchmark, "__file__", str(tmp_path / "benchmarks/borrowing/run.py"))
     with pytest.raises(FileNotFoundError, match="No Python sources"):
         benchmark.source_sha256()
     source = tmp_path / "src/model.py"
