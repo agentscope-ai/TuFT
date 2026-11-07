@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from tinker import types
 
 from .backends import BaseSamplingBackend
+from .backends.sampling_backend import DPSamplingBackend
 from .checkpoints import CheckpointRecord
 from .config import SAMPLING_CAPABILITY, AppConfig, ModelConfig
 from .exceptions import (
@@ -394,6 +395,9 @@ class SamplingController:
             include_prompt_logprobs = bool(request.prompt_logprobs)
             topk_prompt_logprobs = request.topk_prompt_logprobs or 0
 
+            scheduling_kwargs = (
+                {"tenant_id": user_id} if isinstance(backend, DPSamplingBackend) else {}
+            )
             response = await backend.sample(
                 prompt=prompt,
                 num_samples=num_samples,
@@ -401,6 +405,7 @@ class SamplingController:
                 include_prompt_logprobs=include_prompt_logprobs,
                 topk_prompt_logprobs=topk_prompt_logprobs,
                 lora_id=lora_id,
+                **scheduling_kwargs,
             )
 
             duration = time.perf_counter() - start_time

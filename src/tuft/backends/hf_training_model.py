@@ -4,13 +4,12 @@ import os
 import shutil
 from contextlib import nullcontext
 from pathlib import Path
-from typing import Callable, Dict
+from typing import Any, Callable, Dict, cast
 
 import ray
 import torch
 from opentelemetry.trace import StatusCode
-from peft import LoraConfig, get_peft_model
-from ray.actor import ActorProxy
+from peft import LoraConfig, PeftModel, get_peft_model
 from tinker import types
 from tinker.types import LoraConfig as TinkerLoraConfig
 from torch.nn.utils.rnn import pad_sequence
@@ -150,6 +149,12 @@ class HFTrainingModel:
     def __init__(self, config: ModelConfig) -> None:
         self.config = config
         self.model = self._init_peft_model(config)
+        self._shared_base_weights = None
+        if config.sampling.share_base_weights:
+            from .shared_weights import pack_hf_base_weights
+
+            self._shared_base_weights = pack_hf_base_weights(self.model.get_base_model())
+            torch.cuda.empty_cache()
         self.adapter_optimizer: Dict[str, torch.optim.AdamW] = {}
         self._lock = asyncio.Lock()
         self.logger = logging.getLogger()
@@ -158,6 +163,20 @@ class HFTrainingModel:
     async def async_init(self) -> None:
         """Do nothing for now. Just used to make sure the actor is ready."""
         pass
+
+    def get_device_assignment(self) -> dict:
+        """Expose Ray placement for validating shared-GPU scheduling at startup."""
+        return {"node": ray.get_runtime_context().get_node_id(), "gpus": ray.get_gpu_ids()}
+
+    def export_shared_base_weights(self) -> dict:
+        from .shared_weights import export_cuda_weights
+
+        if self._shared_base_weights is None:
+            raise RuntimeError("Shared base weights are not enabled")
+        if getattr(self, "_shared_weights_exported", False):
+            raise RuntimeError("Shared base weights may only be exported to one consumer")
+        self._shared_weights_exported = True
+        return export_cuda_weights(self._shared_base_weights)
 
     # --------------------------------
     # LoRA adapter management methods
@@ -401,6 +420,9 @@ class HFTrainingModel:
 
             async with self._lock:
                 self._activate_adapter(lora_id)
+                # from_pretrained leaves decoder layers in eval mode. Checkpointing
+                # only runs in training mode, even when gradients are enabled.
+                self.model.train(backward)
 
                 for micro_idx in range(num_micro_batches):
                     start_idx = micro_idx * micro_batch_size
@@ -498,6 +520,7 @@ class HFTrainingModel:
                 attention_mask=attention_mask,
                 position_ids=position_ids,
                 return_dict=True,
+                use_cache=False,
             )
 
             if loss_fn_config is None:
@@ -638,7 +661,7 @@ class HFTrainingModel:
             tensors.append(padded_tensor[i, :length])
         return tensors
 
-    def _init_peft_model(self, config: ModelConfig):
+    def _init_peft_model(self, config: ModelConfig) -> PeftModel:
         model = AutoModelForCausalLM.from_pretrained(
             str(config.model_path),
             dtype="auto",
@@ -654,7 +677,7 @@ class HFTrainingModel:
             # can still start; create_adapter keeps the hard failure.
             peft_config = LoraConfig()
         peft_model = get_peft_model(model, peft_config=peft_config, adapter_name="default")
-        return peft_model
+        return cast(PeftModel, peft_model)
 
     def _activate_adapter(self, lora_id: str):
         if lora_id not in self.adapter_optimizer:
@@ -662,12 +685,18 @@ class HFTrainingModel:
         self.model.set_adapter(lora_id)
 
     @classmethod
-    def get_actor(cls, config: ModelConfig) -> "ActorProxy":
+    def get_actor(cls, config: ModelConfig) -> Any:
+        # Ray synthesizes remote methods at runtime; ActorProxy also includes
+        # the local class, whose methods do not expose .remote().
         return (
             ray.remote(cls)
             .options(
                 name="training_model_" + config.model_name,
-                num_gpus=(1 if not config.colocate else 1 - config.sampling_memory_fraction),
+                num_gpus=(
+                    1
+                    if not config.colocate or config.sampling.share_base_weights
+                    else 1 - config.sampling_memory_fraction
+                ),
             )
             .remote(config)
         )

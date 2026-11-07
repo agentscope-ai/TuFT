@@ -1,0 +1,42 @@
+{
+  "pricing_source": "https://modal.com/pricing",
+  "currency": "USD",
+  "rates_per_second": {
+    "h100_gpu_s": 0.001097,
+    "function_cpu_core_s": 1.31e-05,
+    "function_ram_gib_s": 2.22e-06,
+    "sandbox_cpu_core_s": 3.942e-05,
+    "sandbox_ram_gib_s": 6.67e-06
+  },
+  "requested_resources": {
+    "gpu_h100": 2,
+    "function_cpu_cores": 16,
+    "function_ram_gib": 64,
+    "sandboxes": 8,
+    "each_sandbox_cpu_cores": 1,
+    "each_sandbox_ram_gib": 1
+  },
+  "estimated_usd_per_function_wall_s": 0.0029144,
+  "attempts": [
+    {
+      "run_id": "borrow-budget-20261104T000848Z",
+      "function_wall_s": 585.070481300354,
+      "estimated_requested_compute_usd": 1.7051294107017518,
+      "status": "Stopped calibration; no completed pair"
+    },
+    {
+      "run_id": "borrow-budget-20261104T002008Z",
+      "function_wall_s": 1108.6540706157684,
+      "estimated_requested_compute_usd": 3.2310614234025956,
+      "status": "Failed initial-adapter integrity guard before second measured arm"
+    },
+    {
+      "run_id": "borrow-budget-20261104T004506Z",
+      "function_wall_s": 1665.132666349411,
+      "estimated_requested_compute_usd": 4.852862642808724,
+      "status": "Completed valid pair"
+    }
+  ],
+  "estimated_total_requested_compute_usd": 9.789053476913072,
+  "note": "Estimate, not invoice. Sandbox runtime approximated by full function wall time. Calibration end inferred from launcher termination. Small CPU preflight/build and startup/teardown charges, persistent storage, and credits excluded; CPU/RAM above requested allocation may cost more. Approximately $10 including all three attempts. All experiment containers stopped."
+}

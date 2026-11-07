@@ -46,6 +46,7 @@ class FSDPModelConfig:
     attn_implementation: str | None = None
     override_config: dict[str, Any] = field(default_factory=dict)
     trust_remote_code: bool = True
+    share_base_weights: bool = False
 
 
 @dataclass

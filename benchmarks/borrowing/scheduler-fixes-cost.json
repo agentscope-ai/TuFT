@@ -1,0 +1,29 @@
+{
+  "pricing_source": "https://modal.com/pricing",
+  "pricing_checked_utc": "2026-11-03",
+  "rates_usd": {
+    "h100_gpu_second": 0.001097,
+    "function_cpu_core_second": 1.31e-05,
+    "function_ram_gib_second": 2.22e-06,
+    "sandbox_cpu_core_second": 3.942e-05,
+    "sandbox_ram_gib_second": 6.67e-06
+  },
+  "successful_gpu_function_wall_s": 1523.532051563263,
+  "failed_startup_gpu_function_wall_s": 19.998342752456665,
+  "gpu_count": 2,
+  "requested_function_cpu": 16,
+  "requested_function_memory_gib": 64,
+  "sandboxes": 8,
+  "sandbox_cpu_each": 1,
+  "sandbox_memory_gib_each": 1,
+  "gpu_only_estimate_usd": 3.386505685128689,
+  "gpu_function_and_sandbox_estimate_usd": 4.498464981193734,
+  "rounded_session_estimate_usd": 4.6,
+  "notes": [
+    "Estimate, not an invoice. Uses requested resources; usage above requests can increase charges.",
+    "Includes the 20-second failed GPU startup. The first failed CPU import allocated no GPU.",
+    "Eight sandbox reservations are conservatively counted for entire function durations.",
+    "Rounded estimate allows for CPU preflight and brief startup/teardown; excludes ongoing volume storage and account credits."
+  ],
+  "all_containers_stopped": true
+}

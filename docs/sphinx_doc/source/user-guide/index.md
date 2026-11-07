@@ -53,6 +53,14 @@ How LoRA flags resolve to module names, and the rules enforced around them.
 Enable server state persistence with Redis for crash recovery.
 :::
 
+:::{grid-item-card} GPU Borrowing (Experimental)
+:link: borrowing
+:link-type: doc
+:shadow: none
+
+Let idle training GPUs serve rollouts using their frozen base weights.
+:::
+
 :::{grid-item-card} Observability
 :link: telemetry
 :link-type: doc
@@ -80,6 +88,7 @@ on-policy-distillation
 custom-losses
 lora-target-modules
 persistence
+borrowing
 telemetry
 console
 ```

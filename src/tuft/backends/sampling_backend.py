@@ -14,6 +14,8 @@ from opentelemetry.trace import StatusCode
 from tinker import types
 
 from ..config import ModelConfig
+from ..sampling_routing import RoundRobinRouter
+from ..scheduling import ResourceScheduler
 from ..telemetry.tracing import get_tracer
 from .base_backend import BaseSamplingBackend
 from .vllm_engine import VLLMEngine, VLLMEngineConfig
@@ -94,7 +96,14 @@ class VLLMSamplingBackend(BaseSamplingBackend):
         super().__init__(config)
         self._worker_venv_path = worker_venv_path
         self._instance_index = instance_index
-        self.engine = self._create_engine(config)
+        # The trainer owns full GPUs. Create the sharing actor only after its
+        # placement is known, avoiding fractional packing across base models.
+        # Ray supplies actor methods dynamically, including their .remote API.
+        self.engine: Any = (
+            None
+            if config.colocate and config.sampling.share_base_weights
+            else self._create_engine(config)
+        )
         self.lora_adapters: dict[str, LoRARequest] = {}
         self._counter = 1
         self._lock = asyncio.Lock()
@@ -105,6 +114,38 @@ class VLLMSamplingBackend(BaseSamplingBackend):
             return self._create_colocated_engine(config)
         else:
             return self._create_standalone_engine(config)
+
+    def configure_fsdp_placement(self, assignments: list[dict]) -> None:
+        self.configure_shared_placement(assignments)
+
+    def configure_shared_placement(self, assignments: list[dict]) -> None:
+        import ray
+        from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
+
+        if self.engine is not None or len(assignments) != self.config.tensor_parallel_size:
+            raise RuntimeError("Invalid shared sampling placement initialization")
+        nodes = {a["node"] for a in assignments}
+        gpus = [str(int(float(a["gpus"][0]))) for a in assignments if len(a["gpus"]) == 1]
+        if len(nodes) != 1 or len(set(gpus)) != len(assignments):
+            raise ValueError("Weight sharing requires distinct GPUs on one node")
+        engine_config = self._build_engine_config(
+            self.config,
+            tensor_parallel_size=len(gpus),
+            gpu_memory_utilization=self.config.sampling_memory_fraction,
+        )
+        engine_config.shared_gpu_ids = gpus
+        runtime_env = {}
+        if self._worker_venv_path:
+            runtime_env["py_executable"] = str(Path(self._worker_venv_path) / "bin" / "python")
+        self.engine = (
+            ray.remote(VLLMEngine)
+            .options(
+                num_gpus=0,
+                scheduling_strategy=NodeAffinitySchedulingStrategy(next(iter(nodes)), soft=False),
+                runtime_env=runtime_env,
+            )
+            .remote(engine_config)
+        )
 
     def _build_engine_config(
         self,
@@ -133,13 +174,22 @@ class VLLMSamplingBackend(BaseSamplingBackend):
             enable_lora=True,
             max_lora_rank=config.max_lora_rank,
             max_loras=config.max_loras,
+            max_cpu_loras=config.max_cpu_loras,
             quantization=config.quantization,
             enable_runtime_lora_updating=True,
-            enable_openai_api=True,
+            # Only the scheduler may submit GPU work to a flex replica.
+            enable_openai_api=not (config.colocate and config.sampling.borrowing.enabled),
             enable_auto_tool_choice=config.enable_auto_tool_choice,
             tool_call_parser=config.tool_call_parser,
             reasoning_parser=config.reasoning_parser,
             bundle_indices=bundle_indices,
+            share_base_weights=config.colocate and config.sampling.share_base_weights,
+            kv_cache_memory_bytes=config.sampling_kv_cache_memory_bytes,
+            language_model_only=config.sampling_language_model_only,
+            moe_backend=config.sampling_moe_backend,
+            gdn_prefill_backend=config.sampling_gdn_prefill_backend,
+            max_num_seqs=config.sampling_max_num_seqs,
+            enable_metrics=config.sampling_enable_metrics,
         )
 
     def _create_colocated_engine(self, config: ModelConfig):
@@ -393,12 +443,16 @@ class VLLMSamplingBackend(BaseSamplingBackend):
         self.lora_adapters.clear()
 
 
+class _BorrowedAdapterUnavailable(RuntimeError):
+    """Retry this sampling request on a dedicated replica."""
+
+
 class DPSamplingBackend(BaseSamplingBackend):
-    """Data-Parallel sampling backend: N independent vLLM instances with round-robin LB.
+    """Data-parallel sampling with optional bounded overflow admission.
 
     Each instance runs on its own GPU(s) (tensor_parallel_size per instance).
     Requests are distributed across instances using round-robin for uniform load.
-    All instances share the same LoRA adapters.
+    Dedicated instances publish together; the borrowed instance loads snapshots on demand.
     """
 
     def __init__(
@@ -408,26 +462,45 @@ class DPSamplingBackend(BaseSamplingBackend):
     ) -> None:
         super().__init__(config)
         self._dp_size = config.data_parallel_size
+        self._sample_router = RoundRobinRouter(self._dp_size)
+        self._http_router = RoundRobinRouter(self._dp_size)
+        self.flex_index = 0 if config.sampling.borrowing.enabled else None
+        self.dedicated_indices = [i for i in range(self._dp_size) if i != self.flex_index]
+        self.scheduler: ResourceScheduler | None = None
+        if self.flex_index is not None:
+            self.scheduler = ResourceScheduler(
+                self._dp_size,
+                config.sampling,
+                flex_index=self.flex_index,
+            )
+        self._adapter_mutation_lock = asyncio.Lock()
+        self._borrowed_load_lock = asyncio.Lock()
+        self._adapter_paths: dict[str, Path] = {}
+        self._borrowed_ready: set[str] = set()
+        self._borrowed_failed: set[str] = set()
         self._instances: list[VLLMSamplingBackend] = []
         for i in range(self._dp_size):
+            # Only replica zero shares the training GPU. The other replicas
+            # retain full dedicated GPUs and persistent KV caches.
+            instance_config = config
+            if self.flex_index is not None and i != self.flex_index:
+                instance_config = config.model_copy(update={"colocate": False})
             instance = VLLMSamplingBackend(
-                config, worker_venv_path=worker_venv_path, instance_index=i
+                instance_config, worker_venv_path=worker_venv_path, instance_index=i
             )
             self._instances.append(instance)
-        # Atomic round-robin counter
-        self._rr_counter = 0
-        self._rr_lock = asyncio.Lock()
         logger.info(
             "DPSamplingBackend: created %d instances for model %s",
             self._dp_size,
             config.model_name,
         )
 
-    def _next_instance(self) -> VLLMSamplingBackend:
-        """Round-robin selection (no lock needed for simple modular arithmetic)."""
-        idx = self._rr_counter % self._dp_size
-        self._rr_counter += 1
-        return self._instances[idx]
+    @property
+    def borrowed_sampler(self) -> VLLMSamplingBackend:
+        """The replica attached to trainer storage; unavailable in dedicated-only mode."""
+        if self.flex_index is None:
+            raise RuntimeError("Borrowing is disabled for this sampling backend")
+        return self._instances[self.flex_index]
 
     async def async_init(self) -> None:
         """Initialize all DP instances in parallel."""
@@ -439,16 +512,20 @@ class DPSamplingBackend(BaseSamplingBackend):
         )
 
     def get_openai_api_url(self) -> Optional[str]:
-        """Return a single URL (first instance) for backward compat.
+        """Return the first dedicated replica URL for backward compatibility.
 
         For DP-aware routing, use get_openai_api_urls() instead.
         """
-        return self._instances[0].get_openai_api_url() if self._instances else None
+        index = self.dedicated_indices[0]
+        return self._instances[index].get_openai_api_url() if self._instances else None
 
     def get_openai_api_urls(self) -> list[str]:
         """Return all vLLM instance URLs for DP-aware load balancing."""
         urls = []
-        for inst in self._instances:
+        # HTTP streaming cannot hold a scheduler reservation through this URL
+        # interface. Keep it on persistent replicas, including adapter loads.
+        for index in self.dedicated_indices:
+            inst = self._instances[index]
             url = inst.get_openai_api_url()
             if url:
                 urls.append(url)
@@ -456,8 +533,8 @@ class DPSamplingBackend(BaseSamplingBackend):
 
     def get_next_openai_api_url(self) -> Optional[str]:
         """Return the next URL via round-robin for load-balanced proxying."""
-        inst = self._next_instance()
-        return inst.get_openai_api_url()
+        index = self._http_router.choose(self.dedicated_indices)
+        return None if index is None else self._instances[index].get_openai_api_url()
 
     async def sample(
         self,
@@ -467,48 +544,154 @@ class DPSamplingBackend(BaseSamplingBackend):
         include_prompt_logprobs: bool = False,
         topk_prompt_logprobs: int = 0,
         lora_id: Optional[str] = None,
+        tenant_id: str | None = None,
     ) -> types.SampleResponse:
-        """Route sampling to a DP instance via round-robin."""
-        instance = self._next_instance()
-        return await instance.sample(
-            prompt=prompt,
-            num_samples=num_samples,
-            sampling_params=sampling_params,
-            include_prompt_logprobs=include_prompt_logprobs,
-            topk_prompt_logprobs=topk_prompt_logprobs,
-            lora_id=lora_id,
-        )
+        """Route requests over the eligible samplers; borrowing controls admission."""
+
+        async def execute(index: int) -> types.SampleResponse:
+            from ray.exceptions import RayActorError
+
+            try:
+                if index == self.flex_index and lora_id is not None:
+                    try:
+                        await self._ensure_borrowed_adapter(lora_id)
+                    except Exception as exc:
+                        if isinstance(exc, RayActorError) and self.scheduler is not None:
+                            self.scheduler.disable_flex()
+                        raise _BorrowedAdapterUnavailable(lora_id) from exc
+                return await self._instances[index].sample(
+                    prompt=prompt,
+                    num_samples=num_samples,
+                    sampling_params=sampling_params,
+                    include_prompt_logprobs=include_prompt_logprobs,
+                    topk_prompt_logprobs=topk_prompt_logprobs,
+                    lora_id=lora_id,
+                )
+            except RayActorError:
+                if self.scheduler is not None and index == self.scheduler.flex_index:
+                    self.scheduler.disable_flex()
+                raise
+
+        if self.scheduler is None:
+            index = self._sample_router.choose(range(self._dp_size))
+            assert index is not None
+            return await execute(index)
+        max_tokens = sampling_params.max_tokens
+        if max_tokens is None:
+            # Match VLLMSamplingBackend.sample's actual fallback. API handlers
+            # may already have resolved a configured default into this request.
+            max_tokens = 16
+        work = max(1, num_samples) * (len(prompt.to_ints()) + max_tokens)
+
+        async def dispatch(flex_eligible: bool) -> types.SampleResponse:
+            assert self.scheduler is not None
+            return await self.scheduler.sample(
+                tenant=tenant_id or lora_id or "base",
+                adapter=lora_id,
+                work=work,
+                flex_eligible=flex_eligible,
+                operation=execute,
+                prompt_tokens=len(prompt.to_ints()),
+                output_tokens=max_tokens,
+                num_samples=num_samples,
+            )
+
+        try:
+            return await dispatch(
+                work <= self.config.sampling.borrowing.max_request_tokens
+                and (lora_id is None or lora_id not in self._borrowed_failed)
+            )
+        except _BorrowedAdapterUnavailable:
+            # The failed reservation has ended before retrying. Do not hold the
+            # training GPU while waiting for dedicated capacity.
+            return await dispatch(False)
+
+    async def _ensure_borrowed_adapter(self, lora_id: str) -> None:
+        """Called only while holding a shared-GPU reservation.
+
+        The scheduler has woken the shared sampler and excludes training until
+        this request finishes. Concurrent requests share one registration.
+        """
+        async with self._borrowed_load_lock:
+            if lora_id in self._borrowed_failed:
+                raise _BorrowedAdapterUnavailable(lora_id)
+            if lora_id in self._borrowed_ready:
+                return
+            path = self._adapter_paths.get(lora_id)
+            if path is None:
+                raise ValueError(f"LoRA adapter {lora_id} is not published")
+            try:
+                await self.borrowed_sampler.add_adapter(lora_id, path)
+            except Exception:
+                self._borrowed_failed.add(lora_id)
+                logger.warning(
+                    "Borrowed registration failed for adapter %s", lora_id, exc_info=True
+                )
+                raise
+            self._borrowed_ready.add(lora_id)
 
     async def add_adapter(self, lora_id: str, adapter_path: Path) -> None:
-        """Add LoRA adapter to ALL DP instances; roll back on partial failure.
+        """Publish on dedicated replicas without waiting for the training GPU."""
+        if self.scheduler is not None:
+            # Finish the dedicated transaction even if its caller disconnects.
+            await self.scheduler.transaction(lambda: self._add_adapter(lora_id, adapter_path))
+            return
+        await self._add_adapter(lora_id, adapter_path)
 
-        Without rollback, a failure on one replica would leave the DP instances with
-        inconsistent adapter sets (some registered, some not), causing round-robin
-        sampling to intermittently fail with an unknown lora_id.
-        """
-        results = await asyncio.gather(
-            *[inst.add_adapter(lora_id, adapter_path) for inst in self._instances],
-            return_exceptions=True,
-        )
-        failures = [i for i, res in enumerate(results) if isinstance(res, BaseException)]
-        if failures:
-            # Roll back the instances that succeeded so the adapter set stays consistent.
-            for i, res in enumerate(results):
-                if not isinstance(res, BaseException):
-                    try:
-                        await self._instances[i].remove_adapter(lora_id)
-                    except Exception:  # pylint: disable=broad-except
-                        logger.warning("Failed to roll back adapter %s on instance %d", lora_id, i)
-            first_error = results[failures[0]]
-            if isinstance(first_error, BaseException):
-                raise first_error
+    async def _add_adapter(self, lora_id: str, adapter_path: Path) -> None:
+        async with self._adapter_mutation_lock:
+            if lora_id in self._adapter_paths:
+                if self._adapter_paths[lora_id] != adapter_path:
+                    raise ValueError(f"LoRA adapter {lora_id} already has a different snapshot")
+                return
+            indices = self.dedicated_indices
+            results = await asyncio.gather(
+                *(self._instances[i].add_adapter(lora_id, adapter_path) for i in indices),
+                return_exceptions=True,
+            )
+            failures = [res for res in results if isinstance(res, BaseException)]
+            if failures:
+                for i, res in zip(indices, results, strict=True):
+                    if not isinstance(res, BaseException):
+                        try:
+                            await self._instances[i].remove_adapter(lora_id)
+                        except Exception:
+                            logger.warning(
+                                "Failed to roll back adapter %s on replica %d", lora_id, i
+                            )
+                raise failures[0]
+            # Immutable snapshot path; borrowed registration happens only when
+            # there is actual overflow and the trainer is available.
+            self._adapter_paths[lora_id] = adapter_path
 
     async def remove_adapter(self, lora_id: str) -> None:
-        """Remove LoRA adapter from ALL DP instances."""
-        await asyncio.gather(*[inst.remove_adapter(lora_id) for inst in self._instances])
+        async def remove():
+            async with self._adapter_mutation_lock:
+                if self.scheduler is not None:
+                    # Drain accepted borrowed loads/generations before deleting
+                    # their snapshot or registration. No loader acquires this lock.
+                    await self.scheduler.training(lambda: self._remove_adapter(lora_id))
+                else:
+                    await self._remove_adapter(lora_id)
+
+        if self.scheduler is not None:
+            await self.scheduler.transaction(remove)
+        else:
+            await remove()
+
+    async def _remove_adapter(self, lora_id: str) -> None:
+        indices = list(self.dedicated_indices)
+        if self.flex_index is not None and lora_id in self._borrowed_ready:
+            indices.append(self.flex_index)
+        await asyncio.gather(*(self._instances[i].remove_adapter(lora_id) for i in indices))
+        self._adapter_paths.pop(lora_id, None)
+        self._borrowed_ready.discard(lora_id)
+        self._borrowed_failed.discard(lora_id)
 
     async def shutdown(self) -> None:
         """Shut down all DP vLLM instances."""
+        if self.scheduler is not None:
+            await self.scheduler.close()
         for inst in self._instances:
             try:
                 await inst.shutdown()

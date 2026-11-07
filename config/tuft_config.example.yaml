@@ -47,6 +47,8 @@ model_owner: local-user
 #       become usable again once the capability is re-enabled. An empty list
 #       is rejected. colocate requires both capabilities.
 #   - tensor_parallel_size: Number of GPUs for tensor parallelism (default: 1)
+#   - data_parallel_size: Number of sampling replicas (default: 1). In experimental
+#       shared-weight mode this includes the sampler on the training GPUs.
 #   - temperature: Default sampling temperature (default: 1.0)
 #   - top_p: Default nucleus sampling probability (default: 1.0)
 #   - top_k: Default top-k sampling (default: -1, disabled)
@@ -55,6 +57,8 @@ model_owner: local-user
 #   - min_response_tokens: Minimum tokens to generate (default: 0)
 #   - max_lora_rank: Maximum LoRA adapter rank (default: 16)
 #   - max_loras: Maximum simultaneous LoRA adapters (default: 1)
+#   - max_cpu_loras: Cached sampler adapters in CPU memory (default: null, use
+#       vLLM's default). When set, must be at least max_loras.
 #   - training_backend: Training implementation, "hf" or "fsdp" (default: hf)
 #   - fsdp_num_gpus: Number of FSDP workers/GPUs (default: 1)
 #   - fsdp_rank_slots: Preallocated LoRA slots by rank (default: 16 rank-8 slots
@@ -87,6 +91,20 @@ model_owner: local-user
 #       this setting is rejected rather than silently rescaling updates.
 #   - colocate: Colocate sampling and training on same device (default: false)
 #   - sampling_memory_fraction: GPU memory fraction for sampling (default: 0.2)
+#   - sampling_kv_cache_memory_bytes: Explicit KV cache budget per sampler GPU
+#       (default: null). Required for experimental shared-weight mode; size it
+#       to leave room for training activations and adapters on the shared GPUs.
+#   - sampling_max_num_seqs: vLLM sequence capacity (default: null, vLLM default)
+#   - sampling_max_model_len: Sampling context limit (default: null, max_model_len)
+#   - sampling_enforce_eager: Disable vLLM CUDA graphs (default: true)
+#   - sampling.borrowing.enabled: false (default) or true
+#       (EXPERIMENTAL). Borrowing requires both capabilities, colocate=true,
+#       no quantization, an explicit KV budget, and data_parallel_size >= 2.
+#       HF requires tensor_parallel_size=1. FSDP requires fsdp_num_gpus equal to
+#       tensor_parallel_size, on one node; the frozen base remains sharded.
+#       With two replicas, HF uses 2 GPUs; FSDP with TP=2 uses 4 GPUs.
+#       See docs/sphinx_doc/source/user-guide/borrowing.md for requirements,
+#       limits, benchmark results, and the tested torch/vLLM versions.
 #   - quantization: Quantization method for sampling (default: none)
 #   - enable_auto_tool_choice: vLLM OpenAI API auto tool choice (qwenpaw ReAct)
 #   - tool_call_parser: vLLM tool parser (e.g. hermes for Qwen3-Thinking)
@@ -106,6 +124,24 @@ supported_models:
     max_lora_rank: 16
     max_loras: 1
     lora_alpha_ratio: 2
+    # EXPERIMENTAL: to let idle training GPUs serve rollouts with shared frozen
+    # weights, uncomment this entire block. This example uses HF on two GPUs.
+    # The 16 GiB KV budget is per GPU, not a portable memory-size recommendation.
+    # Full starting configurations are in benchmarks/borrowing/.
+    # data_parallel_size: 2
+    # colocate: true
+    # sampling_memory_fraction: 0.45
+    # sampling_kv_cache_memory_bytes: 17179869184
+    # sampling_enforce_eager: true
+    # max_cpu_loras: 128
+    # sampling:
+    #   max_inflight_per_replica: 32  # Dedicated sampler admission capacity.
+    #   scheduling_trace_capacity: 4096  # Bounded event/rejection logs; default 0.
+    #   borrowing:
+    #     enabled: true
+    #     max_inflight: 1             # Concurrent borrowed requests.
+    #     max_request_tokens: 8192            # num_samples * (prompt + output allowance).
+    # In shared-weight mode, also set tensor_parallel_size equal to fsdp_num_gpus.
     # FSDP creates every adapter slot before sharding. By default these modifiers
     # match Tinker's LoraConfig defaults and resolve to attention + MLP modules on
     # Qwen. A client request with different modifiers is rejected clearly.

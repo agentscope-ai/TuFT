@@ -1,0 +1,155 @@
+{
+  "baseline_p95_threshold_s": 4.072239211249993,
+  "runs": [
+    {
+      "policy": "balanced",
+      "sample_p95_s": 4.072239211249993,
+      "p95_rank_one_based": 547.25,
+      "p95_bracketing_requests": [
+        {
+          "tenant": 1,
+          "step": 0,
+          "trajectory": 1,
+          "turn": 0,
+          "duration_s": 4.060391729999992
+        },
+        {
+          "tenant": 0,
+          "step": 0,
+          "trajectory": 1,
+          "turn": 1,
+          "duration_s": 4.107781654999997
+        }
+      ],
+      "above_baseline_p95_by_round_turn": {
+        "0/0": 24,
+        "0/1": 5
+      },
+      "above_own_p95_by_round_turn": {
+        "0/0": 24,
+        "0/1": 5
+      },
+      "first_turn_mean_s": 5.880929665687497,
+      "first_turn_pre_admit_mean_bounds_s": [
+        2.311920739999958,
+        2.312931062999989
+      ],
+      "first_turn_post_admit_mean_bounds_s": [
+        3.567998602687508,
+        3.5690089256875392
+      ],
+      "first_turn_admissions_by_replica": {
+        "0": 32
+      },
+      "first_round_admissions_by_replica": {
+        "0": 96
+      },
+      "first_round_flex_admission_times_s": [],
+      "first_fixed_replenishment_s": 3.713864146999981,
+      "initial_fixed_reserved_work": 43820,
+      "first_exclusive_gate_s": 12.174122716,
+      "clock_offset_upper_bound_s": 0.0010103230000311214,
+      "initial_sampler_rates": [
+        null
+      ],
+      "cold_probes": 0,
+      "first_round_quantiles": {
+        "0.5": 2.836955670999984,
+        "0.65": 3.9890638079999974,
+        "0.7": 4.084086692499994,
+        "0.75": 4.468321229250016,
+        "0.95": 7.251925466999985
+      },
+      "later_rounds_p95_s": 2.8127741925000387,
+      "per_round_p95_s": [
+        7.251925466999985,
+        2.5182699700000057,
+        2.519760451749974,
+        2.40473245150001,
+        3.5769933372499594,
+        2.5805559162499776
+      ]
+    },
+    {
+      "policy": "shared_weight",
+      "sample_p95_s": 5.074689467249982,
+      "p95_rank_one_based": 547.25,
+      "p95_bracketing_requests": [
+        {
+          "tenant": 1,
+          "step": 0,
+          "trajectory": 2,
+          "turn": 0,
+          "duration_s": 5.06031735199997
+        },
+        {
+          "tenant": 1,
+          "step": 0,
+          "trajectory": 0,
+          "turn": 0,
+          "duration_s": 5.117805813000018
+        }
+      ],
+      "above_baseline_p95_by_round_turn": {
+        "0/0": 31,
+        "0/1": 1
+      },
+      "above_own_p95_by_round_turn": {
+        "0/0": 29
+      },
+      "first_turn_mean_s": 6.150358274718759,
+      "first_turn_pre_admit_mean_bounds_s": [
+        2.5005356579375047,
+        2.5014232309375046
+      ],
+      "first_turn_post_admit_mean_bounds_s": [
+        3.648935043781254,
+        3.649822616781254
+      ],
+      "first_turn_admissions_by_replica": {
+        "1": 28,
+        "0": 4
+      },
+      "first_round_admissions_by_replica": {
+        "1": 87,
+        "0": 9
+      },
+      "first_round_flex_admission_times_s": [
+        0.20413713699997516,
+        2.20857623400002,
+        5.110695438999983,
+        6.114681655000027,
+        7.109308988000066,
+        8.103497941,
+        9.21858414799999,
+        9.797195181999996,
+        10.246475552999982
+      ],
+      "first_fixed_replenishment_s": 4.826261423999995,
+      "initial_fixed_reserved_work": 43820,
+      "first_exclusive_gate_s": 11.721092389000091,
+      "clock_offset_upper_bound_s": 0.0008875729999999749,
+      "initial_sampler_rates": [
+        null,
+        null
+      ],
+      "cold_probes": 9.0,
+      "first_round_quantiles": {
+        "0.5": 2.5314966760000175,
+        "0.65": 3.0338090437500114,
+        "0.7": 5.089061582499994,
+        "0.75": 5.285033776500029,
+        "0.95": 7.151640263750039
+      },
+      "later_rounds_p95_s": 1.9371937823999872,
+      "per_round_p95_s": [
+        7.151640263750039,
+        2.29804564199992,
+        1.9288233089999949,
+        1.5249420732499743,
+        1.708792525999968,
+        1.6263285754999686
+      ]
+    }
+  ]
+}

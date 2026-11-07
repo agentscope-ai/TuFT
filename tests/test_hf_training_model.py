@@ -169,3 +169,70 @@ async def test_load_state_restores_optimizer_into_a_different_run(tmp_path) -> N
     # A fresh AdamW has an empty state dict; the restored one carries the step.
     assert restored.state_dict()["state"], "optimizer state was silently dropped"
     assert restored.state_dict()["state"][0]["step"] == saved.state_dict()["state"][0]["step"]
+
+
+@pytest.mark.asyncio
+async def test_backward_activates_real_gradient_checkpointing_and_forward_does_not(monkeypatch):
+    """from_pretrained leaves decoder layers in eval mode, which bypasses checkpointing."""
+    import torch
+    from peft import LoraConfig, get_peft_model
+    from transformers import Qwen3Config, Qwen3ForCausalLM
+
+    from tuft.backends.hf_training_model import HFTrainingModel
+
+    base = Qwen3ForCausalLM(
+        Qwen3Config(
+            vocab_size=32,
+            hidden_size=16,
+            intermediate_size=32,
+            num_hidden_layers=2,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            head_dim=8,
+        )
+    )
+    base.eval()  # Same mode as the production from_pretrained loader.
+    base.enable_input_require_grads()
+    base.gradient_checkpointing_enable({"use_reentrant": False})
+    peft = get_peft_model(base, LoraConfig(r=2, target_modules=["q_proj", "v_proj"]))
+    calls = []
+    for layer in base.model.layers:
+        original = layer._gradient_checkpointing_func
+
+        def record(*args, _original=original, **kwargs):
+            calls.append(True)
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(layer, "_gradient_checkpointing_func", record)
+    model = HFTrainingModel.__new__(HFTrainingModel)
+    monkeypatch.setattr(model, "config", SimpleNamespace(micro_batch_size=1), raising=False)
+    model.model = peft
+    model._lock = asyncio.Lock()
+    model.logger = logging.getLogger(__name__)
+    monkeypatch.setattr(model, "_activate_adapter", lambda _: None)
+    for name in (
+        "empty_cache",
+        "reset_peak_memory_stats",
+        "memory_allocated",
+        "memory_reserved",
+        "max_memory_allocated",
+    ):
+        monkeypatch.setattr(torch.cuda, name, lambda: 0)
+    datum = types.Datum(
+        model_input=types.ModelInput.from_ints([1, 2, 3]),
+        loss_fn_inputs={
+            "target_tokens": types.TensorData(data=[2, 3, 4], dtype="int64"),
+            "weights": types.TensorData(data=[1.0, 1.0, 1.0], dtype="float32"),
+        },
+    )
+    await model.forward([datum], "default", "cross_entropy", None, backward=True)
+    assert len(calls) == 2
+    assert any(
+        p.grad is not None and torch.count_nonzero(p.grad)
+        for p in peft.parameters()
+        if p.requires_grad
+    )
+    calls.clear()
+    await model.forward([datum], "default", "cross_entropy", None, backward=False)
+    assert not calls
+    assert not peft.training

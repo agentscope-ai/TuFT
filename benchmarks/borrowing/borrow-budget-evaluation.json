@@ -1,0 +1,9 @@
+{
+  "borrowing_beyond_cold_probes": true,
+  "borrowing_after_first_update": false,
+  "max_drain_within_20s": true,
+  "update_p95_within_10_percent": true,
+  "elapsed_change_fraction": -0.03306324812529826,
+  "output_token_change_fraction": 0.014450493082063254,
+  "note": "One ordered pair; thresholds evaluate this workload, not a production guarantee."
+}

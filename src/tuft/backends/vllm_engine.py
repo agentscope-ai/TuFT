@@ -22,9 +22,11 @@ import asyncio
 import itertools
 import os
 import socket
+import tempfile
+import time
 from dataclasses import dataclass
 from logging import getLogger
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 
 logger = getLogger(__name__)
@@ -59,6 +61,7 @@ class VLLMEngineConfig:
     enable_lora: bool = True
     max_lora_rank: int = 16
     max_loras: int = 1
+    max_cpu_loras: int | None = None
     quantization: Optional[str] = None
     # Gates vLLM's /v1/load_lora_adapter HTTP endpoint (used by tuft.oai to
     # serve trained adapters by name through the OpenAI API).
@@ -74,6 +77,15 @@ class VLLMEngineConfig:
 
     # Ray placement-group bundle indices ("" outside standalone TP mode).
     bundle_indices: str = ""
+    share_base_weights: bool = False
+    kv_cache_memory_bytes: int | None = None
+    language_model_only: bool = False
+    moe_backend: Literal["auto", "triton"] = "auto"
+    gdn_prefill_backend: Literal["flashinfer", "triton", "cutedsl"] | None = None
+    max_num_seqs: int | None = None
+    enable_metrics: bool = False
+    # Trusted physical devices reserved by the colocated FSDP actors.
+    shared_gpu_ids: list[str] | None = None
 
 
 class VLLMEngine:
@@ -84,6 +96,8 @@ class VLLMEngine:
     """
 
     def __init__(self, config: VLLMEngineConfig) -> None:
+        if config.shared_gpu_ids is not None:
+            os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(config.shared_gpu_ids)
         import vllm
         from packaging.version import parse as parse_version
         from vllm.sampling_params import RequestOutputKind
@@ -129,6 +143,31 @@ class VLLMEngine:
         self._request_counter = itertools.count(1)
         self._prepared = False
         self._prepare_lock = asyncio.Lock()
+        self._shared_manifest_dir: Any = None
+        self._phase_lock = asyncio.Lock()
+        self._sleeping = False
+        self._phase_failed = False
+        self._phase_stats: dict[str, float] = {}
+
+    def configure_shared_weights(self, descriptors: dict | list[dict]) -> None:
+        """Accept trusted trainer IPC metadata before engine initialization."""
+        import pickle
+        from pathlib import Path
+
+        import torch
+        import vllm
+
+        from .shared_weights import check_shared_weight_versions
+
+        check_shared_weight_versions(torch.__version__, vllm.__version__)
+        if not self.config.share_base_weights or self._prepared or self._shared_manifest_dir:
+            raise RuntimeError("Invalid shared-weight initialization order")
+        self._shared_manifest_dir = tempfile.TemporaryDirectory(prefix="tuft-shared-")
+        path = Path(self._shared_manifest_dir.name) / "weights.pkl"
+        ranks = descriptors if isinstance(descriptors, list) else [descriptors]
+        if len(ranks) != self.config.tensor_parallel_size:
+            raise ValueError("Shared weight rank count must equal sampler TP size")
+        path.write_bytes(pickle.dumps(ranks))
 
     async def prepare(self) -> None:
         """Create the vLLM engine, apply worker patches, start the API server."""
@@ -160,25 +199,129 @@ class VLLMEngine:
                 enforce_eager=self.config.enforce_eager,
                 override_generation_config=override_generation_config,
                 reasoning_parser=self.config.reasoning_parser,  # type: ignore[arg-type]
-                disable_log_stats=True,
+                disable_log_stats=not self.config.enable_metrics,
                 enable_log_requests=self.config.enable_log_requests,
                 enable_lora=self.config.enable_lora,
                 max_lora_rank=self.config.max_lora_rank,  # type: ignore[arg-type]
                 max_loras=self.config.max_loras,
+                max_cpu_loras=self.config.max_cpu_loras,
                 # Return logprobs of the actual sampling distribution (after
                 # temperature scaling) -- required for RL importance ratios.
                 logprobs_mode="processed_logprobs",
                 async_scheduling=True,
+                kv_cache_memory_bytes=self.config.kv_cache_memory_bytes,
+                language_model_only=self.config.language_model_only,
+                moe_backend=self.config.moe_backend,
+                gdn_prefill_backend=self.config.gdn_prefill_backend,
+                max_num_seqs=self.config.max_num_seqs,
             )
             if self.config.quantization:
                 engine_args.quantization = self.config.quantization
+            if self.config.share_base_weights:
+                if self._shared_manifest_dir is None:
+                    raise RuntimeError("Shared sampler requires trainer IPC descriptors")
+                engine_args.load_format = "tuft_shared"
+                engine_args.model_loader_extra_config = {
+                    "manifest": self._shared_manifest_dir.name + "/weights.pkl"
+                }
+                engine_args.enable_sleep_mode = True
+                # Trainers load text backbones only. Do not allocate an unused
+                # vision encoder in the consumer. Triton MoE retains the BF16
+                # expert matrix layout rather than creating shuffled copies.
+                engine_args.language_model_only = True
+                engine_args.moe_backend = "triton"
 
             self.async_llm = vllm.AsyncLLMEngine.from_engine_args(engine_args)
             # Apply TuFT's worker-side patches (prompt-logprobs temperature
             # scaling) on every worker process; see vllm_worker.py.
             await self.async_llm.collective_rpc("apply_patches")
+            if self.config.share_base_weights:
+                await self.async_llm.collective_rpc("shared_weight_report")
+                self._shared_manifest_dir.cleanup()
             await self._run_api_server()
             self._prepared = True
+
+    def sampling_metrics(self) -> dict:
+        """Read public Prometheus counters, including on the non-HTTP shared replica."""
+        from prometheus_client import REGISTRY
+
+        names = {
+            "vllm:num_requests_running",
+            "vllm:num_requests_waiting",
+            "vllm:kv_cache_usage_perc",
+            "vllm:num_preemptions_total",
+            "vllm:generation_tokens_total",
+            "vllm:iteration_tokens_total_sum",
+            "vllm:iteration_tokens_total_count",
+        }
+        result = {}
+        latest_lora = float("-inf")
+        for family in REGISTRY.collect():
+            for sample in family.samples:
+                if sample.name in names:
+                    result[sample.name] = result.get(sample.name, 0.0) + sample.value
+                elif sample.name == "vllm:lora_requests_info" and sample.value > latest_lora:
+                    latest_lora = sample.value
+                    adapters = sample.labels.get("running_lora_adapters", "")
+                    result["running_lora_adapters"] = len([v for v in adapters.split(",") if v])
+        return result
+
+    async def reset_prefix_cache(self) -> bool:
+        """Diagnostic cache-reset control; callers must first drain requests."""
+        return await self.async_llm.reset_prefix_cache()
+
+    async def set_training_phase(self, training: bool) -> None:
+        """Called only with the scheduler's shared-GPU reservation held.
+
+        Imported base storage is owned by HF, outside vLLM's sleep allocator.
+        Level 1 preserves any private weights/LoRA buffers and discards KV data.
+        """
+        if not self.config.share_base_weights:
+            return
+        async with self._phase_lock:
+            if self._phase_failed:
+                raise RuntimeError("Shared sampler phase transition previously failed")
+            if training == self._sleeping:
+                return
+            start = time.monotonic()
+            try:
+                if training:
+                    await self.async_llm.sleep(level=1)
+                else:
+                    await self.async_llm.wake_up()
+                self._sleeping = training
+            except BaseException:
+                self._phase_failed = True
+                raise
+            key = "sleep" if training else "wake"
+            self._phase_stats[key + "_s"] = (
+                self._phase_stats.get(key + "_s", 0) + time.monotonic() - start
+            )
+            self._phase_stats[key + "_count"] = self._phase_stats.get(key + "_count", 0) + 1
+
+    async def shared_weight_report(self) -> dict:
+        rows = await self.async_llm.collective_rpc("shared_weight_report")
+        totals = {key: sum(row[key] for row in rows) for key in rows[0]}
+        return {**totals, "ranks": rows, **self._phase_stats, "sleeping": self._sleeping}
+
+    async def _rank_fingerprints(self, method: str) -> dict:
+        rows = await self.async_llm.collective_rpc(method)
+        if len(rows) == 1:
+            return rows[0]
+        return {
+            f"rank_{rank}/{key}": value
+            for rank, row in enumerate(rows)
+            for key, value in row.items()
+        }
+
+    async def base_weight_fingerprints(self) -> dict:
+        return await self._rank_fingerprints("base_weight_fingerprints")
+
+    async def model_buffer_fingerprints(self) -> dict:
+        return await self._rank_fingerprints("model_buffer_fingerprints")
+
+    async def adapter_weight_fingerprints(self) -> dict:
+        return await self._rank_fingerprints("adapter_weight_fingerprints")
 
     async def _run_api_server(self) -> None:
         """Start vLLM's OpenAI-compatible API server in this actor's event loop."""
@@ -226,6 +369,17 @@ class VLLMEngine:
         if self.api_server_host is None or self.api_server_port is None:
             return None
         return f"http://{self.api_server_host}:{self.api_server_port}"
+
+    def get_device_assignment(self) -> dict:
+        """Ray's physical GPU assignment, before starting the engine workers."""
+        import ray
+
+        gpus = (
+            [float(gpu) for gpu in self.config.shared_gpu_ids]
+            if self.config.shared_gpu_ids is not None
+            else ray.get_gpu_ids()
+        )
+        return {"node": ray.get_runtime_context().get_node_id(), "gpus": gpus}
 
     async def generate(self, prompt: Any, lora_request: Any = None, **kwargs: Any) -> Any:
         """Generate and return the raw vLLM ``RequestOutput``.
@@ -278,3 +432,5 @@ class VLLMEngine:
         if self.async_llm is not None:
             logger.info("Shutting down vLLM engine")
             self.async_llm.shutdown()
+        if self._shared_manifest_dir is not None:
+            self._shared_manifest_dir.cleanup()

@@ -1,0 +1,140 @@
+[
+  {
+    "window_s": [
+      240.0,
+      840.0
+    ],
+    "trainer_gpu_utilization_percent": 79.56955684761827,
+    "sampler_gpu_utilization_percent": 40.576596466042105,
+    "no_ready_training_percent": 16.4907027600954,
+    "average_sampling_queue": 9.490647936995762,
+    "submitted_sampling_requests": 510,
+    "submitted_training_updates": 17,
+    "completed_training_updates": 16,
+    "sampling_p50_s": 47.75589654175565,
+    "sampling_p95_s": 67.1871171020437,
+    "training_p50_s": 50.8252596128732,
+    "training_p95_s": 84.19718962460755,
+    "per_tenant_completed_updates": {
+      "0": 1,
+      "1": 2,
+      "2": 3,
+      "3": 1,
+      "4": 2,
+      "5": 2,
+      "6": 2,
+      "7": 3
+    },
+    "label": "Static allocation",
+    "total_requests": 736,
+    "total_updates": 23,
+    "borrowed_admissions": 0,
+    "window_borrowed_admissions": 0,
+    "borrowed_completions": 0,
+    "training_drain_max_s": 2.6365742087364197e-06,
+    "training_drain_total_s": 5.974620580673218e-05,
+    "window_completed_requests": 530,
+    "window_output_tokens_per_s": 496.52,
+    "task_successes": 11,
+    "trajectories": 184,
+    "output_limited_requests": 0,
+    "frozen_base_unchanged": true,
+    "copied_base_parameters": 0,
+    "idle_trainer_with_dedicated_overflow_percent": 14.985563240324458,
+    "window_borrowed_active_seconds": 0,
+    "borrowed_admissions_after_first_update": 0,
+    "first_borrowed_admission_s": null,
+    "last_borrowed_admission_s": null,
+    "borrowed_service_p95_s": null,
+    "completed_updates_before_window": 1,
+    "completed_updates_by_window_end": 17,
+    "training_operations": {
+      "backward": {
+        "count": 23,
+        "queue_p95_s": 54.47014982579275,
+        "drain_max_s": 2.6365742087364197e-06,
+        "service_p50_s": 30.47031476907432
+      },
+      "optimizer": {
+        "count": 23,
+        "queue_p95_s": 30.587864143028852,
+        "drain_max_s": 1.6419216990470886e-06,
+        "service_p50_s": 0.044378106482326984
+      }
+    },
+    "publication_p95_s": 61.8952479487285,
+    "publication_max_s": 61.96468152012676,
+    "publication_gate_queue_max_s": 30.485860259272158,
+    "publication_gate_service_max_s": 0.12422146927565336,
+    "window_dedicated_empty_seconds": 0.0
+  },
+  {
+    "window_s": [
+      240.0,
+      840.0
+    ],
+    "trainer_gpu_utilization_percent": 77.99130162390415,
+    "sampler_gpu_utilization_percent": 28.338914457044254,
+    "no_ready_training_percent": 11.59066547251617,
+    "average_sampling_queue": 2.5739352170052006,
+    "submitted_sampling_requests": 346,
+    "submitted_training_updates": 14,
+    "completed_training_updates": 16,
+    "sampling_p50_s": 41.25779053475708,
+    "sampling_p95_s": 61.876749782124534,
+    "training_p50_s": 124.32241324987262,
+    "training_p95_s": 173.3046312065795,
+    "per_tenant_completed_updates": {
+      "0": 2,
+      "1": 2,
+      "2": 2,
+      "3": 2,
+      "4": 2,
+      "5": 2,
+      "6": 2,
+      "7": 2
+    },
+    "label": "GPU borrowing",
+    "total_requests": 672,
+    "total_updates": 21,
+    "borrowed_admissions": 41,
+    "window_borrowed_admissions": 16,
+    "borrowed_completions": 41.0,
+    "training_drain_max_s": 50.317377435043454,
+    "training_drain_total_s": 99.46540874056518,
+    "window_completed_requests": 353,
+    "window_output_tokens_per_s": 353.82,
+    "task_successes": 3,
+    "trajectories": 168,
+    "output_limited_requests": 0,
+    "frozen_base_unchanged": true,
+    "copied_base_parameters": 0,
+    "idle_trainer_with_dedicated_overflow_percent": 9.398898832499981,
+    "window_borrowed_active_seconds": 110.35983950272202,
+    "borrowed_admissions_after_first_update": 33,
+    "first_borrowed_admission_s": 134.29282710328698,
+    "last_borrowed_admission_s": 969.0006113182753,
+    "borrowed_service_p95_s": 55.07118071895093,
+    "completed_updates_before_window": 0,
+    "completed_updates_by_window_end": 16,
+    "training_operations": {
+      "backward": {
+        "count": 21,
+        "queue_p95_s": 118.913554655388,
+        "drain_max_s": 50.317377435043454,
+        "service_p50_s": 30.414595395326614
+      },
+      "optimizer": {
+        "count": 21,
+        "queue_p95_s": 60.8102768631652,
+        "drain_max_s": 3.055669367313385e-06,
+        "service_p50_s": 0.028687593527138233
+      }
+    },
+    "publication_p95_s": 181.48141652881168,
+    "publication_max_s": 181.54843999445438,
+    "publication_gate_queue_max_s": 90.42813545744866,
+    "publication_gate_service_max_s": 0.12981723714619875,
+    "window_dedicated_empty_seconds": 153.7807213049382
+  }
+]

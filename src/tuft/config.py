@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Iterable, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, TypeAdapter, model_validator
 
 from .persistence import PersistenceConfig
 
@@ -60,6 +60,81 @@ class TelemetryConfig(BaseModel):
     resource_attributes: dict[str, str] = Field(default_factory=dict)
 
 
+class BorrowingConfig(BaseModel):
+    """Admission and training protection for sampling on training GPUs."""
+
+    model_config = {"extra": "forbid"}
+    enabled: bool = False
+    max_inflight: int = Field(default=1, ge=1)
+    max_request_tokens: int = Field(
+        default=256,
+        ge=1,
+        description="Per-request prompt plus output token allowance, summed across samples",
+    )
+
+
+class SamplingConfig(BaseModel):
+    """Borrowing opt-in and its sampling controller settings.
+
+    With borrowing disabled, the dedicated-only path bypasses these admission
+    and trace settings. Replica routing remains round-robin on both paths.
+    """
+
+    model_config = {"extra": "forbid"}
+    borrowing: BorrowingConfig = Field(default_factory=BorrowingConfig)
+    max_inflight_per_replica: int = Field(default=32, ge=1)
+    max_queued_requests: int = Field(default=1024, ge=1)
+    queue_timeout_s: float = Field(default=120, gt=0, allow_inf_nan=False)
+    scheduling_trace_capacity: int = Field(default=0, ge=0, le=4096)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_scheduling(cls, values):
+        """Normalize pre-refactor inputs without overriding explicit borrowing settings."""
+        if not isinstance(values, dict):
+            return values
+        values = dict(values)
+        borrowing = values.get("borrowing", {})
+        if isinstance(borrowing, BorrowingConfig):
+            borrowing = borrowing.model_dump(exclude_unset=True)
+        if not isinstance(borrowing, dict):
+            return values  # Let the nested schema explain the invalid value.
+        borrowing = dict(borrowing)
+        if "enabled" in borrowing:
+            borrowing["enabled"] = TypeAdapter(bool).validate_python(borrowing["enabled"])
+        if "policy" in values:
+            policy = values.pop("policy")
+            if policy not in {"round_robin", "borrow", "shared_weight"}:
+                raise ValueError("Unsupported legacy scheduling policy")
+            enabled = policy != "round_robin"
+            if "enabled" in borrowing and borrowing["enabled"] != enabled:
+                raise ValueError("Conflicting legacy policy and sampling.borrowing.enabled")
+            borrowing["enabled"] = enabled
+        for old, new in {
+            "flex_max_inflight": "max_inflight",
+            "flex_max_tokens": "max_request_tokens",
+        }.items():
+            if old in values:
+                value = values.pop(old)
+                value = getattr(BorrowingConfig.model_validate({new: value}), new)
+                if new in borrowing:
+                    explicit = getattr(BorrowingConfig.model_validate({new: borrowing[new]}), new)
+                    if explicit != value:
+                        raise ValueError(f"Conflicting legacy {old} and borrowing.{new}")
+                borrowing[new] = value
+        if "share_base_weights" in values:
+            shared = TypeAdapter(bool).validate_python(values.pop("share_base_weights"))
+            if shared is not borrowing.get("enabled", False):
+                raise ValueError("Borrowing always shares frozen base weights")
+        values["borrowing"] = borrowing
+        return values
+
+    @property
+    def share_base_weights(self) -> bool:
+        """Storage requirement, derived from borrowing rather than routing."""
+        return self.borrowing.enabled
+
+
 class ModelConfig(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
 
@@ -80,6 +155,17 @@ class ModelConfig(BaseModel):
     # tensor_parallel_size GPUs) and load-balance requests across them.  Ideal for small
     # models where TP introduces unnecessary cross-GPU communication overhead.
     data_parallel_size: int = 1
+    sampling: SamplingConfig = Field(default_factory=SamplingConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_sampling_config(cls, values):
+        if isinstance(values, dict) and "scheduling" in values:
+            values = dict(values)
+            if "sampling" in values:
+                raise ValueError("Use sampling only; do not also supply legacy scheduling")
+            values["sampling"] = values.pop("scheduling")
+        return values
 
     # default sampling parameters for this model
     temperature: float = 1.0
@@ -96,6 +182,9 @@ class ModelConfig(BaseModel):
     # default lora setting
     max_lora_rank: int = 16  # maximum rank for LoRA adapters
     max_loras: int = 1  # maximum number of LoRA adapters that can be applied simultaneously
+    # Host cache capacity per sampler; independent of GPU-active adapter slots.
+    # None preserves vLLM's default (max_loras). Evicted adapters reload on use.
+    max_cpu_loras: int | None = Field(default=None, ge=1)
     # Multiplier from a LoRA adapter's rank to its lora_alpha:
     # lora_alpha = rank * lora_alpha_ratio. Shared by the "hf" and "fsdp" training
     # backends so the same rank produces the same update scaling on both.
@@ -157,6 +246,15 @@ class ModelConfig(BaseModel):
     # only for local testing purposes
     colocate: bool = False
     sampling_memory_fraction: float = 0.2  # fraction of GPU memory for sampling
+    # Explicit per-replica KV budget; required when weights are CUDA IPC aliases
+    # because process-local allocator accounting does not measure shared storage.
+    sampling_kv_cache_memory_bytes: int | None = Field(default=None, gt=0)
+    # Skip multimodal encoders when deployment serves text only.
+    sampling_language_model_only: bool = False
+    sampling_moe_backend: Literal["auto", "triton"] = "auto"
+    sampling_gdn_prefill_backend: Literal["flashinfer", "triton", "cutedsl"] | None = None
+    sampling_max_num_seqs: int | None = Field(default=None, gt=0)
+    sampling_enable_metrics: bool = False
     # Max context length for sampling (vLLM) only; if unset, max_model_len is used.
     # Can be set smaller (e.g. 2048) in testing to reduce GPU memory and startup time.
     sampling_max_model_len: int | None = None
@@ -190,16 +288,56 @@ class ModelConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def validate_adapter_cache(self) -> "ModelConfig":
+        if self.max_cpu_loras is not None and self.max_cpu_loras < self.max_loras:
+            raise ValueError("max_cpu_loras must be >= max_loras")
+        return self
+
+    @model_validator(mode="after")
     def validate_colocate(self) -> "ModelConfig":
-        if self.colocate and self.tensor_parallel_size != 1:
+        fsdp_flex = self.training_backend == "fsdp" and self.sampling.borrowing.enabled
+        if self.colocate and self.tensor_parallel_size != 1 and not fsdp_flex:
             raise ValueError("Colocate option is only supported for tensor_parallel_size=1.")
-        if self.colocate and self.data_parallel_size > 1:
+        if (
+            self.colocate
+            and self.data_parallel_size > 1
+            and self.sampling.borrowing.enabled is False
+        ):
             raise ValueError("Colocate option is not supported with data_parallel_size > 1.")
         if self.colocate and not (self.training_enabled and self.sampling_enabled):
             raise ValueError(
                 "Colocate places sampling and training on the same device, so it requires "
                 f"both capabilities; model {self.model_name} declares {self.capabilities}."
             )
+        return self
+
+    @model_validator(mode="after")
+    def validate_borrowing(self) -> "ModelConfig":
+        if self.data_parallel_size < 1:
+            raise ValueError("data_parallel_size must be positive")
+        if self.sampling.borrowing.enabled:
+            if self.quantization:
+                raise ValueError(
+                    "sampling.borrowing.enabled requires unquantized shared base weights"
+                )
+            if self.sampling_kv_cache_memory_bytes is None:
+                raise ValueError(
+                    "sampling.borrowing.enabled requires sampling_kv_cache_memory_bytes"
+                )
+            if not self.colocate or self.training_backend not in {"hf", "fsdp"}:
+                raise ValueError(
+                    "sampling.borrowing.enabled requires colocate=true and an HF or FSDP trainer"
+                )
+            if self.training_backend == "fsdp" and self.fsdp_num_gpus != self.tensor_parallel_size:
+                raise ValueError(
+                    "FSDP sampling.borrowing.enabled requires fsdp_num_gpus == tensor_parallel_size"
+                )
+            if self.data_parallel_size < 2:
+                raise ValueError(
+                    "sampling.borrowing.enabled requires at least one fixed and one flex sampler"
+                )
+            if not 0 < self.sampling_memory_fraction < 1:
+                raise ValueError("Borrowing sampling_memory_fraction must be between 0 and 1")
         return self
 
     @model_validator(mode="after")
@@ -332,9 +470,13 @@ class AppConfig(BaseModel):
         model_names = {model.model_name for model in self.supported_models}
         if len(model_names) != len(self.supported_models):
             raise ValueError("Model names in supported_models must be unique.")
-        if len(model_names) > 1 and any(model.colocate for model in self.supported_models):
+        if len(model_names) > 1 and any(
+            model.colocate and model.sampling.borrowing.enabled is False
+            for model in self.supported_models
+        ):
             raise ValueError(
-                "Colocate option is only allowed when there is a single supported model."
+                "Multiple models require sampling.borrowing.enabled "
+                "for colocated training/sampling."
             )
 
     def with_supported_models(self, models: Iterable[ModelConfig]) -> "AppConfig":
@@ -363,13 +505,30 @@ class AppConfig(BaseModel):
         supported workflow, and must not be flagged as configuration drift.
         Records belonging to a disabled capability are preserved and validated
         against the rest of the model configuration instead.
+
+        Scheduling is also runtime-only: it changes admission and routing, not
+        adapter geometry or checkpoint contents. Excluding it preserves restart
+        compatibility with signatures written before scheduling was configurable.
         """
         return self.model_dump(
             mode="json",
             exclude={
                 "persistence": True,
                 "authorized_users": True,
-                "supported_models": {"__all__": {"capabilities"}},
+                "supported_models": {
+                    "__all__": {
+                        "capabilities",
+                        "scheduling",
+                        "sampling",
+                        "max_cpu_loras",
+                        "sampling_kv_cache_memory_bytes",
+                        "sampling_language_model_only",
+                        "sampling_moe_backend",
+                        "sampling_gdn_prefill_backend",
+                        "sampling_max_num_seqs",
+                        "sampling_enable_metrics",
+                    }
+                },
             },
         )
 

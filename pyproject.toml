@@ -108,6 +108,7 @@ docstring-code-format = true
 quote-style = "double"
 
 [tool.pyright]
+extraPaths = ["benchmarks/borrowing"]
 pythonVersion = "3.11"
 typeCheckingMode = "standard"
 reportUnusedImport = false
@@ -124,6 +125,7 @@ exclude = [
 ]
 
 [tool.pytest.ini_options]
+pythonpath = ["benchmarks/borrowing"]
 testpaths = ["tests"]
 python_files = "test_*.py"
 python_classes = "Test*"

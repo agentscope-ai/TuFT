@@ -1,0 +1,158 @@
+{
+  "run_id": "borrow-budget-20261104T004506Z",
+  "late_short_prompt_duration_rejection_events": 24,
+  "example_late_short_prompt_rejection": {
+    "event": "borrow_reject",
+    "elapsed_s": 210.39610383900003,
+    "request_id": 196,
+    "reason": "duration",
+    "estimated_service_s": 34.29035272199985,
+    "estimate_source": "scaled_service",
+    "estimate_overdue": false,
+    "estimated_occupied_s": 51.53853394110983,
+    "estimated_flex_finish_s": 51.53853394110983,
+    "estimated_fixed_finish_s": 63.325517856999795,
+    "fixed_estimate_sources": [
+      "scaled_service"
+    ],
+    "switch_cost_s": 0.06866990540669761,
+    "budget_s": 35.0,
+    "safety_factor": 1.5,
+    "horizon_s": null,
+    "queued": 3,
+    "active": [
+      0,
+      22
+    ],
+    "training_pending": 0,
+    "training_active": false,
+    "candidate_sequences": 1,
+    "prompt_tokens": 1505,
+    "output_tokens": 1536,
+    "sequences": 1
+  },
+  "second_wave_demand": [
+    {
+      "policy": "shared_weight",
+      "elapsed_s": 330.2,
+      "requests": 250,
+      "tools": 250,
+      "updates": 16,
+      "queued": 16,
+      "active": [
+        0,
+        32
+      ],
+      "training_active": false,
+      "training_pending": 0,
+      "shared_completed": 12.0,
+      "borrow_probe_requests": 8.0,
+      "borrow_profitable_candidates": 4.0,
+      "borrow_duration_rejections": 2243.0,
+      "gpu": [
+        {
+          "sm_percent": 0,
+          "memory_bytes": 32812302336
+        },
+        {
+          "sm_percent": 58,
+          "memory_bytes": 28826009600
+        }
+      ]
+    },
+    {
+      "policy": "shared_weight",
+      "elapsed_s": 345.2,
+      "requests": 268,
+      "tools": 268,
+      "updates": 16,
+      "queued": 16,
+      "active": [
+        0,
+        32
+      ],
+      "training_active": false,
+      "training_pending": 0,
+      "shared_completed": 12.0,
+      "borrow_probe_requests": 8.0,
+      "borrow_profitable_candidates": 4.0,
+      "borrow_duration_rejections": 2620.0,
+      "gpu": [
+        {
+          "sm_percent": 0,
+          "memory_bytes": 32812302336
+        },
+        {
+          "sm_percent": 32,
+          "memory_bytes": 28826009600
+        }
+      ]
+    }
+  ],
+  "learned_batch_admissions": [
+    {
+      "event": "admit",
+      "elapsed_s": 45.34158109700002,
+      "request_id": 81,
+      "replica": 0,
+      "work": 3371,
+      "reserved_work": 3371,
+      "horizon_s": null,
+      "estimated_service_s": 16.30407337963815,
+      "estimate_overdue": false,
+      "estimate_source": "scaled_service",
+      "sequences": 1,
+      "prompt_tokens": 1835,
+      "output_tokens": 1536
+    },
+    {
+      "event": "admit",
+      "elapsed_s": 45.34178232500017,
+      "request_id": 82,
+      "replica": 0,
+      "work": 3369,
+      "reserved_work": 6740,
+      "horizon_s": null,
+      "estimated_service_s": 16.30407337963815,
+      "estimate_overdue": false,
+      "estimate_source": "scaled_service",
+      "sequences": 1,
+      "prompt_tokens": 1833,
+      "output_tokens": 1536
+    },
+    {
+      "event": "admit",
+      "elapsed_s": 45.341991173999986,
+      "request_id": 83,
+      "replica": 0,
+      "work": 3370,
+      "reserved_work": 10110,
+      "horizon_s": null,
+      "estimated_service_s": 16.30407337963815,
+      "estimate_overdue": false,
+      "estimate_source": "scaled_service",
+      "sequences": 1,
+      "prompt_tokens": 1834,
+      "output_tokens": 1536
+    },
+    {
+      "event": "admit",
+      "elapsed_s": 45.342177110999955,
+      "request_id": 84,
+      "replica": 0,
+      "work": 3369,
+      "reserved_work": 13479,
+      "horizon_s": null,
+      "estimated_service_s": 16.30407337963815,
+      "estimate_overdue": false,
+      "estimate_source": "observed_service",
+      "sequences": 1,
+      "prompt_tokens": 1833,
+      "output_tokens": 1536
+    }
+  ],
+  "finding": "Borrowing reached learned admissions but stopped before the first update. Duration rejection persisted with queued demand and no training pending.",
+  "mechanism": "Maximum latency across history carries long requests into short-request fallback estimates; coarse prompt/output buckets also mix different actual generation lengths. No shared completions then refresh the history.",
+  "next_step": "Separate comparable workload history from cross-shape fallback and evaluate bounded refresh probes with CPU trace replay before another GPU run. Preserve conservative ownership/drain handling.",
+  "limits": "Output allowance is not realized output length. This trace does not prove later short requests would always finish within budget; no observed borrowing/training collision tests the 20-second drain target."
+}
